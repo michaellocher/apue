@@ -800,8 +800,12 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       finish({ status: 200 });
     } catch (error) {
-      const problem = toProblem(error);
-      finish(gone.aborted ? undefined : { status: problem.status, problem });
+      if (gone.aborted) {
+        finish(undefined); // nobody to tell, nothing to log
+      } else {
+        const problem = toProblem(error);
+        finish({ status: problem.status, problem });
+      }
     } finally {
       signal.removeEventListener('abort', onAbort);
     }
@@ -1064,7 +1068,10 @@ async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: b
       if (error.code === 'too-large') throw new ApueError(413, 'Content Too Large', error.message);
       throw new ApueError(400, 'Malformed Stream', error.message, { type: ProblemType.MALFORMED_STREAM });
     }
-    throw error;
+    if (error instanceof ApueError) throw error;
+    // Anything else comes from the transport (reset, premature close): the client went away. Was
+    // passed through raw and logged as a handler failure.
+    throw new ApueError(499, 'Client Closed Request', `request stream ended abnormally: ${(error as Error).message}`);
   }
   throw new ApueError(400, 'Truncated Stream', 'request body ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
 }

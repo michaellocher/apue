@@ -8,7 +8,10 @@ import { ApueClient } from '../src/client.ts';
 import { ApueError } from '../src/protocol.ts';
 import { t } from '../src/schema.ts';
 import type { Handlers } from '../src/server.ts';
+import { getEventListeners } from 'node:events';
+import tls from 'node:tls';
 import { http2Transport } from '../src/transport-http2.ts';
+import { webSocketTransport } from '../src/transport-ws.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 setFlagsFromString('--expose-gc');
@@ -18,6 +21,7 @@ const api = defineApi({
   'users.get': op({ effect: 'safe', input: t.object({ id: t.string() }), output: t.object({ id: t.string() }) }),
   'ticker': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
   'slow': op({ effect: 'safe', input: t.void(), output: t.string() }),
+  'echo': op({ effect: 'unsafe', stream: 'bidi', input: t.string(), output: t.string() }),
 });
 const handlers: Handlers<typeof api> = {
   'users.get': ({ id }) => ({ id }),
@@ -33,6 +37,9 @@ const handlers: Handlers<typeof api> = {
       ctx.signal.addEventListener('abort', () => (clearTimeout(timer), resolve(undefined)), { once: true });
     });
     return 'late';
+  },
+  'echo': async function* (inputs) {
+    for await (const s of inputs) yield s;
   },
 };
 
@@ -72,4 +79,57 @@ test('10,000 mixed calls: bounded heap growth, no leftover handles', { timeout: 
 
   await client.close();
   await server.close();
+});
+
+test('2,000 calls over webSocketTransport (credit splits, cancels, invalid input): bounded heap, no leftover handles or listeners', { timeout: 120_000 }, async (t) => {
+  const server = await startServer(api, handlers);
+  tls.setDefaultCACertificates([...tls.getCACertificates('default'), testCert().cert]);
+  // small windows: every call exercises splitting, blocking on credit and re-granting
+  const client = new ApueClient(api, webSocketTransport(server.url, { receiveWindow: 64 * 1024 }));
+  const shared = new AbortController(); // one long-lived signal for all calls
+  const big = 'z'.repeat(100 * 1024);
+  try {
+    async function round(calls: number) {
+      for (let i = 0; i < calls; i += 4) {
+        async function* two() {
+          yield big;
+          yield 'small';
+        }
+        assert.equal((await Array.fromAsync(client.duplex('echo', two(), { signal: shared.signal }))).length, 2);
+        let release!: () => void;
+        async function* oneThenWait() {
+          yield 'x';
+          await new Promise<void>((resolve) => (release = resolve)); // still waiting when the call is cancelled
+        }
+        for await (const _ of client.duplex('echo', oneThenWait(), { signal: shared.signal })) break; // cancel mid-stream
+        release();
+        async function* invalid() {
+          yield 1 as unknown as string;
+        }
+        await Array.fromAsync(client.duplex('echo', invalid(), { signal: shared.signal })).catch((e: ApueError) => assert.equal(e.status, 400));
+        await client.call('slow', undefined, { timeoutMs: 1, signal: shared.signal }).catch((e: ApueError) => assert.equal(e.status, 504)); // fetch
+      }
+    }
+
+    await round(200); // warm-up
+    await sleep(300);
+    gc();
+    const heapBefore = process.memoryUsage().heapUsed;
+    const handlesBefore = process.getActiveResourcesInfo().length;
+
+    await round(2_000);
+    await sleep(500);
+    gc();
+    const heapAfter = process.memoryUsage().heapUsed;
+    const handlesAfter = process.getActiveResourcesInfo().length;
+    const growthMiB = (heapAfter - heapBefore) / 1024 / 1024;
+    const listeners = getEventListeners(shared.signal, 'abort').length;
+    t.diagnostic(`heap ${(heapBefore / 1048576).toFixed(1)} → ${(heapAfter / 1048576).toFixed(1)} MiB, handles ${handlesBefore} → ${handlesAfter}, abort listeners left ${listeners}`);
+    assert.ok(growthMiB < 4, `heap grew by ${growthMiB.toFixed(1)} MiB over 2,000 WebSocket calls`);
+    assert.ok(handlesAfter <= handlesBefore + 2, `active handles ${handlesBefore} → ${handlesAfter}: ${process.getActiveResourcesInfo().join(', ')}`);
+    assert.equal(listeners, 0);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });

@@ -22,14 +22,24 @@ export interface WebSocketTransportOptions {
   /** Bytes the server may send ahead of the consumer: the client-side memory bound per call. */
   receiveWindow?: number;
   WebSocketImpl?: typeof WebSocket;
+  /** Transport for calls without a request stream (default: fetchTransport(baseUrl)). */
+  http?: Transport;
 }
 
+/**
+ * T3 carries calls with a request stream (client/bidi streaming); every other call goes over
+ * fetch (T0) — a WebSocket would add a handshake round trip and lose HTTP caching, and it has no
+ * headers to carry a unary JSON body or GET input (unary over WebSocket answered 415 before).
+ */
 export function webSocketTransport(baseUrl: string, options: WebSocketTransportOptions = {}): Transport {
   const base = baseUrl.replace(/\/$/, '').replace(/^http/, 'ws');
   const WebSocketImpl = options.WebSocketImpl ?? WebSocket;
   const receiveWindow = checkWindow('receiveWindow', options.receiveWindow ?? 4 * 1024 * 1024);
+  const http = options.http ?? fetchTransport(baseUrl);
   return {
-    async request({ path, headers, body, signal }) {
+    async request(req) {
+      if (req.body === undefined || req.body instanceof Uint8Array) return http.request(req);
+      const { path, headers, body, signal } = req;
       signal.throwIfAborted(); // an already-aborted signal never fires 'abort'
       // Browsers can't set WebSocket headers: the deadline travels as a query parameter.
       const timeout = headers[Header.TIMEOUT];
@@ -110,7 +120,10 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       async function pump(body: AsyncIterable<Uint8Array>): Promise<void> {
         try {
           for await (const chunk of body) if (!(await send(chunk))) return;
-        } catch {
+        } catch (error) {
+          // e.g. client-side validation of a stream message: the caller gets that error (a 400),
+          // not a truncated stream (was a 502)
+          failure ??= error as Error;
           ws.close(WS_CLOSE_CANCELLED, 'input failed');
         }
       }
@@ -140,8 +153,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
         ws.send(String(receiveWindow - WS_INITIAL_WINDOW));
         receiveAllowance += receiveWindow - WS_INITIAL_WINDOW;
       }
-      if (body instanceof Uint8Array) void send(body);
-      else if (body !== undefined) void pump(body);
+      void pump(body);
 
       async function* responseBody(): AsyncGenerator<Uint8Array> {
         try {
@@ -184,7 +196,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
  */
 export function autoTransport(baseUrl: string): Transport {
   const http = fetchTransport(baseUrl);
-  const ws = webSocketTransport(baseUrl);
+  const ws = webSocketTransport(baseUrl, { http });
   const streamingFetch = supportsRequestStreams();
   return {
     request(req) {

@@ -8,7 +8,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 224 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 229 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -47,6 +47,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 | building the example | the batch endpoint at `/` blocked serving the app same-origin → `/$batch` |
 | browsers | Chrome only reuses an h2 session for WebSockets with an identical key (credentials mode) |
 | measuring T3 | a stalled WebSocket consumer let the server push 250 MiB into client memory in 3 s (now bounded by credit windows, `apue.v1`); uploads capped by 5 ms `bufferedAmount` polling (142 → 293 MiB/s) |
+| WebSocket leak test | unary calls over `webSocketTransport` answered 415 (now routed over fetch); invalid stream input surfaced as 502 over T3 instead of 400; **client crash** (`setLocalWindowSize` on a session destroyed while connecting); client resets of request streams logged as server errors (now 499) |
 | code review | unbounded request-stream blob memory; bytes lost on idempotent replay; CORS `Vary`/preflight gaps; missing `Retry-After` retried with no delay; duplicate items after two losses in one resume; quadratic WebSocket buffering; WebSocket writes hanging on close; regex flags dropped from the manifest |
 
 ## Known flake (not reproduced)

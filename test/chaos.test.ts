@@ -136,3 +136,35 @@ test('WebSocket dropped in the middle of a frame', async () => {
   socket.destroy();
   await stillServing();
 });
+
+test('client: closing right after a call failed client-side, before the h2 session connected', async () => {
+  // 'connect' fired on the destroyed session and setLocalWindowSize threw from the event handler:
+  // an uncaught exception in the client process (20 of 20 tries before the fix).
+  for (let i = 0; i < 10; i++) {
+    const client = new ApueClient(api, http2Transport(server.url, { ca: testCert().cert }));
+    async function* invalid() {
+      yield 'not a number' as unknown as number;
+    }
+    await assert.rejects(Array.fromAsync(client.duplex('echo.duplex', invalid())), (e: { status: number }) => e.status === 400);
+    await client.close();
+  }
+  await sleep(100);
+  await stillServing();
+});
+
+test('a client resetting its request stream mid-call is a 499 for the handler, not a logged server error', async (t) => {
+  const logged = t.mock.method(console, 'error', () => {});
+  for (const code of [http2.constants.NGHTTP2_CANCEL, http2.constants.NGHTTP2_INTERNAL_ERROR]) {
+    const session = http2.connect(server.url, { ca: testCert().cert });
+    session.on('error', () => {});
+    const req = session.request({ ':method': 'POST', ':path': '/echo.duplex', 'content-type': 'application/apue+json' });
+    req.on('error', () => {});
+    req.write(msgFrame(1));
+    await new Promise((resolve) => req.once('data', resolve)); // the echo: the handler is running
+    req.close(code);
+    await sleep(100);
+    session.destroy();
+  }
+  assert.deepEqual(logged.mock.calls.map((c) => String(c.arguments[1] ?? c.arguments[0])), []);
+  await stillServing();
+});

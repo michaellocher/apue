@@ -503,6 +503,25 @@ test('webSocketWindow sets the window the server grants (over RFC 8441 too)', as
   await local.close();
 });
 
+test('webSocketTransport: calls without a request stream go over fetch (unary over WebSocket was a 415)', async () => {
+  const client = new ApueClient(api, webSocketTransport(server.url));
+  assert.equal(await client.call('plain.get'), 'plain');
+  await assert.rejects(client.call('plain.get', 1 as unknown as undefined), (e: ApueError) => e.status === 400);
+  assert.deepEqual(await Array.fromAsync(client.duplex('echo.duplex', numbers(2))), [{ echo: 1 }, { echo: 2 }]); // still T3
+  assert.equal(await Array.fromAsync(client.duplex('sum.client', numbers(3))).then((r) => r[0]), 6);
+  await client.close();
+});
+
+test('a stream message failing client-side validation is a 400 over WebSocket too (was a 502)', async () => {
+  const client = new ApueClient(api, webSocketTransport(server.url));
+  async function* bad() {
+    yield 1;
+    yield 'two' as unknown as number;
+  }
+  await assert.rejects(Array.fromAsync(client.duplex('echo.duplex', bad())), (e: ApueError) => e.status === 400 && /input message 1/.test(e.problem.detail ?? ''));
+  await client.close();
+});
+
 describe('flow control hardening (review findings)', () => {
   test('windows must be integers from 64 KiB to 2^31-1: server option, connection, client option', () => {
     for (const bad of [Number.NaN, 1.5e6 + 0.5, 1024, 2 ** 31, Infinity]) {
@@ -574,7 +593,7 @@ describe('flow control hardening (review findings)', () => {
     const url = `https://127.0.0.1:${(bare.address() as { port: number }).port}`;
     const transport = webSocketTransport(url);
     const controller = new AbortController();
-    const request = { method: 'POST', path: '/x', headers: {}, signal: controller.signal } as Parameters<typeof transport.request>[0];
+    const request = { method: 'POST', path: '/x', headers: {}, body: numbers(1), signal: controller.signal } as unknown as Parameters<typeof transport.request>[0];
     try {
       // undici (like browsers, per the WHATWG spec) fails a handshake that omits a requested subprotocol
       await assert.rejects(transport.request(request), /WebSocket connection to .* failed/);
@@ -612,7 +631,7 @@ describe('flow control hardening (review findings)', () => {
     }
     const transport = webSocketTransport('https://x.example', { WebSocketImpl: OtherProtocol as unknown as typeof WebSocket });
     const signal = new AbortController().signal;
-    await assert.rejects(transport.request({ method: 'POST', path: '/x', headers: {}, signal } as Parameters<typeof transport.request>[0]), /did not accept subprotocol apue\.v1/);
+    await assert.rejects(transport.request({ method: 'POST', path: '/x', headers: {}, body: numbers(1), signal } as unknown as Parameters<typeof transport.request>[0]), /did not accept subprotocol apue\.v1/);
     assert.deepEqual(closes, [4002]);
     assert.equal(getEventListeners(signal, 'abort').length, 0);
   });

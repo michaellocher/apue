@@ -76,7 +76,11 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
       ...(ca === undefined ? {} : { ca }),
       settings: { initialWindowSize: window },
     });
-    created.on('connect', () => created.setLocalWindowSize(connectionWindow));
+    // 'connect' still fires for a session destroyed while connecting (e.g. close() right after a
+    // call failed client-side); setLocalWindowSize would then throw from an event handler.
+    created.on('connect', () => {
+      if (!created.destroyed) created.setLocalWindowSize(connectionWindow);
+    });
     created.on('error', () => {}); // surfaced per request via stream errors
     created.on('close', () => {
       if (session === created) session = undefined;

@@ -268,6 +268,44 @@ describe('limits', () => {
   });
 });
 
+describe('resource protection', () => {
+  test('idle sessions get GOAWAY after idleTimeoutMs; active streams with heartbeats are not cut', async () => {
+    const http2 = await import('node:http2');
+    const local = await startServer(api, handlers, { idleTimeoutMs: 200, heartbeatMs: 50 });
+    const session = http2.connect(local.url, { ca: testCert().cert });
+    const t0 = performance.now();
+    const closed = new Promise<number>((resolve) => session.on('close', () => resolve(performance.now() - t0)));
+    // A 300 ms stream (slow.first; heartbeats keep the session busy) must complete before the close.
+    const frames = await new Promise<number>((resolve, reject) => {
+      const req = session.request({ ':method': 'POST', ':path': '/slow.first', accept: 'application/apue+json' });
+      let bytes = 0;
+      req.on('data', (chunk: Buffer) => (bytes += chunk.byteLength));
+      req.on('end', () => resolve(bytes));
+      req.on('error', reject);
+      req.end();
+    });
+    assert.ok(frames > 0);
+    const after = await closed;
+    assert.ok(after >= 450 && after < 2_000, `session closed after ${after.toFixed(0)} ms`);
+    await local.close();
+  });
+
+  test('a body that arrives too slowly → 408 instead of holding the handler', async () => {
+    const http2 = await import('node:http2');
+    const local = await startServer(api, handlers, { bodyTimeoutMs: 100 });
+    const session = http2.connect(local.url, { ca: testCert().cert });
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = session.request({ ':method': 'POST', ':path': '/math.add', 'content-type': 'application/json' });
+      req.on('response', (h) => resolve(Number(h[':status'])));
+      req.on('error', reject);
+      req.write('{"a": 1,'); // …and never finishes
+    });
+    assert.equal(status, 408);
+    session.destroy();
+    await local.close();
+  });
+});
+
 describe('shutdown', () => {
   test('close() resolves when clients already closed their sessions', async () => {
     // Regression: session.close(callback) never calls back for a session that is already closed.

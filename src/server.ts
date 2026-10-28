@@ -85,6 +85,10 @@ export interface ApueServerOptions {
    * queue (node:http2) or open more connections (undici) beyond it. Default 256.
    */
   maxConcurrentStreams?: number;
+  /** Idle HTTP/2 sessions are closed (GOAWAY) after this long; heartbeats count as activity. 0 disables. Default 120 s. */
+  idleTimeoutMs?: number;
+  /** A unary request body must arrive within this time, else 408 (slow-body protection). Default 30 s. */
+  bodyTimeoutMs?: number;
   /** Validate (and strip unknown fields from) handler output. Default true: no accidental data leaks. */
   validateOutput?: boolean;
   /** Store for Idempotency-Key replays; `false` disables the feature. */
@@ -287,6 +291,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     maxBatchCalls = 64,
     maxBufferedBytes = 256 * 1024,
     maxConcurrentStreams = 256,
+    idleTimeoutMs = 120_000,
+    bodyTimeoutMs = 30_000,
   } = options;
   const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
@@ -320,6 +326,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   server.on('session', (session) => {
     sessions.add(session);
     session.on('close', () => sessions.delete(session));
+    // Node's default is no idle timeout at all: idle connections would be held forever.
+    if (idleTimeoutMs > 0) session.setTimeout(idleTimeoutMs, () => session.close());
   });
   const webSockets = new Set<WsConnection>();
   onExchange(server, (exchange) => void handle(exchange, exchange), acceptWebSocket);
@@ -417,7 +425,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         }
         input = validatedStream(readInputStream(req, maxBodyBytes), def);
       } else {
-        input = await readJsonBody(req, maxBodyBytes, method === 'QUERY');
+        input = await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs);
       }
       if (!hasRequestStream(def)) input = validateInput(def, input);
 
@@ -551,7 +559,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   ): Promise<void> {
     const method = req.method;
     if (method !== 'POST' && method !== 'QUERY') throw methodNotAllowed(method, 'QUERY, POST');
-    const calls = parseBatch(await readJsonBody(req, maxBodyBytes, method === 'QUERY'));
+    const calls = parseBatch(await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs));
     if (method === 'QUERY' && calls.some((call) => call.def.effect !== 'safe')) {
       throw new ApueError(422, 'Unprocessable Content', 'a QUERY batch may only contain safe calls');
     }
@@ -881,7 +889,19 @@ function parseQueryInput(url: { search: string }): unknown {
   }
 }
 
-async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean): Promise<unknown> {
+async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean, timeoutMs: number): Promise<unknown> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ApueError(408, 'Request Timeout', `request body not received within ${timeoutMs} ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([readJsonBodyNow(req, maxBodyBytes, query), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readJsonBodyNow(req: Exchange, maxBodyBytes: number, query: boolean): Promise<unknown> {
   const type = baseMediaType(req.headers['content-type']);
   // RFC 10008 §2: servers MUST fail a QUERY whose Content-Type is missing.
   if (query && !type) throw new ApueError(400, 'Bad Request', 'QUERY requires a Content-Type');

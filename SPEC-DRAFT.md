@@ -44,6 +44,7 @@ ASCII identifier for media types and header names: **`apue`**.
 - Final status of any streamed response **MUST** be carried in-band (END frame, §6).
 - Streamed responses **MUST** send `Incremental: ?1` (RFC 10036), `Cache-Control: no-store` (unless cacheable), `X-Accel-Buffering: no`, and commit headers immediately.
 - Servers **MUST** send a HEARTBEAT frame if no frame has been sent for 15 s (intermediary timeouts 15–125 s).
+- Servers SHOULD limit resources per connection: SETTINGS_MAX_CONCURRENT_STREAMS (apü default 256; Node's own default is unlimited), an idle-session timeout with GOAWAY (default 120 s; heartbeats count as activity), a time limit for unary request bodies (default 30 s → 408) and per-message size limits (413).
 - New header fields **MUST** be RFC 9651 Structured Fields with stable names and low-cardinality values (HPACK/QPACK).
 
 ## 4. Operations

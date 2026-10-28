@@ -111,7 +111,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
   before(async () => {
     const { spawn } = await import('node:child_process');
     const { createInterface } = await import('node:readline');
-    const child = spawn(process.execPath, [join(ROOT, 'examples/todo/server.ts')], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] });
+    const child = spawn(process.execPath, [join(ROOT, 'examples/todo/server.ts')], { env: { ...process.env, PORT: '0', APUE_DEBUG_STREAMS: '1' }, stdio: ['ignore', 'pipe', 'inherit'] });
     const line = await new Promise<string>((resolve, reject) => {
       createInterface({ input: child.stdout! }).once('line', resolve);
       child.once('exit', (code) => reject(new Error(`example server exited with ${code}`)));

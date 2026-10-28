@@ -87,5 +87,20 @@ if (!existsSync(join(certDir, 'cert.pem'))) {
 const key = readFileSync(join(certDir, 'key.pem'));
 const cert = readFileSync(join(certDir, 'cert.pem'));
 const server = createApueServer(todoApi, handlers, { key, cert, fallback: serveStatic });
+if (process.env.APUE_DEBUG_STREAMS) {
+  // The server's view of streams that did not end cleanly (the browser tests turn this on to
+  // explain a rare net::ERR_FAILED for one module request in Chrome).
+  server.server.on('stream', (stream, headers) => {
+    stream.on('close', () => {
+      // CANCEL (8) is how browsers end live streams and WebSockets; `writableFinished` is no signal
+      // (node:http2 closes a stream whose request body was read without emitting 'finish').
+      const status = stream.sentHeaders?.[':status'];
+      if ((stream.rstCode !== 0 && stream.rstCode !== 8) || status === undefined) {
+        console.error(`[stream] ${headers[':method']} ${headers[':path']} rst=${stream.rstCode} status=${status}`);
+      }
+    });
+  });
+  server.server.on('sessionError', (error) => console.error('[session error]', error.message));
+}
 const port = await server.listen(Number(process.env.PORT ?? 8443), process.env.HOST ?? '127.0.0.1');
 console.log(`todo example on https://localhost:${port} (self-signed cert; use mkcert or accept it in the browser)`);

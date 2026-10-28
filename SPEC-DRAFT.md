@@ -80,7 +80,7 @@ URL: `{base}/{op}` — op name in `:path` (HPACK-friendly, routable, one preflig
 - **Client retries** (default 2, full-jitter backoff): transport errors, 503/429 (honouring `Retry-After`), 409 with `retryable: true` — only for safe ops or keyed requests; 504 (deadline) is not retried.
 - Input is validated on the client (no request for invalid input) and on the server (400 with `fields`). Output is validated and stripped to the schema (no accidental field leaks); invalid output → 500.
 
-**CORS position:** recommended deployment is same-origin (no preflight). Cross-origin: few URLs + `Access-Control-Max-Age: 7200`. apü does **not** accept CORS-simple content types for non-safe ops (CSRF, cf. Apollo GHSA-2p3c-p3qw-69r4) — we pay the preflight rather than open a CSRF hole.
+**CORS position:** recommended deployment is same-origin (no preflight). Cross-origin (server option `cors`): allowed origins get `Access-Control-Allow-Origin` (echoed, `Vary: origin`), `Access-Control-Expose-Headers` (etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding) and `Timing-Allow-Origin`; preflights answer 204 with methods `GET, HEAD, POST, QUERY`, only the apü request headers that were asked for, and `Access-Control-Max-Age: 7200` (browser caps: Chromium 7200 s, Firefox 86400 s, WebKit 600 s); disallowed origins' preflights get 403. Credentials require an explicit origin list. apü does **not** accept CORS-simple content types for non-safe ops (CSRF, cf. Apollo GHSA-2p3c-p3qw-69r4) — we pay the preflight rather than open a CSRF hole.
 
 ## 6. Framing
 
@@ -128,6 +128,7 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 | T4 | WebTransport bidi stream carrying the same frames | ← | all engines since Safari 26.4; draft |
 
 - Clients negotiate down: T1 → T4 → T3.
+- **Verified in real browsers (S5, Chrome 156 and Firefox, headless):** T0 everywhere incl. h2, QUERY and preflighted custom headers, compression (zstd) and cancellation; **T2 works in Chrome, not in Firefox** (feature-detected, skipped). T3/T4 not implemented yet (Node has no built-in WebSocket/WebTransport server).
 - Consumer-paced streams use **CREDIT** frames (transport backpressure doesn't survive buffering proxies; browsers buffer 6–15 MiB).
 - **Resume**: CHECKPOINT tokens are self-contained (signed position), so any replica can resume — no sticky sessions.
 
@@ -169,8 +170,8 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 ## 12. Data plane & performance guidance
 
 - **Encoding**: JSON default (V8-native, debuggable; no replacer/reviver in hot path); bigint/decimal as strings. CBOR optional via `Accept`, later with schema-compiled codecs (no eval).
-- **Compression**: standard `Accept-Encoding` on the body; zstd 1–3 → br 4–5 → gzip; skip below 1 KiB; flush after every frame (or ≤5 ms coalescing). Never mix secrets with attacker-echoed data in one context. Optional later: RFC 9842 schema-derived dictionary.
-- **HTTP/2 tuning (server)**: stream window ≥ 4 MiB, connection window ≥ 32 MiB (Node ≥ 26.11 `connectionWindowSize`), frames ≤ 16 KiB, TCP_NODELAY, coalesce frames into one write per flush, no per-message stream objects.
+- **Compression** (implemented, measured — docs/benchmarks.md): `Accept-Encoding` negotiation (q-values; server preference zstd > br > gzip). Defaults zstd-3, brotli-4, gzip-1 (brotli-11 runs at ~1 MiB/s: never dynamic). Unary bodies ≥ 1 KiB, off the event loop ≥ 64 KiB; `Vary: accept-encoding`; ETag per content-coding. Streams: compressor flushed after every frame burst (TTFB unaffected, tested per coding). On a 100 Mbit/s, 63 ms RTT link zstd gives 2.7× stream and 1.8× bulk throughput. Never mix secrets with attacker-echoed data in one stream. Optional later: RFC 9842 schema-derived dictionary.
+- **HTTP/2 tuning (both ends)**: stream window 4 MiB, connection window 32 MiB (Node ≥ 26.11 `connectionWindowSize`; Node 26.12.1 still defaults to 64 KiB, which costs 12× download throughput at 63 ms RTT), frames ≤ 16 KiB, TCP_NODELAY, frames coalesced into one write per event-loop turn (≤ 16 KiB), up to 256 KiB buffered per stream before the producer waits for `drain`.
 - **Headers**: op in `:path`; few stable SF headers; one entropy field; compact auth tokens.
 
 ## 13. Open questions
@@ -248,3 +249,15 @@ Findings:
 - `ref()` path typing must strip `undefined` at every step (optional fields), else the next key is `never`.
 - Transports report aborts differently (fetch rejects with the abort reason, node:http2 with a generic `AbortError` whose `cause` is the reason) → the client rethrows the caller's `signal.reason`.
 - Refactoring unary execution into one never-throwing `runUnary` made HTTP calls and batch lanes share idempotency, validation and error semantics.
+
+### S4 — 2026-10-28 ✅
+
+Implemented: `bench/` (separate-process harness with raw node:http2 baselines, micro-benchmarks, CPU-profile summariser, report generator, Docker profiles with CPU/RAM limits and netem), `src/exchange.ts` (core HTTP/2 API, compat only for HTTP/1.1), `src/compression.ts` + streaming compression, profile-driven optimizations. Results and methodology: [`docs/benchmarks.md`](docs/benchmarks.md).
+
+Bugs found by benchmarking/profiling and fixed with regression tests: O(n) idempotency eviction; backpressure deadlock when the sink high-water mark exceeds the buffer limit; stuck producers outliving the deadline (streams and batch lanes); `server.close()` hanging when clients already closed their sessions; `for await` over request bodies resetting the HTTP/2 stream on early exit (`destroyOnReturn`).
+
+### S5 — 2026-10-28 ✅
+
+Implemented: CORS (`cors` server option), `test/browser.test.ts` driving **headless Chrome via CDP and Firefox via WebDriver BiDi** with only Node built-ins (WebSocket client, `module.stripTypeScriptTypes` to serve `src/*.ts` to the browser — no bundler). 11 in-browser checks per browser against a cross-origin apü server. Safari not automated (safaridriver needs `sudo safaridriver --enable`).
+
+Totals after S5: 127 tests (`node --test`), all passing repeatedly; typecheck clean.

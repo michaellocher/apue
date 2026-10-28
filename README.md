@@ -10,7 +10,15 @@ npm test             # node --test
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 npm run ttfb         # TTFB + throughput measurement
 npm run certs        # dev cert in certs/ for running a server manually
+node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
+bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)
+node bench/micro.ts  # data-path micro-benchmarks
 ```
+
+`node --test` includes real-browser tests (headless Chrome via CDP, Firefox via WebDriver BiDi);
+browsers that aren't installed are skipped. Override paths with `CHROME_PATH` / `FIREFOX_PATH`.
+
+Benchmark results: [`docs/benchmarks.md`](docs/benchmarks.md).
 
 | Path | |
 |---|---|
@@ -23,4 +31,6 @@ npm run certs        # dev cert in certs/ for running a server manually
 | `src/protocol.ts` | media types, headers, `ApueError` |
 | `src/server.ts` | node:http2 server, `FrameWriter` (coalescing, backpressure, heartbeat) |
 | `src/client.ts` | typed `ApueClient` (method selection, retries) + fetch transport |
+| `src/exchange.ts` | HTTP/2 core stream API / HTTP/1.1 behind one interface |
+| `src/compression.ts` | Accept-Encoding negotiation, zstd/br/gzip, streaming flush |
 | `src/transport-http2.ts` | node:http2 transport (full duplex) |

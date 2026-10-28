@@ -69,6 +69,16 @@ export interface ApueServerOptions {
   maxBatchCalls?: number;
   /** Response compression (Accept-Encoding); `false` disables it. */
   compression?: false | { codings?: readonly Coding[]; minBytes?: number };
+  /** Cross-origin access for browsers. Same-origin deployment needs none (and saves preflights). */
+  cors?: CorsOptions;
+}
+
+export interface CorsOptions {
+  /** Allowed origins (exact match), or '*' for any. Credentials are only allowed with a list. */
+  origins: readonly string[] | '*';
+  /** Preflight cache lifetime; browsers cap it (Chromium 7200 s, Firefox 86400 s, WebKit 600 s). */
+  maxAge?: number;
+  credentials?: boolean;
 }
 
 export interface ApueServer {
@@ -244,6 +254,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   } = options;
   const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
+  const cors = options.cors;
+  if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
   for (const name of Object.keys(api)) {
@@ -286,6 +298,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     const method = req.method;
     const head = method === 'HEAD';
     try {
+      if (cors && applyCors(req, res, cors)) {
+        complete();
+        return; // preflight answered
+      }
       const queryAt = req.url.indexOf('?');
       const pathname = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
       const url = { pathname, search: queryAt === -1 ? '' : req.url.slice(queryAt) };
@@ -830,6 +846,45 @@ function cacheControl(def: OpDef): string {
 function hash(text: string | Uint8Array): string {
   // One-shot API (no Hash object); SHA-256 is hardware-accelerated: ~0.43 ms per MiB (bench S4).
   return cryptoHash('sha256', text, 'base64url');
+}
+
+const CORS_ALLOW_METHODS = 'GET, HEAD, POST, QUERY';
+const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT]);
+const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding';
+
+/**
+ * Adds CORS response headers for an allowed Origin and answers preflights. Returns true when the
+ * request was a preflight (already answered). Disallowed origins get no CORS headers, so the
+ * browser blocks them; their preflights get 403.
+ */
+function applyCors(req: Exchange, res: Exchange, cors: CorsOptions): boolean {
+  const origin = req.headers.origin;
+  const allowed = typeof origin === 'string' && (cors.origins === '*' || cors.origins.includes(origin));
+  const preflight = req.method === 'OPTIONS' && req.headers['access-control-request-method'] !== undefined;
+  if (allowed) {
+    res.setHeader('access-control-allow-origin', cors.origins === '*' ? '*' : origin);
+    if (cors.origins !== '*') res.setHeader('vary', 'origin');
+    if (cors.credentials) res.setHeader('access-control-allow-credentials', 'true');
+    res.setHeader('access-control-expose-headers', CORS_EXPOSE_HEADERS);
+    // Lets the page see nextHopProtocol/timings of API requests (Resource Timing).
+    res.setHeader('timing-allow-origin', cors.origins === '*' ? '*' : origin);
+  }
+  if (!preflight) return false;
+  if (!allowed) {
+    res.send(403, { 'content-type': MediaType.PROBLEM }, encodeJson({ title: 'Forbidden', status: 403, detail: 'origin not allowed' }));
+    return true;
+  }
+  const requested = String(req.headers['access-control-request-headers'] ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  const headers: Record<string, string> = {
+    'access-control-allow-methods': CORS_ALLOW_METHODS,
+    'access-control-allow-headers': requested.filter((h) => CORS_ALLOW_HEADERS.has(h)).join(', '),
+    'access-control-max-age': String(cors.maxAge ?? 7200),
+  };
+  res.send(204, headers);
+  return true;
 }
 
 function appendVary(existing: string | undefined, field: string): string {

@@ -55,14 +55,14 @@ export class H2Exchange implements Exchange {
 
   writeHead(status: number, headers: Record<string, string>): void {
     if (this.#gone()) return;
-    this.#stream.respond({ ...this.#extra, ...headers, ':status': status });
+    this.#stream.respond({ ...mergeHeaders(this.#extra, headers), ':status': status });
     this.headersSent = true;
   }
 
   send(status: number, headers: Record<string, string>, body?: Uint8Array): void {
     if (this.#gone()) return;
     const empty = body === undefined || body.byteLength === 0;
-    this.#stream.respond({ ...this.#extra, ...headers, ':status': status }, { endStream: empty });
+    this.#stream.respond({ ...mergeHeaders(this.#extra, headers), ':status': status }, { endStream: empty });
     this.headersSent = true;
     if (!empty) this.#stream.end(body);
     this.#discardRequest();
@@ -124,12 +124,12 @@ export class H1Exchange implements Exchange {
   }
 
   writeHead(status: number, headers: Record<string, string>): void {
-    this.#res.writeHead(status, headers);
+    this.#res.writeHead(status, this.#merged(headers));
     this.#res.flushHeaders();
   }
 
   send(status: number, headers: Record<string, string>, body?: Uint8Array): void {
-    this.#res.writeHead(status, headers);
+    this.#res.writeHead(status, this.#merged(headers));
     if (body && body.byteLength > 0) this.#res.end(body);
     else this.#res.end();
     if (!this.#req.readableEnded) this.#req.resume();
@@ -143,6 +143,19 @@ export class H1Exchange implements Exchange {
   onClose(callback: () => void): void {
     this.#res.once('close', callback);
   }
+
+  /** writeHead replaces same-named headers from setHeader; Vary must be combined instead. */
+  #merged(headers: Record<string, string>): Record<string, string> {
+    const vary = this.#res.getHeader('vary');
+    return vary !== undefined && headers.vary !== undefined ? { ...headers, vary: `${String(vary)}, ${headers.vary}` } : headers;
+  }
+}
+
+/** Response headers set earlier plus those of this response; Vary values are combined. */
+function mergeHeaders(extra: Record<string, string>, headers: Record<string, string>): Record<string, string> {
+  const merged = { ...extra, ...headers };
+  if (extra.vary !== undefined && headers.vary !== undefined) merged.vary = `${extra.vary}, ${headers.vary}`;
+  return merged;
 }
 
 /**

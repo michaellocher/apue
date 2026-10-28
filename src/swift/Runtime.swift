@@ -1211,7 +1211,7 @@ final class ResponseValues {
 
   func next() async throws -> Node? {
     if finished { return nil }
-    let framed = response.mediaType == "application/apue+json"
+    let framed = response.mediaType == "application/vnd.apue.frames"
     if response.status >= 400 || !framed {
       finished = true
       if response.status >= 400 { throw await response.problem() }
@@ -1605,7 +1605,7 @@ public final class ApueClient: Sendable {
 
   static let unreserved = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
   static let maxGetURL = 2048
-  static let accept = "application/apue+json, application/json;q=0.9, application/problem+json;q=0.8"
+  static let accept = "application/vnd.apue.frames, application/json;q=0.9, application/problem+json;q=0.8"
 
   static func encode<T: Encodable>(_ value: T) throws -> Node { try NodeEncoder.encode(value) }
 
@@ -1699,7 +1699,7 @@ public final class ApueClient: Sendable {
           call?.writerFailed(error)  // the inputs failed (their sequence threw, or encoding): so does the call
         }
       })
-      var headers = ["accept": ApueClient.accept, "content-type": "application/apue+json"]
+      var headers = ["accept": ApueClient.accept, "content-type": "application/vnd.apue.frames"]
       if let timeoutMs { headers["apue-timeout"] = String(timeoutMs) }
       return try await call.client.send("POST", "/\(op.name)", headers: headers, bodyStream: input)
     }

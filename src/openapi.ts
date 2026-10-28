@@ -1,7 +1,7 @@
 // OpenAPI 3.2 description derived from the op definitions only (research/07–08): no API change,
 // nothing hand-written. Each op is described as the server routes it (handle() in server.ts, the
 // same rules as opHttp/opErrors in docs.ts). What OpenAPI cannot express stays opaque and is
-// carried by `x-apue-*` extensions: the frame format of `application/apue+json` (itemSchema is
+// carried by `x-apue-*` extensions: the frame format of `application/vnd.apue.frames` (itemSchema is
 // only for sequential media types without envelopes or metadata, OAS 3.2 §4.14.3.1 — our frames have
 // an 8-byte header), the per-message schema of streams, the op back-reference. Web-platform only.
 import { canonicalJson, deprecationHeaders, hasRequestStream, hasResponseStream, isCacheableRead, MAX_GET_URL, type Api, type OpDef } from './api.ts';
@@ -54,7 +54,7 @@ const DEFAULT_DESCRIPTION = `Generated from the apü operation definitions (not 
 
 - Reads (safe ops without a request stream) are \`GET /{op}?i={input}\` with the input as RFC 8785 canonical JSON, percent-encoded; inputs that make the URL longer than ${MAX_GET_URL} characters go as \`QUERY\` (or \`POST\` where QUERY is blocked) with the JSON as body. Responses carry a strong ETag; \`If-None-Match\` gives 304.
 - Everything else is \`POST /{op}\` with a JSON body; non-safe unary calls should send an \`Idempotency-Key\` and may then be retried.
-- \`application/apue+json\` bodies are length-prefixed frames, not JSON: an 8-byte header (type, flags, lane u16, length u32) and a payload. MSG payloads are JSON messages (schema in \`x-apue-message-schema\`; \`t.bytes()\` values as \`{"$blob": k}\` references to the BLOB frames sent before the MSG, look-alike values escaped as \`{"$lit": value}\`), an END frame \`{status, problem?}\` ends the stream — a body without END is truncated. Server streams can also be read as \`text/event-stream\`.
+- \`application/vnd.apue.frames\` bodies are length-prefixed frames, not JSON: an 8-byte header (type, flags, lane u16, length u32) and a payload. MSG payloads are JSON messages (schema in \`x-apue-message-schema\`; \`t.bytes()\` values as \`{"$blob": k}\` references to the BLOB frames sent before the MSG, look-alike values escaped as \`{"$lit": value}\`), an END frame \`{status, problem?}\` ends the stream — a body without END is truncated. Server streams can also be read as \`text/event-stream\`.
 - Errors are RFC 9457 problem details. Handlers and the application can answer with more than the protocol errors listed per operation (see \`default\`).`;
 
 /** Builds the OpenAPI 3.2 description of `api`. Pure; a few milliseconds for a large API. */
@@ -263,7 +263,7 @@ function requestBody(ctx: OpContext): Json {
   };
 }
 
-/** Media Type Object for `application/apue+json`: opaque frames, the message schema as an extension. */
+/** Media Type Object for `application/vnd.apue.frames`: opaque frames, the message schema as an extension. */
 function framed(ctx: OpContext, messageSchema: Json, example: unknown): Json {
   ctx.used.add('End');
   return {

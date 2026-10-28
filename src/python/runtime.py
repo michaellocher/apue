@@ -43,8 +43,8 @@ try:  # Python ≥ 3.14 (PEP 784), when built with libzstd
 except ImportError:  # pragma: no cover - depends on the Python build
     _zstd = None
 
-STREAM_JSON = "application/apue+json"
-ACCEPT = "application/apue+json, application/json;q=0.9, application/problem+json;q=0.8"
+STREAM_JSON = "application/vnd.apue.frames"
+ACCEPT = "application/vnd.apue.frames, application/json;q=0.9, application/problem+json;q=0.8"
 ACCEPT_ENCODING = "zstd, gzip" if _zstd is not None else "gzip"
 MAX_GET_URL = 2048
 MAX_FRAME = 16 * 1024 * 1024  # per frame, like the TypeScript client

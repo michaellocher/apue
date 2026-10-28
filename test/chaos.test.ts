@@ -92,12 +92,12 @@ test('HTTP/2: garbage after the preface, and no preface at all', async () => {
 test('TCP connection dropped in the middle of a streamed response (h2 and HTTP/1.1)', async () => {
   const session = http2.connect(server.url, { ca: testCert().cert });
   session.on('error', () => {});
-  const req = session.request({ ':path': '/ticker', accept: 'application/apue+json' });
+  const req = session.request({ ':path': '/ticker', accept: 'application/vnd.apue.frames' });
   req.on('error', () => {});
   await new Promise((resolve) => req.once('data', resolve));
   session.socket.destroy();
   await new Promise<void>((resolve, reject) => {
-    const h1 = https.get(`${server.url}/ticker`, { ca: testCert().cert, headers: { accept: 'application/apue+json' } }, (res) => {
+    const h1 = https.get(`${server.url}/ticker`, { ca: testCert().cert, headers: { accept: 'application/vnd.apue.frames' } }, (res) => {
       res.once('data', () => {
         res.socket.destroy();
         resolve();
@@ -111,9 +111,9 @@ test('TCP connection dropped in the middle of a streamed response (h2 and HTTP/1
 test('GOAWAY with an error code while streams are open', async () => {
   const session = http2.connect(server.url, { ca: testCert().cert });
   session.on('error', () => {});
-  const stream = session.request({ ':path': '/ticker', accept: 'application/apue+json' });
+  const stream = session.request({ ':path': '/ticker', accept: 'application/vnd.apue.frames' });
   stream.on('error', () => {});
-  const upload = session.request({ ':method': 'POST', ':path': '/sum.client', 'content-type': 'application/apue+json' });
+  const upload = session.request({ ':method': 'POST', ':path': '/sum.client', 'content-type': 'application/vnd.apue.frames' });
   upload.on('error', () => {});
   upload.write(msgFrame(1));
   await new Promise((resolve) => stream.once('data', resolve));
@@ -129,7 +129,7 @@ test('HTTP/1.1: incomplete headers, then a body cut off mid-frame', async () => 
   await sleep(30);
   half.destroy();
   const cut = await rawTls('http/1.1');
-  cut.write('POST /sum.client HTTP/1.1\r\nHost: x\r\nContent-Type: application/apue+json\r\nTransfer-Encoding: chunked\r\n\r\n');
+  cut.write('POST /sum.client HTTP/1.1\r\nHost: x\r\nContent-Type: application/vnd.apue.frames\r\nTransfer-Encoding: chunked\r\n\r\n');
   const frame = msgFrame(41);
   cut.write(`${frame.byteLength.toString(16)}\r\n`);
   cut.write(frame.subarray(0, 5)); // half a chunk, half a frame
@@ -171,7 +171,7 @@ test('a client resetting its request stream mid-call is a 499 for the handler, n
   for (const code of [http2.constants.NGHTTP2_CANCEL, http2.constants.NGHTTP2_INTERNAL_ERROR]) {
     const session = http2.connect(server.url, { ca: testCert().cert });
     session.on('error', () => {});
-    const req = session.request({ ':method': 'POST', ':path': '/echo.duplex', 'content-type': 'application/apue+json' });
+    const req = session.request({ ':method': 'POST', ':path': '/echo.duplex', 'content-type': 'application/vnd.apue.frames' });
     req.on('error', () => {});
     req.write(msgFrame(1));
     await new Promise((resolve) => req.once('data', resolve)); // the echo: the handler is running
@@ -187,7 +187,7 @@ test('a handler bug is still logged when the client is already gone', async (t) 
   const logged = t.mock.method(console, 'error', () => {});
   const session = http2.connect(server.url, { ca: testCert().cert });
   session.on('error', () => {});
-  const req = session.request({ ':path': '/buggy.after.cancel', accept: 'application/apue+json' });
+  const req = session.request({ ':path': '/buggy.after.cancel', accept: 'application/vnd.apue.frames' });
   req.on('error', () => {});
   await new Promise((resolve) => req.once('data', resolve));
   req.close(http2.constants.NGHTTP2_CANCEL);
@@ -200,7 +200,7 @@ test('a handler awaiting with ctx.signal (AbortError on disconnect) is not logge
   const logged = t.mock.method(console, 'error', () => {});
   const session = http2.connect(server.url, { ca: testCert().cert });
   session.on('error', () => {});
-  const req = session.request({ ':path': '/waits.with.signal', accept: 'application/apue+json' });
+  const req = session.request({ ':path': '/waits.with.signal', accept: 'application/vnd.apue.frames' });
   req.on('error', () => {});
   await new Promise((resolve) => req.once('data', resolve));
   req.close(http2.constants.NGHTTP2_CANCEL);

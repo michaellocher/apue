@@ -47,10 +47,10 @@ import (
 )
 
 const (
-	mediaStream  = "application/apue+json"
+	mediaStream  = "application/vnd.apue.frames"
 	mediaJSON    = "application/json"
 	mediaProblem = "application/problem+json"
-	acceptValue  = "application/apue+json, application/json;q=0.9, application/problem+json;q=0.8"
+	acceptValue  = "application/vnd.apue.frames, application/json;q=0.9, application/problem+json;q=0.8"
 	maxGetURL    = 2048
 	blobChunk    = 64 * 1024
 	maxFrame     = 16 << 20 // larger frames are refused before they are buffered

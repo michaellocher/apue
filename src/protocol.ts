@@ -4,7 +4,7 @@ import type { Problem } from './frame.ts';
 export const MediaType = {
   JSON: 'application/json',
   PROBLEM: 'application/problem+json',
-  STREAM_JSON: 'application/apue+json',
+  STREAM_JSON: 'application/vnd.apue.frames',
   SSE: 'text/event-stream',
 } as const;
 

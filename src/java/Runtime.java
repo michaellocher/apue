@@ -71,9 +71,9 @@ public final class Runtime {
 
   // ---- apue runtime: begin ----
 
-  static final String STREAM_JSON = "application/apue+json";
+  static final String STREAM_JSON = "application/vnd.apue.frames";
   static final String PROBLEM_JSON = "application/problem+json";
-  static final String ACCEPT = "application/apue+json, application/json;q=0.9, application/problem+json;q=0.8";
+  static final String ACCEPT = "application/vnd.apue.frames, application/json;q=0.9, application/problem+json;q=0.8";
   static final int MAX_GET_URL = 2048;
   static final int MSG = 0x00, END = 0x01, BLOB = 0x02;
   static final int FLAG_LAST = 0x02;

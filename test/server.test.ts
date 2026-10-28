@@ -277,7 +277,7 @@ describe('resource protection', () => {
     const closed = new Promise<number>((resolve) => session.on('close', () => resolve(performance.now() - t0)));
     // A 300 ms stream (slow.first; heartbeats keep the session busy) must complete before the close.
     const frames = await new Promise<number>((resolve, reject) => {
-      const req = session.request({ ':method': 'POST', ':path': '/slow.first', accept: 'application/apue+json' });
+      const req = session.request({ ':method': 'POST', ':path': '/slow.first', accept: 'application/vnd.apue.frames' });
       let bytes = 0;
       req.on('data', (chunk: Buffer) => (bytes += chunk.byteLength));
       req.on('end', () => resolve(bytes));
@@ -323,8 +323,8 @@ describe('peer resets', () => {
         session.on('error', () => {});
         await new Promise<void>((resolve) => {
           const req = upload
-            ? session.request({ ':method': 'POST', ':path': '/sum.client', 'content-type': 'application/apue+json' })
-            : session.request({ ':method': 'POST', ':path': '/ticker.forever', accept: 'application/apue+json' });
+            ? session.request({ ':method': 'POST', ':path': '/sum.client', 'content-type': 'application/vnd.apue.frames' })
+            : session.request({ ':method': 'POST', ':path': '/ticker.forever', accept: 'application/vnd.apue.frames' });
           req.on('error', () => {});
           req.on('data', () => {});
           req.on('close', () => resolve());

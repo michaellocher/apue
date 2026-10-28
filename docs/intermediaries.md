@@ -45,8 +45,11 @@ Versions:
    for 1.5 s while the server produces 64 KiB items as fast as allowed. Direct, HTTP/2 flow control
    stops the server at the client's 4 MiB window. Through proxies each hop has its own window and
    buffers: the server got 6–7 MiB ahead through nginx and HAProxy, 32 MiB through Envoy, and through
-   Caddy (defaults) it produced the entire 125 MiB response — memory held somewhere between server
-   and client, not observed where. With T3's end-to-end credit the server stopped at exactly the
+   Caddy (defaults) it produced the entire 125 MiB response. Cross-checked from a client inside the
+   Docker network (no Docker Desktop port forwarder): same 125 MiB through Caddy, 4.0 MiB directly to
+   the server. During the stall the client held exactly its 4.0 MiB window, the TCP queues in both
+   containers were empty and Caddy's RSS was 51 MiB — where the remaining bytes were is not
+   determined. With T3's end-to-end credit the server stopped at exactly the
    client's 4 MiB window behind every proxy that passes WebSockets. This is the measured case for
    app-level credit (spec §8: message-level CREDIT across tiers remains planned).
 

@@ -172,6 +172,7 @@ Limits (implemented): a frame header announcing more than the limit is rejected 
 - Schemas are TS objects built from a small erasable-syntax builder with static type inference — no codegen for TS clients.
 - `GET {base}/.well-known/apue` → manifest: ops, effects, stream kind, JSON Schema for input/output, cache policy, deprecation, resumability. `ETag` = manifest hash, `no-cache`.
 - `GET|HEAD /.well-known/api-catalog` (RFC 9727, implemented): `application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"` with a `service-desc` link to the manifest, and `Link: </.well-known/api-catalog>; rel="api-catalog"` — generic discovery for crawlers and agents.
+- **Typed clients without the server's sources** (implemented, S11): `node bin/apue-types.ts <base-url>` turns the manifest into a `defineApi(...)` module with the same `t.*` schemas; verified by a round trip (API → manifest → generated code → identical manifest). The generator rejects JSON Schema keywords it can't express instead of silently dropping constraints.
 - Evolution: only additive changes within a major; removal via `deprecated` → `Deprecation`/`Sunset` headers.
 - Limits are part of the schema (list max, select depth) → cost is bounded statically.
 
@@ -199,7 +200,7 @@ Open:
 5. Problem type namespace (placeholder `https://apue.dev/problems/`).
 6. Auth: out of scope (standard `Authorization`), or define token-binding guidance? (Idempotency keys are already scoped per credentials.)
 7. Long-running operations: resumable streams cover progress + result; is a separate pattern needed?
-8. Non-TypeScript schema source (the manifest is JSON Schema; a code generator for other languages).
+8. Generators for other languages (the manifest is JSON Schema; TypeScript generation exists).
 
 ## 14. Spikes (Node 26, native TS, no build step)
 
@@ -304,3 +305,7 @@ Field selection (`src/select.ts`, typed `pick()`), idle-session and body timeout
 ### S10 — 2026-10-28 ✅ binary values
 
 `t.bytes()`, `src/blobs.ts` (split/escape, chunking, assembler), BLOB frames in server streams, framed unary responses, request streams (HTTP/2 and WebSocket) and batch lanes. Found by the tests: unescaping `$lit` must happen exactly for bytes ops — doing it for every message altered user data in batches. 177 tests.
+
+### S11 — 2026-10-28 ✅ robustness probe, codegen, gRPC comparison
+
+Path/header probe found two 500s (malformed percent-encoding in the op path, deadlines beyond the timer range) → 400. `src/codegen.ts` + `bin/apue-types.ts` (manifest → typed API module; strict about unsupported keywords — found by its own test). Benchmark against grpc-js: 1.5× unary, 30× streaming (docs/benchmarks.md). 181 tests.

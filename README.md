@@ -60,7 +60,7 @@ the nginx probe.
 
 ```sh
 npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 177 tests incl. headless Chrome + Firefox (skipped if absent)
+npm test             # node --test: 181 tests incl. headless Chrome + Firefox (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
 bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)
@@ -83,5 +83,6 @@ node bench/micro.ts  # data-path micro-benchmarks
 | Compression: zstd/br/gzip, per-burst flush | `src/compression.ts` |
 | Transports: HTTP/2 core API + HTTP/1.1, fetch, node:http2 (full duplex), WebSocket (RFC 8441/6455) | `src/exchange.ts`, `src/transport-http2.ts`, `src/websocket.ts`, `src/transport-ws.ts` |
 | CORS, resource limits (streams, idle, body time), manifest + RFC 9727 catalog | `src/server.ts` |
+| Typed client contract from a running server's manifest (`node bin/apue-types.ts <url>`) | `src/codegen.ts`, `bin/apue-types.ts` |
 
 Planned (see spec §13): CBOR, CREDIT flow control, WebTransport, resumable uploads, CDN cache headers.

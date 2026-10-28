@@ -1,5 +1,6 @@
+#!/usr/bin/env node
 // Generates a typed apü API definition from a server's manifest.
-//   node bin/apue-types.ts https://api.example [--runtime ./apue/src] [--out api.ts] [--ca cert.pem]
+//   apue-types https://api.example [--runtime apue | ./apue/src] [--out api.ts] [--ca cert.pem]
 //   node bin/apue-types.ts https://api.example --lang python [--out api.py]   (self-contained module)
 import { readFileSync, writeFileSync } from 'node:fs';
 import tls from 'node:tls';
@@ -9,7 +10,7 @@ import { generatePython } from '../src/codegen-python.ts';
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { runtime: { type: 'string', default: './apue' }, out: { type: 'string' }, ca: { type: 'string' }, name: { type: 'string', default: 'api' }, lang: { type: 'string', default: 'typescript' } },
+  options: { runtime: { type: 'string', default: 'apue' }, out: { type: 'string' }, ca: { type: 'string' }, name: { type: 'string', default: 'api' }, lang: { type: 'string', default: 'typescript' } },
 });
 const base = positionals[0];
 if (!base) throw new Error('usage: apue-types <base-url> [--runtime path] [--out file] [--ca cert.pem]');

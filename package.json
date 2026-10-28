@@ -1,16 +1,19 @@
 {
-  "name": "apue-spike",
-  "version": "0.0.0",
-  "private": true,
-  "description": "apü — spikes for a new HTTP/2-native API protocol",
+  "name": "apue",
+  "version": "0.1.0-beta.1",
+  "description": "apü — typed API operations on plain HTTP: cacheable reads, streaming in every direction, resumable streams, uploads and downloads, pipelined batches. Server, clients and code generators.",
   "type": "module",
   "engines": {
     "node": ">=26.11.0"
   },
   "scripts": {
+    "build": "node scripts/build.ts",
     "test": "node --test --test-timeout=60000",
     "test:watch": "node --test --test-timeout=60000 --watch",
     "typecheck": "tsc",
+    "verify:package": "node scripts/verify-package.ts",
+    "site": "node site-src/build.mjs && node site-src/check.mjs",
+    "prepack": "npm run build",
     "certs": "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 -keyout certs/key.pem -out certs/cert.pem -subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1",
     "ttfb": "node scripts/ttfb.ts"
   },
@@ -20,5 +23,63 @@
     "@types/node": "^26.6.5",
     "playwright-core": "^1.64.1",
     "typescript": "^7.0.2"
-  }
+  },
+  "license": "MIT",
+  "author": "Michael Locher",
+  "homepage": "https://apue.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaellocher/apue.git"
+  },
+  "bugs": {
+    "url": "https://github.com/michaellocher/apue/issues"
+  },
+  "keywords": [
+    "api",
+    "http2",
+    "rpc",
+    "streaming",
+    "websocket",
+    "typescript",
+    "schema",
+    "codegen",
+    "resumable-upload"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./server": {
+      "types": "./dist/src/server.d.ts",
+      "default": "./dist/src/server.js"
+    },
+    "./downloads": {
+      "types": "./dist/src/downloads.d.ts",
+      "default": "./dist/src/downloads.js"
+    },
+    "./http2": {
+      "types": "./dist/src/transport-http2.d.ts",
+      "default": "./dist/src/transport-http2.js"
+    },
+    "./websocket": {
+      "types": "./dist/src/transport-ws.d.ts",
+      "default": "./dist/src/transport-ws.js"
+    },
+    "./codegen": {
+      "types": "./dist/src/entry/codegen.d.ts",
+      "default": "./dist/src/entry/codegen.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "apue-types": "./dist/bin/apue-types.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ]
 }

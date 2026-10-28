@@ -1,89 +1,140 @@
 # apü
 
-A new API protocol in the family of REST, GraphQL, gRPC — designed from research on what those get
-wrong, built purely on HTTP semantics (HTTP/2 first, HTTP/1.1 and HTTP/3-via-proxy compatible),
-with maximum throughput, short TTFB, compression, multiplexing, duplex streaming and resumability.
-Spikes in Node 26 with native TypeScript and no build step.
+**Typed API operations on plain HTTP.** A peer to REST, GraphQL and gRPC: you declare operations
+with their effect (`safe`, `idempotent`, `unsafe`) and schemas; apü maps them onto ordinary HTTP —
+reads become cacheable `GET`s, writes carry idempotency keys, errors are real status codes with
+RFC 9457 problem details — and adds streaming in every direction (also from browsers), resumable
+streams and uploads, download links with Range support and pipelined batches. One TypeScript
+definition validates on both sides and types handlers and clients; other languages get generated
+clients from the server's manifest.
 
-- Status of the overnight session (what exists, bugs found, decisions taken): [`docs/status.md`](docs/status.md)
-- Design: [`SPEC-DRAFT.md`](SPEC-DRAFT.md) (draft 01, marks what is implemented vs planned)
-- On the wire: [`docs/wire.md`](docs/wire.md) — real curl sessions (idempotent replay, ETag/304, QUERY,
-  selection, problem details, SSE view, a batch in hex)
-- Research: [`research/`](research/) — problems of existing API styles, HTTP/2 and modern HTTP,
-  data plane performance, Node 26 platform, verified normative details
-- Measurements: [`docs/benchmarks.md`](docs/benchmarks.md) (local, constrained Docker, WAN
-  emulation, vs gRPC/grpc-js: 1.5× unary, 30× streaming) · [`docs/intermediaries.md`](docs/intermediaries.md)
-  (through nginx, Caddy, HAProxy, Envoy)
+> **Beta.** `0.1.0-beta.x` releases may still change the wire format and APIs; every change is
+> listed in [CHANGELOG.md](CHANGELOG.md). Website and docs: [apue.dev](https://apue.dev) ·
+> design: [SPEC-DRAFT.md](SPEC-DRAFT.md).
 
-## In one minute
-
-```ts
-// api.ts — the contract, shared by server and clients (types + validation, no codegen)
-export const api = defineApi({
-  'users.get':    op({ effect: 'safe', input: t.object({ id: t.string() }), output: User, cache: { maxAge: 60 } }),
-  'orders.create': op({ effect: 'unsafe', input: NewOrder, output: Order }),
-  'orders.watch': op({ effect: 'safe', stream: 'server', resumable: true, input: t.void(), output: Order }),
-});
-
-// client
-const client = new ApueClient(api, http2Transport('https://api.example'));
-await client.call('users.get', { id: '42' });             // GET /users.get?i={"id":"42"} → cacheable, ETag
-await client.pick('users.get', { id: '42' }, ['name']);    // only the fields you need
-await client.call('orders.create', { item: 'book' });     // POST + Idempotency-Key → safe to retry
-const b = client.batch();                                  // dependent calls, one round trip
-const u = b.call('users.get', { id: '42' });
-const o = b.call('orders.create', { item: 'book', userId: u.ref('id') });
-await b.send();
-for await (const order of client.stream('orders.watch')) {} // resumes after network loss
-```
-
-What happens on the wire: safe ops are `GET` (or `QUERY`, RFC 10008, for large inputs, with POST
-fallback), errors are real HTTP status codes with RFC 9457 problem details, streams are
-length-prefixed frames ending with an in-band status, responses are compressed (zstd/br/gzip) and
-streamed with flushes per burst, and the same frames run over WebSocket where browsers can't
-stream request bodies.
-
-## Try it
+## Install
 
 ```sh
-node examples/todo/server.ts     # https://localhost:8443 — open it in a browser (self-signed cert)
-node examples/todo/cli.ts        # typed calls, a pipelined batch, a resumable change stream
+npm install apue@beta
 ```
 
-The example ([`examples/todo`](examples/todo)) serves page and API from one origin; the browser
-imports `src/*.ts` type-stripped by the server (no build step).
+Node ≥ 26.11 for the server and the Node client; the web-safe core (`apue`, `apue/websocket`) runs
+in browsers too. No runtime dependencies.
+
+## Quick start
+
+```ts
+// api.ts — the contract, shared by server and clients
+import { defineApi, op, t } from 'apue';
+
+const Todo = t.object({ id: t.number({ int: true }), title: t.string({ min: 1, max: 200 }), done: t.boolean() });
+export const api = defineApi({
+  'todos.list':   op({ effect: 'safe', input: t.void(), output: t.array(Todo) }),
+  'todos.create': op({ effect: 'unsafe', input: t.object({ title: t.string({ min: 1 }) }), output: Todo }),
+  'todos.watch':  op({ effect: 'safe', stream: 'server', resumable: true, input: t.void(), output: Todo }),
+});
+```
+
+```ts
+// server.ts
+import { readFileSync } from 'node:fs';
+import { createApueServer, type Handlers } from 'apue/server';
+import { api } from './api.ts';
+
+const todos: Array<{ id: number; title: string; done: boolean }> = [];
+const handlers: Handlers<typeof api> = {
+  'todos.list': () => todos,
+  'todos.create': ({ title }) => {
+    const todo = { id: todos.length + 1, title, done: false };
+    todos.push(todo);
+    return todo;
+  },
+  'todos.watch': async function* (_input, ctx) {
+    for (let i = ctx.resumeFrom === undefined ? 0 : Number(ctx.resumeFrom) + 1; i < todos.length; i++) {
+      yield todos[i]!;
+      ctx.checkpoint(String(i)); // a lost connection resumes after this item
+    }
+  },
+};
+const server = createApueServer(api, handlers, { key: readFileSync('key.pem'), cert: readFileSync('cert.pem') });
+await server.listen(8443);
+```
+
+```ts
+// client.ts — typed end to end, no code generation
+import { ApueClient } from 'apue';
+import { http2Transport } from 'apue/http2';   // browsers: fetchTransport from 'apue', or autoTransport from 'apue/websocket'
+import { api } from './api.ts';
+
+const client = new ApueClient(api, http2Transport('https://localhost:8443'));
+await client.call('todos.create', { title: 'buy milk' }); // POST + Idempotency-Key: safe to retry
+const all = await client.call('todos.list');              // GET /todos.list — cacheable, ETag/304
+for await (const todo of client.stream('todos.watch')) console.log(todo.title);
+```
+
+### Entry points
+
+| Import | What | Runs in |
+|---|---|---|
+| `apue` | `defineApi`, `op`, `t` (schemas), `ApueClient`, `fetchTransport`, `ApueError`, `Download` | browsers, Node |
+| `apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options | Node |
+| `apue/downloads` | `download.fromFile()`, `download.fromBytes()` for `t.download()` outputs | Node |
+| `apue/http2` | `http2Transport` (full duplex) | Node |
+| `apue/websocket` | `webSocketTransport`, `autoTransport` (streaming uploads in every browser) | browsers |
+| `apue/codegen` | `generateApi`, `generatePython` | Node |
+| `apue-types` (CLI) | typed TypeScript modules or Python clients from a server's manifest | Node |
+
+```sh
+npx apue-types https://api.example --out api.ts              # TypeScript, imports from 'apue'
+npx apue-types https://api.example --lang python --out api.py # self-contained, standard library only
+```
+
+## Features
+
+- **Operations on HTTP semantics**: `GET` with canonical `?i=` input (or `QUERY`/`POST` for large
+  inputs), ETag/304, cache policies incl. CDN-Cache-Control, field selection (`?s=`), deadlines,
+  idempotency keys with replay, RFC 9457 errors, deprecation headers.
+- **Streams**: server, client and bidirectional; 8-byte frames with an in-band final status,
+  heartbeats, SSE view; tiers for every client (HTTP/2, fetch, WebSocket with byte-window flow
+  control); resumable streams with stateless signed checkpoints.
+- **Binary data**: bytes as raw frames (no base64), resumable uploads
+  (draft-ietf-httpbis-resumable-upload), streaming `t.file()` inputs, a persistent upload store,
+  `t.download()` outputs served as short-lived links with Range/resume.
+- **Batches**: dependent calls in one round trip (`$ref`), results streamed as they complete.
+- **Operations**: a `principal` hook for callers and scoping, CORS, bounded shutdown, idle and body
+  timeouts, a manifest with derived documentation and an RFC 9727 API catalog.
+
+What is measured and how: [docs/benchmarks.md](docs/benchmarks.md) and
+[docs/intermediaries.md](docs/intermediaries.md). What is still open: SPEC-DRAFT.md §13.
 
 ## Develop
 
-Requires Node ≥ 26.11 (native TypeScript, no build step) and `openssl` (tests generate a throwaway
-cert). Optional: Chrome/Firefox (and `npx playwright-core install webkit` for WebKit) for the
-real-browser tests, Docker for constrained benchmarks and the proxy probes.
+Requires Node ≥ 26.11 (the sources run with native type stripping), `openssl` (tests generate a
+throwaway certificate), Python ≥ 3.11 and Go for the generator tests (skipped if absent), Chrome,
+Firefox and Playwright's WebKit (`npx playwright-core install webkit`) for the real-browser tests
+(skipped if absent).
 
 ```sh
-npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 292 tests incl. headless Chrome, Firefox, WebKit (skipped if absent)
-npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
-node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
-bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)
-bench/proxy/run.sh   # behaviour through real nginx, Caddy, HAProxy and Envoy (Docker)
-node bench/micro.ts  # data-path micro-benchmarks
+npm install
+npm test                # node --test: unit, integration, fuzz, chaos, leak and real-browser tests
+npm run typecheck       # tsc
+npm run build           # dist/: JavaScript + declarations, as published
+npm run verify:package  # npm pack → install into a fresh project → use every entry point
+npm run site            # rebuild site/ from site-src/ and check links, anchors, contrast
+node examples/todo/server.ts   # https://localhost:8443 — a same-origin app (self-signed cert)
+node bench/run.ts       # benchmarks; bench/docker.sh, bench/proxy/run.sh need Docker
 ```
 
-## Implemented
+Releasing: [CONTRIBUTING.md](CONTRIBUTING.md#releasing). Security reports: [SECURITY.md](SECURITY.md).
 
-| Area | Where |
-|---|---|
-| Contracts: TS-first schemas with inference, JSON Schema export, field selection | `src/schema.ts`, `src/api.ts`, `src/select.ts` |
-| HTTP mapping: GET/QUERY/POST/HEAD by effect, RFC 8785 canonical inputs, ETag/304, cache policy, Deprecation/Sunset | `src/server.ts`, `src/client.ts` |
-| Errors: RFC 9457 problem types, early real status for streams, in-band END | `src/protocol.ts`, `src/server.ts` |
-| Idempotency-Key replay (409/422 semantics), client retries with backoff | `src/idempotency.ts`, `src/client.ts` |
-| Framing (8-byte header), coalescing writer, heartbeats, SSE rendering | `src/frame.ts`, `src/server.ts` |
-| Binary values (`t.bytes()`) as raw BLOB frames — no base64 | `src/blobs.ts` |
-| Pipelined batches with `$ref`, out-of-order lanes, 424 | `src/refs.ts`, `src/batch.ts` |
-| Resumable streams with HMAC checkpoints (stateless, exactly-once) | `src/resume.ts` |
-| Compression: zstd/br/gzip, per-burst flush | `src/compression.ts` |
-| Transports: HTTP/2 core API + HTTP/1.1, fetch, node:http2 (full duplex), WebSocket (RFC 8441/6455) with HTTP/2-style byte windows (`apue.v1`) | `src/exchange.ts`, `src/transport-http2.ts`, `src/websocket.ts`, `src/transport-ws.ts` |
-| CORS, resource limits (streams, idle, body time), manifest + RFC 9727 catalog | `src/server.ts` |
-| Typed client contract from a running server's manifest (`node bin/apue-types.ts <url>`) | `src/codegen.ts`, `bin/apue-types.ts` |
+## Background
 
-Also implemented: CDN-Cache-Control and cache groups (RFC 9213/9875); resumable uploads (draft-ietf-httpbis-resumable-upload, `/$uploads`, bytes in unary inputs). Planned (see spec §13): CBOR, message-level CREDIT across tiers, WebTransport.
+- [SPEC-DRAFT.md](SPEC-DRAFT.md) — the design, what is implemented, and the spike log with every
+  measurement and bug found along the way.
+- [research/](research/) — problems of existing API styles, HTTP/2 and modern HTTP, data plane
+  performance, Node 26, normative details, uploads, docs, callers, the remaining decisions.
+- [docs/wire.md](docs/wire.md) — real curl sessions; [docs/status.md](docs/status.md) — project status.
+
+## License
+
+[MIT](LICENSE)

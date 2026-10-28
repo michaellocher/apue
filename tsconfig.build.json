@@ -1,0 +1,15 @@
+{
+  // Emits the published package (dist/): JavaScript with .js imports (Node strips types only outside
+  // node_modules, so a package must ship JavaScript) plus declarations. `npm run build`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["src", "bin"]
+}

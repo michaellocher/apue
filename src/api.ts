@@ -32,6 +32,8 @@ export interface OpDef<I = any, O = any, S extends StreamKind = StreamKind> {
   cache?: CachePolicy;
   deprecated?: Deprecation;
   description?: string;
+  /** Server streams only: the handler emits checkpoints, clients resume after disconnects. */
+  resumable?: boolean;
 }
 
 export type Api = Record<string, OpDef>;
@@ -46,6 +48,7 @@ interface OpInit<IS extends Schema<any>, OS extends Schema<any>> {
   cache?: CachePolicy;
   deprecated?: Deprecation;
   description?: string;
+  resumable?: boolean;
 }
 
 /**
@@ -59,6 +62,8 @@ export function op<IS extends Schema<any>, OS extends Schema<any>, const S exten
 export function op(def: OpInit<Schema<unknown>, Schema<unknown>> & { stream?: StreamKind }): OpDef {
   const { since, sunset } = def.deprecated ?? {};
   if (since && sunset && sunset < since) throw new Error('deprecated.sunset must not be earlier than deprecated.since (RFC 9745 §4)');
+  if (def.resumable && def.stream !== 'server') throw new Error('only server-streaming ops can be resumable');
+  if (def.resumable && def.effect === 'unsafe') throw new Error('resumable ops must be safe or idempotent (resuming re-sends the request)');
   return { ...def, stream: def.stream ?? 'none' };
 }
 

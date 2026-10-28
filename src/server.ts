@@ -25,6 +25,7 @@ import { acceptKey, checkHandshake, WS_SUBPROTOCOL, WsClose, WsConnection } from
 import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
+import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { ValidationError, type Schema } from './schema.ts';
 
 export interface CallContext {
@@ -34,7 +35,20 @@ export interface CallContext {
   readonly headers: http2.IncomingHttpHeaders;
   readonly httpVersion: string;
   readonly method: string;
+  /** Resumable streams: the cursor of the last checkpoint the client received, if resuming. */
+  readonly resumeFrom?: string;
+  /**
+   * Resumable streams: everything yielded so far is covered by `cursor`. Sends a signed CHECKPOINT
+   * frame; after a disconnect the client resumes with it and the handler gets `resumeFrom`.
+   * Contract: resuming from a cursor must yield the same items in the same order as the original
+   * stream did after that checkpoint (the client skips the ones it already has).
+   */
+  checkpoint(cursor: string): void;
 }
+
+const noCheckpoint = () => {
+  throw new Error('ctx.checkpoint() needs an op declared with resumable: true');
+};
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -74,6 +88,8 @@ export interface ApueServerOptions {
   compression?: false | { codings?: readonly Coding[]; minBytes?: number };
   /** Cross-origin access for browsers. Same-origin deployment needs none (and saves preflights). */
   cors?: CorsOptions;
+  /** Resume tokens: share `secret` between replicas so any instance can resume a stream. */
+  resume?: ResumeOptions;
 }
 
 export interface CorsOptions {
@@ -134,6 +150,8 @@ export const sseRenderer: Renderer = {
   contentType: MediaType.SSE,
   render(type, payload, lane) {
     if (type === FrameType.HEARTBEAT) return textEncoder.encode(': hb\n\n');
+    // EventSource remembers `id` and sends it back as Last-Event-ID when it reconnects.
+    if (type === FrameType.CHECKPOINT) return textEncoder.encode(`id: ${Buffer.from(payload).toString('utf8')}\n\n`);
     const name = SSE_EVENTS[type] ?? `x-${type}`;
     const data = type === FrameType.BLOB ? Buffer.from(payload).toString('base64') : Buffer.from(payload).toString('utf8');
     return textEncoder.encode(`event: ${lane === 0 ? name : `${name}:${lane}`}\ndata: ${data}\n\n`);
@@ -258,6 +276,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
   const cors = options.cors;
+  const resumeTokens = new ResumeTokens(options.resume);
   if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
@@ -383,7 +402,31 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       if (!hasRequestStream(def)) input = validateInput(def, input);
 
-      const ctx: CallContext = { op: opName, signal, headers: req.headers, httpVersion: req.httpVersion, method };
+      // Resumable streams: checkpoints become signed tokens bound to this op and input.
+      let resumeFrom: string | undefined;
+      let checkpoint: (cursor: string) => void = noCheckpoint;
+      const checkpoints: string[] = [];
+      let emitCheckpoint: ((token: string) => void) | undefined;
+      if (def.resumable) {
+        // 128 bits are plenty to bind a token to its input and keep tokens compact.
+        const inputHash = hash(canonicalJson(input ?? null)).slice(0, 22);
+        const token = req.headers[Header.RESUME] ?? req.headers['last-event-id'];
+        if (typeof token === 'string' && token !== '') resumeFrom = resumeTokens.verify(token, opName, inputHash);
+        checkpoint = (cursor) => {
+          const issued = resumeTokens.issue(opName, inputHash, cursor);
+          if (emitCheckpoint) emitCheckpoint(issued);
+          else checkpoints.push(issued); // before the stream is open: sent right after the headers
+        };
+      }
+      const ctx: CallContext = {
+        op: opName,
+        signal,
+        headers: req.headers,
+        httpVersion: req.httpVersion,
+        method,
+        checkpoint,
+        ...(resumeFrom === undefined ? {} : { resumeFrom }),
+      };
       if (!hasResponseStream(def)) {
         // Keys apply to plain unary calls only: a request stream cannot be fingerprinted or replayed.
         const keyHeader = req.headers[IDEMPOTENCY_KEY];
@@ -405,7 +448,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       const result = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
       if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
-      return await streamResponse(req, res, result, validateOutput ? def.output : undefined, signal, clientGone.signal, complete);
+      return await streamResponse(req, res, result, validateOutput ? def.output : undefined, signal, clientGone.signal, complete, (writer) => {
+        for (const token of checkpoints.splice(0)) void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
+        emitCheckpoint = (token) => void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
+      });
     } catch (error) {
       if (clientGone.signal.aborted) return;
       const problem = toProblem(error);
@@ -520,7 +566,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     signal: AbortSignal,
     req: Exchange,
   ): Promise<{ ok: boolean; value?: unknown }> {
-    const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method };
+    // Batch lanes are not resumable (a batch is one request); checkpoints are ignored there.
+    const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method, checkpoint: () => {} };
     try {
       const input = validateInput(call.def, resolveRefs(call.input, output));
       if (call.def.stream === 'none') {
@@ -604,6 +651,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     signal: AbortSignal,
     gone: AbortSignal,
     complete: () => void,
+    onOpen?: (writer: FrameWriter) => void,
   ): Promise<void> {
     const iterator = items[Symbol.asyncIterator]();
     const first = abortable(iterator.next(), signal);
@@ -618,6 +666,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     const accept = req.headers.accept ?? '';
     const renderer = accept.includes(MediaType.SSE) && !accept.includes(MediaType.STREAM_JSON) ? sseRenderer : frameRenderer;
     const { writer, close } = openStream(req, res, { ...STREAM_HEADERS, 'content-type': renderer.contentType, vary: 'accept' }, renderer, gone, complete);
+    onOpen?.(writer);
     let finished = false;
     const finish = (info: EndInfo | undefined) => {
       if (finished) return;
@@ -772,6 +821,7 @@ export function buildManifest(api: Api): Record<string, unknown> {
           input: def.input.toJSONSchema(),
           output: def.output.toJSONSchema(),
           ...(def.cache ? { cache: def.cache } : {}),
+          ...(def.resumable ? { resumable: true } : {}),
           ...(def.deprecated
             ? {
                 deprecated: {

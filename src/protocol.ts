@@ -10,6 +10,7 @@ export const MediaType = {
 
 export const Header = {
   TIMEOUT: 'apue-timeout',
+  RESUME: 'apue-resume',
 } as const;
 
 /**
@@ -28,6 +29,7 @@ export const ProblemType = {
   UNRESOLVABLE_REFERENCE: 'https://apue.dev/problems/unresolvable-reference',
   INVALID_BATCH: 'https://apue.dev/problems/invalid-batch',
   MALFORMED_STREAM: 'https://apue.dev/problems/malformed-stream',
+  INVALID_RESUME_TOKEN: 'https://apue.dev/problems/invalid-resume-token',
 } as const;
 
 export class ApueError extends Error {

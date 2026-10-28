@@ -46,6 +46,8 @@ export interface CallOptions {
   idempotencyKey?: string;
   /** Overrides the client's retry budget for this call. */
   retries?: number;
+  /** Resumable streams: how often to resume after a lost connection (default 3). */
+  resumes?: number;
 }
 
 export interface ClientOptions {
@@ -67,6 +69,7 @@ export type Args<D> = undefined extends InputOf<D>
 const QUERY_REJECTED = new Set([400, 403, 405, 501]);
 export const ACCEPT = `${MediaType.STREAM_JSON}, ${MediaType.JSON};q=0.9, ${MediaType.PROBLEM};q=0.8`;
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 export interface Prepared {
   method: string;
@@ -159,30 +162,66 @@ export class ApueClient<A extends Api> {
     const controller = new AbortController();
     const unlink = linkSignal(options.signal, controller);
     let finished = false;
+    let resumeToken: string | undefined;
+    let resumes = 0;
+    // Messages received after the last checkpoint are re-sent on resume (the server replays from
+    // the cursor): skip exactly that many so the consumer sees every item once.
+    let sinceCheckpoint = 0;
+    let skip = 0;
     try {
-      const res = await this.#send(opName, def, input, options, controller.signal);
-      const type = baseMediaType(res.headers.get('content-type'));
-      if (type === MediaType.STREAM_JSON && res.status === 200) {
-        for await (const frames of decodeFrameBatches(res.body)) {
-          for (const frame of frames) {
-            if (frame.type === FrameType.MSG) {
-              yield decodeJson(frame.payload);
-            } else if (frame.type === FrameType.END) {
-              const info = decodeJson(frame.payload) as EndInfo;
-              finished = true;
-              if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
-              return;
-            }
-            // HEARTBEAT, CHECKPOINT and unknown frame types are ignored.
-          }
+      for (;;) {
+        const res = await this.#send(opName, def, input, options, controller.signal, resumeToken);
+        const type = baseMediaType(res.headers.get('content-type'));
+        if (type !== MediaType.STREAM_JSON || res.status !== 200) {
+          const bytes = await readAll(res.body);
+          finished = true;
+          if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
+          if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
+          yield decodeJson(bytes);
+          return;
         }
-        throw new ApueError(502, 'Truncated Stream', 'response ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
+        try {
+          for await (const frames of decodeFrameBatches(res.body)) {
+            for (const frame of frames) {
+              if (frame.type === FrameType.MSG) {
+                sinceCheckpoint++;
+                if (skip > 0) {
+                  skip--;
+                  continue;
+                }
+                yield decodeJson(frame.payload);
+              } else if (frame.type === FrameType.CHECKPOINT) {
+                resumeToken = textDecoder.decode(frame.payload);
+                sinceCheckpoint = 0;
+                skip = 0;
+              } else if (frame.type === FrameType.END) {
+                const info = decodeJson(frame.payload) as EndInfo;
+                finished = true;
+                if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
+                return;
+              }
+              // HEARTBEAT and unknown frame types are ignored.
+            }
+          }
+          throw new ApueError(502, 'Truncated Stream', 'response ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
+        } catch (error) {
+          // Resume only after the transport lost the stream (not after an END with an error, not
+          // for malformed frames), only with a checkpoint, and within the budget.
+          const resumable =
+            !finished &&
+            def.resumable === true &&
+            resumeToken !== undefined &&
+            resumes < (options.resumes ?? 3) &&
+            !controller.signal.aborted &&
+            !(error instanceof FrameError) &&
+            !(error instanceof SyntaxError);
+          if (!resumable) throw error;
+          skip = sinceCheckpoint;
+          sinceCheckpoint = 0;
+          resumes++;
+          await sleep(this.#backoff(resumes - 1), controller.signal);
+        }
       }
-      const bytes = await readAll(res.body);
-      finished = true;
-      if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
-      if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
-      yield decodeJson(bytes);
     } catch (error) {
       // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
       // always get their own abort reason.
@@ -194,9 +233,10 @@ export class ApueClient<A extends Api> {
     }
   }
 
-  #prepare(opName: string, def: OpDef, input: unknown, options: CallOptions): Prepared {
+  #prepare(opName: string, def: OpDef, input: unknown, options: CallOptions, resumeToken?: string): Prepared {
     const headers: Record<string, string> = { accept: ACCEPT };
     if (options.timeoutMs !== undefined) headers[Header.TIMEOUT] = String(options.timeoutMs);
+    if (resumeToken !== undefined) headers[Header.RESUME] = resumeToken;
     if (hasRequestStream(def)) {
       headers['content-type'] = MediaType.STREAM_JSON;
       // RFC 10036 §3: must be set on the request too, or intermediaries may buffer the upload.
@@ -217,11 +257,11 @@ export class ApueClient<A extends Api> {
     return { method, path: `/${opName}`, headers, ...(body === undefined ? {} : { body }) };
   }
 
-  #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal): Promise<TransportResponse> {
+  #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal, resumeToken?: string): Promise<TransportResponse> {
     // A request stream can't be replayed; everything else is safe to resend because it is safe,
     // idempotent, or carries an Idempotency-Key.
     const budget = hasRequestStream(def) ? 0 : (options.retries ?? this.#retries);
-    return this.sendPrepared(this.#prepare(opName, def, input, options), budget, signal);
+    return this.sendPrepared(this.#prepare(opName, def, input, options, resumeToken), budget, signal);
   }
 
   /** @internal Sends with QUERY→POST fallback and retries; used by calls and batches. */

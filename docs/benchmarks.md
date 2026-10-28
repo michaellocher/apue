@@ -13,6 +13,9 @@ validation and stripping, ETags, idempotency keys, framing, deadlines, cancellat
 ## Key results
 
 Final runs after all optimizations (spike S10). "c=32" = 32 concurrent calls on one HTTP/2 connection.
+Re-run of the 1 CPU / 1 GiB profile after S16–S17 (review fixes, WebSocket flow control): unary GET
+17.7k, POST + key 13.1k req/s, stream 0.93M (zstd 0.86M) msg/s, 1 MiB apü / raw 180 / 184 MiB/s,
+tuned download 219 MiB/s, server memory 136 MiB — within run-to-run noise of the table (raw itself moved).
 
 | | local (M-series, 10 cores) | Docker 2 CPU / 1 GiB | Docker 1 CPU / 1 GiB | Docker 0.5 CPU / 256 MiB | Docker 1 CPU, WAN (63 ms RTT, 100 Mbit/s) |
 |---|---|---|---|---|---|

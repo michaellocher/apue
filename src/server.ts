@@ -121,6 +121,12 @@ export interface ApueServerOptions {
    * URLs by this prefix (docs/deployment.md). 1–32 characters: letters, digits, `-`.
    */
   instance?: string;
+  /**
+   * Where the server reports failures that aren't the client's: handler errors (answered 500),
+   * output that doesn't match its schema, an idempotency store that can't record a result.
+   * Default: console. Client disconnects and protocol errors by clients are not logged.
+   */
+  logger?: Logger;
   /** A unary request body must arrive within this time, else 408 (slow-body protection). Default 30 s. */
   bodyTimeoutMs?: number;
   /**
@@ -176,6 +182,10 @@ export interface ApueServerOptions {
    * says nothing the public manifest doesn't. `false` turns it off (404 like any unknown path).
    */
   openapi?: OpenApiInfo | false;
+}
+
+export interface Logger {
+  error(message: string, detail?: unknown): void;
 }
 
 export interface PrincipalRequest {
@@ -429,6 +439,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       throw new Error(`${name} has bytes in a unary input: they arrive as upload references, enable options.uploads`);
     }
   }
+  const logger: Logger = options.logger ?? console;
   const principalHook = options.principal;
   const toCaller = (principal: unknown): Caller => {
     if (principal === undefined || principal === null) return { scope: 'anonymous', principal: undefined };
@@ -784,7 +795,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       );
     } catch (error) {
       if (clientGone.signal.aborted) return;
-      const problem = toProblem(error);
+      const problem = toProblem(error, logger);
       complete();
       if (res.headersSent) return void res.end();
       const outcome = problemOutcome(problem, error);
@@ -873,16 +884,16 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         body: containsBytes(def.output) ? concatBytes([...messageFrames(value), endFrame({ status: 200 })]) : encodeJson(value),
         payload: value,
       };
-      const recorded = scope ? settleKey(idempotency!.complete(scope, outcome)) : undefined;
+      const recorded = scope ? settleKey(idempotency!.complete(scope, outcome), logger) : undefined;
       if (recorded) await recorded;
       return outcome;
     } catch (error) {
       const clientGone = ctx.signal.aborted && ctx.signal.reason instanceof ApueError && ctx.signal.reason.status === 499;
-      const outcome = clientGone ? { ...problemOutcome({ title: 'Client Closed Request', status: 499 }), aborted: true } : problemOutcome(toProblem(error), error);
+      const outcome = clientGone ? { ...problemOutcome({ title: 'Client Closed Request', status: 499 }), aborted: true } : problemOutcome(toProblem(error, logger), error);
       if (scope) {
         // Deterministic client errors are stored so a retry gets the same answer; server errors
         // and aborted calls release the key so a retry can execute again.
-        const settled = settleKey(outcome.status < 500 && !clientGone ? idempotency!.complete(scope, outcome) : idempotency!.release(scope));
+        const settled = settleKey(outcome.status < 500 && !clientGone ? idempotency!.complete(scope, outcome) : idempotency!.release(scope), logger);
         if (settled) await settled;
       }
       return outcome;
@@ -980,7 +991,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const problem =
         error instanceof RefError
           ? new ApueError(400, 'Unresolvable Reference', error.message, { type: ProblemType.UNRESOLVABLE_REFERENCE }).problem
-          : toProblem(error);
+          : toProblem(error, logger);
       await writer.end({ status: problem.status, problem }, lane);
       return { ok: false };
     }
@@ -1071,7 +1082,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     // loop notices `finished` on its next turn. One listener per stream instead of a
     // Promise.race per item (that race was a measurable per-message cost, bench S4).
     const onAbort = () => {
-      const problem = toProblem(signal.reason);
+      const problem = toProblem(signal.reason, logger);
       finish(gone.aborted ? undefined : { status: problem.status, problem });
     };
     signal.addEventListener('abort', onAbort, { once: true });
@@ -1086,7 +1097,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       finish({ status: 200 });
     } catch (error) {
-      const problem = toProblem(error); // logs real failures even when the client is already gone
+      const problem = toProblem(error, logger); // logs real failures even when the client is already gone
       finish(gone.aborted ? undefined : { status: problem.status, problem });
     } finally {
       signal.removeEventListener('abort', onAbort);
@@ -1513,8 +1524,8 @@ function problemOutcome(problem: Problem, error?: unknown): StoredResponse & { p
  * sees it). A failure to store doesn't change the response — the operation already ran — it is
  * logged: a retry with that key may run the operation again.
  */
-function settleKey(result: void | Promise<void>): Promise<void> | void {
-  if (result instanceof Promise) return result.catch((error) => console.error('apü: the idempotency store failed to record a result', error));
+function settleKey(result: void | Promise<void>, logger: Logger): Promise<void> | void {
+  if (result instanceof Promise) return result.catch((error) => logger.error('apü: the idempotency store failed to record a result', error));
 }
 
 /** True if `promise` settles within `ms` (Infinity: waits); the timer never keeps the process alive. */
@@ -1544,21 +1555,21 @@ function sendBytes(
   res.send(status, contentLength === undefined || status === 304 ? headers : { ...headers, 'content-length': String(contentLength) }, body);
 }
 
-function toProblem(error: unknown): Problem {
+function toProblem(error: unknown, logger: Logger): Problem {
   if (error instanceof ApueError) return error.problem;
   // A handler awaiting something with ctx.signal (timers/promises, events.once, pipeline) rejects
   // with Node's AbortError when the client goes: a disconnect, not a server failure — not logged.
   if (isClientGone(error)) return { title: 'Client Closed Request', status: 499 };
   if (error instanceof ValidationError) {
     // Only output validation reaches here (input errors are converted earlier) → server bug.
-    console.error('apü: handler output does not match schema:', error.message);
+    logger.error('apü: handler output does not match schema', error.message);
     return { title: 'Internal Server Error', status: 500 };
   }
   if (error instanceof DOMException && error.name === 'TimeoutError') {
     // Not `retryable`: the deadline is the caller's whole budget (§5) — retrying overshoots it.
     return { type: ProblemType.DEADLINE, title: 'Deadline Exceeded', status: 504 };
   }
-  console.error('apü handler error:', error);
+  logger.error('apü: handler error', error);
   return { title: 'Internal Server Error', status: 500 };
 }
 

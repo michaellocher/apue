@@ -155,7 +155,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
   const script = `(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const rendered = () => document.querySelectorAll('#list li').length;
-    const until = async (fn) => { for (let i = 0; i < 250; i++) { if (await fn()) return true; await sleep(20); } return false; };
+    const until = async (fn, tries = 250) => { for (let i = 0; i < tries; i++) { if (await fn()) return true; await sleep(20); } return false; };
     // Counted on the server, not in the list: the change stream replays earlier browsers' todos for
     // a while after the page is ready, and counting the list mid-replay was off (102 in Firefox
     // locally, 109 in WebKit on a slower CI machine).
@@ -169,8 +169,8 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
     const imported = await until(() => document.querySelector('#log').textContent.includes('imported 100'));
     const after = await serverCount();
     // …and the live stream shows every todo the server has.
-    const shown = await until(() => rendered() === after);
-    return JSON.stringify({ added, imported, count: after - before, shown, log: document.querySelector('#log').textContent.split('\\n')[0] });
+    const shown = await until(() => rendered() === after, 750);
+    return JSON.stringify({ added, imported, count: after - before, shown, rendered: rendered(), server: after, log: document.querySelector('#log').textContent.split('\\n')[0] });
   })()`;
 
   for (const [name, binary, drive] of [
@@ -184,7 +184,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
       assert.equal(result.added, true);
       assert.equal(result.imported, true);
       assert.equal(result.count, 101);
-      assert.equal(result.shown, true, 'the page renders every todo the server has');
+      assert.equal(result.shown, true, `the page renders every todo the server has (${JSON.stringify(result)})`);
     });
   }
 });

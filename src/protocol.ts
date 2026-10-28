@@ -43,7 +43,7 @@ export function replicaOf(input: unknown): string | undefined {
 /**
  * Problem type URIs for apü-specific errors (RFC 9457 §3.1.1). Generic errors use the default
  * type about:blank with the HTTP status phrase as title (§4.2.1).
- * NOTE: https://apue.dev is a placeholder namespace until the spec has a home.
+ * Each URI resolves to a page on https://apue.dev (site/problems/) with its members and how to react.
  */
 export const ProblemType = {
   VALIDATION: 'https://apue.dev/problems/validation-failed',

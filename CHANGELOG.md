@@ -21,3 +21,7 @@ First public beta of the apü toolkit (spec draft 01, see SPEC-DRAFT.md).
   transports, retries, resume, uploads, downloads, batches.
 - **Code generation** (`apue-types`, `apue/codegen`): typed TypeScript modules and self-contained
   Python clients from a server's manifest.
+- **OpenAPI 3.2** at `/.well-known/openapi.json`, derived from the definitions (lazy, cached).
+- **Production**: replicas (asynchronous shared idempotency stores, `instance`-prefixed upload and
+  download ids with an `apue-replica` routing header, a verified nginx configuration), a `logger`
+  option, bounded shutdown, and a deployment guide (docs/deployment.md).

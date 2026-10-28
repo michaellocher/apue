@@ -204,8 +204,10 @@ async function rpc(url: string) {
   });
   let id = 0;
   const pending = new Map<number, { resolve(v: any): void; reject(e: Error): void }>();
+  const events: Array<{ method: string; params: any }> = []; // kept for diagnostics, bounded
   ws.onmessage = (event) => {
     const msg = JSON.parse(String(event.data));
+    if (msg.method && events.length < 500) events.push({ method: msg.method, params: msg.params });
     const entry = msg.id !== undefined ? pending.get(msg.id) : undefined;
     if (!entry) return;
     pending.delete(msg.id);
@@ -220,8 +222,22 @@ async function rpc(url: string) {
         ws.send(JSON.stringify(message));
       });
     },
+    events,
     close: () => ws.close(),
   };
+}
+
+/** What went wrong while a page loaded: exceptions, console errors, failed requests (CDP events). */
+function pageProblems(events: Array<{ method: string; params: any }>): string {
+  const lines: string[] = [];
+  for (const { method, params } of events) {
+    if (method === 'Runtime.exceptionThrown') lines.push(`exception: ${params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.text}`);
+    else if (method === 'Log.entryAdded' && params.entry.level === 'error') lines.push(`log: ${params.entry.text} ${params.entry.url ?? ''}`);
+    else if (method === 'Runtime.consoleAPICalled' && params.type === 'error') lines.push(`console: ${params.args.map((a: any) => a.value ?? a.description).join(' ')}`);
+    else if (method === 'Network.loadingFailed') lines.push(`request failed: ${params.errorText} (${params.type})`);
+    else if (method === 'Network.responseReceived' && params.response.status >= 400) lines.push(`HTTP ${params.response.status} ${params.response.url}`);
+  }
+  return lines.length ? lines.slice(0, 20).join('; ') : 'no exceptions, console errors or failed requests recorded';
 }
 
 async function until<T>(what: string, fn: () => Promise<T | undefined>, timeoutMs = 20_000): Promise<T> {
@@ -259,8 +275,14 @@ async function runInChrome(binary: string, pageUrl: string, ready: string, expre
       return targets.find((t) => t.type === 'page');
     });
     const cdp = await rpc(target.webSocketDebuggerUrl);
+    await Promise.all(['Runtime.enable', 'Log.enable', 'Network.enable'].map((m) => cdp.send(m)));
     await cdp.send('Page.navigate', { url: pageUrl });
-    await until('page ready', async () => ((await cdp.send('Runtime.evaluate', { expression: ready, returnByValue: true })).result.value ? true : undefined));
+    try {
+      await until('page ready', async () => ((await cdp.send('Runtime.evaluate', { expression: ready, returnByValue: true })).result.value ? true : undefined));
+    } catch (error) {
+      // seen once in ~40 runs: the page's modules never became ready — say why next time
+      throw new Error(`${(error as Error).message}: ${pageProblems(cdp.events)}`);
+    }
     const evaluated = await cdp.send('Runtime.evaluate', {
       expression,
       awaitPromise: true,

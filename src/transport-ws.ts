@@ -279,22 +279,49 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
 
 /**
  * Browser default: fetch for everything (HTTP caching, h2 multiplexing), except calls with a
- * request stream when this browser can't stream fetch request bodies — those use a WebSocket.
+ * request stream when fetch can't stream request bodies to this server — those use a WebSocket.
+ * Whether it can is probed once, on the first request stream (see probeRequestStreams).
  */
 export function autoTransport(baseUrl: string): Transport {
   const http = fetchTransport(baseUrl);
   const ws = webSocketTransport(baseUrl, { http });
-  const streamingFetch = supportsRequestStreams();
+  let streamingFetch: Promise<boolean> | undefined;
   return {
+    baseUrl: baseUrl.replace(/\/$/, ''),
     async close() {
       await ws.close?.(); // its live WebSockets; the shared fetch transport is ours
       await http.close?.();
     },
-    request(req) {
+    async request(req) {
       const requestStream = req.body !== undefined && !(req.body instanceof Uint8Array) && !(req.body instanceof Blob);
-      return requestStream && !streamingFetch ? ws.request(req) : http.request(req);
+      if (!requestStream) return http.request(req);
+      return (await (streamingFetch ??= probeRequestStreams(baseUrl))) ? http.request(req) : ws.request(req);
     },
   };
+}
+
+/**
+ * Whether fetch can actually stream a request body to this server. The feature detection alone
+ * (supportsRequestStreams) is not enough: WebKit on Linux passes it and then fails every streaming
+ * upload ("Load failed"; seen in CI), and Chrome streams only over HTTP/2 — not through an
+ * HTTP/1.1-only proxy. So one tiny streaming POST to the manifest URL (answered 405 at once, no
+ * side effects): any response means the body went through.
+ */
+export async function probeRequestStreams(baseUrl: string): Promise<boolean> {
+  if (!supportsRequestStreams()) return false;
+  try {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0]));
+        controller.close();
+      },
+    });
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/.well-known/apue`, { method: 'POST', body, duplex: 'half' } as RequestInit);
+    await res.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Feature detection from https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests */

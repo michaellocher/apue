@@ -1,7 +1,7 @@
 // Runs inside a real browser (served type-stripped). Returns one result per check.
 import { ApueClient, fetchTransport } from '../../src/client.ts';
 import { ApueError } from '../../src/protocol.ts';
-import { autoTransport, webSocketTransport } from '../../src/transport-ws.ts';
+import { autoTransport, probeRequestStreams, supportsRequestStreams, webSocketTransport } from '../../src/transport-ws.ts';
 import { browserApi } from './api.ts';
 
 export interface CheckResult {
@@ -79,7 +79,7 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     return `content-encoding: ${encoding}`;
   });
   await check('client streaming upload (tier T2: fetch duplex half)', async () => {
-    if (!supportsRequestStreams()) throw new Skip('request streams not supported by this browser');
+    if (!(await probeRequestStreams(apiUrl))) throw new Skip(supportsRequestStreams() ? 'the browser claims request streams but cannot send them (autoTransport uses WebSocket)' : 'request streams not supported by this browser');
     async function* numbers() {
       for (let i = 1; i <= 100; i++) yield i;
     }
@@ -123,6 +123,10 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     }
     await Array.fromAsync(ws.duplex('echo.duplex', one()));
     const version = await credentialed.call('stats.lastDuplexVersion');
+    // Browser behaviour, not apü's (the server takes both): WebKit on Linux opened WebSockets over
+    // HTTP/1.1 in CI (no RFC 8441 in that build) — reported, not failed; anywhere else it fails.
+    const linuxWebKit = /Linux/.test(navigator.userAgent) && /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium/.test(navigator.userAgent);
+    if (version !== 'HTTP/2.0' && linuxWebKit) throw new Skip(`this WebKit build opened the WebSocket over ${version} (no RFC 8441)`);
     if (version !== 'HTTP/2.0') throw new Error(`WebSocket used ${version}, not the shared h2 connection`);
     return `server saw the WebSocket over ${version}`;
   });
@@ -188,26 +192,12 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
       for (let i = 1; i <= 100; i++) yield i;
     }
     equal(await Array.fromAsync(auto.duplex('sum.client', numbers())), [5050]);
-    return supportsRequestStreams() ? 'via fetch (T2)' : 'via WebSocket (T3)';
+    return (await probeRequestStreams(apiUrl)) ? 'via fetch (T2)' : 'via WebSocket (T3)';
   });
   return results;
 }
 
 class Skip extends Error {}
-
-// Feature detection from https://developer.chrome.com/docs/capabilities/web-apis/fetch-streaming-requests
-function supportsRequestStreams(): boolean {
-  let duplexAccessed = false;
-  const hasContentType = new Request('https://example.invalid', {
-    body: new ReadableStream(),
-    method: 'POST',
-    get duplex() {
-      duplexAccessed = true;
-      return 'half';
-    },
-  } as RequestInit).headers.has('Content-Type');
-  return duplexAccessed && !hasContentType;
-}
 
 function equal(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);

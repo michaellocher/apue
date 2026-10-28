@@ -41,5 +41,6 @@ Versions follow semver; tags have **no `v` prefix**. Betas are `0.1.0-beta.N`.
 One-time setup: an npm automation token as the repository secret `NPM_TOKEN` (Settings → Secrets
 and variables → Actions), in an environment named `npm` (Settings → Environments) — require a
 reviewer there to approve each publish. The website deploys from `main` through the **Pages**
-workflow (Settings → Pages → Source: GitHub Actions); add `site/CNAME` with `apue.dev` once the
-domain points to GitHub Pages.
+workflow once enabled — publishing makes it public, so it is opt-in: Settings → Pages → Source:
+GitHub Actions, then the repository variable `PAGES_ENABLED=true`; add `site/CNAME` with `apue.dev`
+once the domain points to GitHub Pages.

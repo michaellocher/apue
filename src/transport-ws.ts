@@ -1,16 +1,33 @@
 // Tier T3 client transport: one WebSocket per call carrying the apü frame stream in both
 // directions — full duplex in every browser (fetch request streaming is Chromium-only). Web-only.
+// Flow control as in src/websocket.ts: binary bytes use up a window, text messages ("65536")
+// extend it; the browser API can't pause receiving, so the window is what bounds client memory.
 import { fetchTransport, type Transport, type TransportResponse } from './client.ts';
 import { Header, MediaType } from './protocol.ts';
 
-export const WS_SUBPROTOCOL = 'apue.v0';
+export const WS_SUBPROTOCOL = 'apue.v1';
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
 export const WS_CLOSE_CANCELLED = 4000;
-export const MAX_BUFFERED = 1024 * 1024;
-const MAX_POLL_MS = 64;
+const INITIAL_WINDOW = 64 * 1024; // = WS_INITIAL_WINDOW in websocket.ts (Node-only module)
+const MAX_WINDOW = 2 ** 31 - 1;
 
-export function webSocketTransport(baseUrl: string, WebSocketImpl: typeof WebSocket = WebSocket): Transport {
+export interface WebSocketTransportOptions {
+  /** Bytes the server may send ahead of the consumer: the client-side memory bound per call. */
+  receiveWindow?: number;
+  WebSocketImpl?: typeof WebSocket;
+}
+
+/** Parses a credit text message (same rules as the server's parseCredit). */
+function parseCredit(text: string): number | undefined {
+  if (!/^[1-9]\d{0,9}$/.test(text)) return undefined;
+  const n = Number(text);
+  return n <= MAX_WINDOW ? n : undefined;
+}
+
+export function webSocketTransport(baseUrl: string, options: WebSocketTransportOptions = {}): Transport {
   const base = baseUrl.replace(/\/$/, '').replace(/^http/, 'ws');
+  const WebSocketImpl = options.WebSocketImpl ?? WebSocket;
+  const receiveWindow = Math.min(Math.max(options.receiveWindow ?? 4 * 1024 * 1024, INITIAL_WINDOW), MAX_WINDOW);
   return {
     async request({ path, headers, body, signal }) {
       // Browsers can't set WebSocket headers: the deadline travels as a query parameter.
@@ -28,16 +45,63 @@ export function webSocketTransport(baseUrl: string, WebSocketImpl: typeof WebSoc
         wake = undefined;
         w?.();
       };
+      let sendCredit = INITIAL_WINDOW; // bytes we may still send
+      let receiveAllowance = INITIAL_WINDOW; // bytes the server may still send
+      let consumed = 0; // bytes handed to the consumer since the last credit
+      let creditWake: (() => void) | undefined;
+      const wakeSender = () => {
+        const w = creditWake;
+        creditWake = undefined;
+        w?.();
+      };
+      const violation = (reason: string, code: number) => {
+        failure ??= new Error(`WebSocket flow control: ${reason}`);
+        ws.close(code === 1002 ? 4002 : 4008, reason); // browsers may only send 1000 and 3000–4999
+      };
       ws.onmessage = (event) => {
-        if (event.data instanceof ArrayBuffer) queue.push(new Uint8Array(event.data));
+        if (typeof event.data === 'string') {
+          const increment = parseCredit(event.data);
+          if (increment === undefined) return violation('invalid credit', 1002);
+          if (sendCredit + increment > MAX_WINDOW) return violation('credit beyond 2^31-1', 1002);
+          sendCredit += increment;
+          return wakeSender();
+        }
+        if (!(event.data instanceof ArrayBuffer)) return;
+        receiveAllowance -= event.data.byteLength;
+        if (receiveAllowance < 0) return violation('server exceeded the window', 1008);
+        queue.push(new Uint8Array(event.data));
         notify();
       };
       ws.onclose = (event) => {
         ended = true;
         // An abnormal close without END frame surfaces as a truncated stream in the client.
-        if (event.code !== 1000 && event.code !== WS_CLOSE_CANCELLED) failure = new Error(`WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`);
+        if (event.code !== 1000 && event.code !== WS_CLOSE_CANCELLED) failure ??= new Error(`WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`);
         notify();
+        wakeSender();
       };
+
+      /** Sends bytes as binary messages, each within the credit; resolves false if the socket closed. */
+      async function send(bytes: Uint8Array): Promise<boolean> {
+        for (let offset = 0; offset < bytes.byteLength; ) {
+          if (ws.readyState !== ws.OPEN) return false;
+          if (sendCredit <= 0) {
+            await new Promise<void>((resolve) => (creditWake = resolve));
+            continue;
+          }
+          const n = Math.min(sendCredit, bytes.byteLength - offset);
+          ws.send(bytes.subarray(offset, offset + n) as Uint8Array<ArrayBuffer>);
+          sendCredit -= n;
+          offset += n;
+        }
+        return true;
+      }
+      async function pump(body: AsyncIterable<Uint8Array>): Promise<void> {
+        try {
+          for await (const chunk of body) if (!(await send(chunk))) return;
+        } catch {
+          ws.close(WS_CLOSE_CANCELLED, 'input failed');
+        }
+      }
       const onAbort = () => ws.close(WS_CLOSE_CANCELLED, 'cancelled');
       signal.addEventListener('abort', onAbort, { once: true });
 
@@ -51,14 +115,25 @@ export function webSocketTransport(baseUrl: string, WebSocketImpl: typeof WebSoc
         throw new Error(`server did not accept subprotocol ${WS_SUBPROTOCOL}`);
       }
 
-      if (body instanceof Uint8Array) ws.send(body as Uint8Array<ArrayBuffer>);
-      else if (body !== undefined) void pump(ws, body);
+      if (receiveWindow > INITIAL_WINDOW) {
+        ws.send(String(receiveWindow - INITIAL_WINDOW));
+        receiveAllowance += receiveWindow - INITIAL_WINDOW;
+      }
+      if (body instanceof Uint8Array) void send(body);
+      else if (body !== undefined) void pump(body);
 
       async function* responseBody(): AsyncGenerator<Uint8Array> {
         try {
           for (;;) {
             if (queue.length > 0) {
-              yield queue.shift()!;
+              const chunk = queue.shift()!;
+              consumed += chunk.byteLength;
+              if (consumed >= receiveWindow / 2 && ws.readyState === ws.OPEN) {
+                ws.send(String(consumed));
+                receiveAllowance += consumed;
+                consumed = 0;
+              }
+              yield chunk;
               continue;
             }
             if (ended) {
@@ -80,30 +155,6 @@ export function webSocketTransport(baseUrl: string, WebSocketImpl: typeof WebSoc
       return response;
     },
   };
-}
-
-/**
- * WebSocket has no 'drain' event: poll bufferedAmount to keep uploads from piling up in memory.
- * The poll interval adapts: a fixed 5 ms capped uploads at MAX_BUFFERED / 5 ms (measured 140 MiB/s
- * on loopback, the socket idle a quarter of the time); it halves when the buffer ran empty while
- * waiting (the socket idled) and doubles while the buffer is still full (slow link, save CPU).
- */
-export async function pump(ws: Pick<WebSocket, 'send' | 'close' | 'bufferedAmount' | 'readyState' | 'OPEN'>, body: AsyncIterable<Uint8Array>): Promise<void> {
-  let waitMs = 4;
-  try {
-    for await (const chunk of body) {
-      if (ws.readyState !== ws.OPEN) return;
-      ws.send(chunk as Uint8Array<ArrayBuffer>);
-      while (ws.bufferedAmount > MAX_BUFFERED && ws.readyState === ws.OPEN) {
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
-        const left = ws.bufferedAmount;
-        if (left === 0) waitMs = Math.max(1, waitMs / 2);
-        else if (left > MAX_BUFFERED) waitMs = Math.min(MAX_POLL_MS, waitMs * 2);
-      }
-    }
-  } catch {
-    ws.close(WS_CLOSE_CANCELLED, 'input failed');
-  }
 }
 
 /**

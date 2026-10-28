@@ -1,13 +1,30 @@
 // Tier T3 (SPEC-DRAFT §8): WebSocket as a full-duplex byte pipe for the unchanged apü frame stream.
 // RFC 6455 framing; handshake over HTTP/1.1 Upgrade or HTTP/2 extended CONNECT (RFC 8441, which
 // Chrome, Firefox and Node's own WebSocket client use when the server advertises it). Node-only.
+//
+// Flow control (apue.v1): the browser WebSocket API can't pause receiving, so without it a slow
+// consumer buffers everything the server sends (measured: 250 MiB in 3 s). Each side grants the
+// other a byte window, like HTTP/2: binary payload bytes use it up, a text message carrying a
+// decimal increment ("65536") extends it. Text messages bypass the window and both sides read
+// eagerly (never beyond what they granted), so credit can never get stuck behind data.
 import { hash } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Writable } from 'node:stream';
 import { ApueError, ProblemType } from './protocol.ts';
 
-export const WS_SUBPROTOCOL = 'apue.v0';
+export const WS_SUBPROTOCOL = 'apue.v1';
+/** Window each side may use before the peer's first credit (HTTP/2's default is 65,535). */
+export const WS_INITIAL_WINDOW = 64 * 1024;
+/** Upper bound of a window and of one increment (HTTP/2: 2^31 - 1). */
+export const WS_MAX_WINDOW = 2 ** 31 - 1;
+
+/** Parses a credit text message: a decimal increment in 1..2^31-1, no sign, no leading zeros. */
+export function parseCredit(text: string): number | undefined {
+  if (!/^[1-9]\d{0,9}$/.test(text)) return undefined;
+  const n = Number(text);
+  return n <= WS_MAX_WINDOW ? n : undefined;
+}
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 export const WsOpcode = { CONTINUATION: 0x0, TEXT: 0x1, BINARY: 0x2, CLOSE: 0x8, PING: 0x9, PONG: 0xa } as const;
@@ -17,6 +34,7 @@ export const WsClose = {
   GOING_AWAY: 1001,
   PROTOCOL_ERROR: 1002,
   UNSUPPORTED_DATA: 1003,
+  POLICY_VIOLATION: 1008,
   TOO_BIG: 1009,
 } as const;
 
@@ -142,8 +160,9 @@ export class WsParser {
 
 /**
  * A server-side WebSocket connection carrying a byte stream in both directions. A background
- * reader answers pings and the close handshake even while nobody consumes data; data is buffered
- * up to `maxBuffered` bytes, after which the reader stops pulling from the transport (backpressure).
+ * reader answers pings, credit and the close handshake even while nobody consumes data. Incoming
+ * data is bounded by the window granted to the client (`window`, re-granted as it is consumed; a
+ * client exceeding it is closed with 1008); outgoing data waits for the client's credit.
  */
 export class WsConnection {
   /** Writes become binary frames; end() sends a close frame (1000) after everything written. */
@@ -154,28 +173,24 @@ export class WsConnection {
   #inputEnded = false;
   #inputError: Error | undefined;
   #wake: (() => void) | undefined;
-  #resumeReader: (() => void) | undefined;
   #closeSent = false;
   #closed = false;
   #closeCallbacks: Array<() => void> = [];
-  #maxBuffered: number;
+  #window: number;
+  /** Bytes the client may still send; below 0 means it ignored the window. */
+  #receiveAllowance = WS_INITIAL_WINDOW;
+  /** Bytes handed to the consumer since the last credit sent. */
+  #consumed = 0;
+  /** Bytes we may still send. */
+  #sendCredit = WS_INITIAL_WINDOW;
+  /** A sink write waiting for credit (the Writable issues one write at a time). */
+  #blocked: (() => void) | undefined;
 
-  constructor(io: Duplex, { maxPayload = 16 * 1024 * 1024, maxBuffered = 1024 * 1024, head = new Uint8Array(0) as Uint8Array } = {}) {
+  constructor(io: Duplex, { maxPayload = 16 * 1024 * 1024, window = 1024 * 1024, head = new Uint8Array(0) as Uint8Array } = {}) {
     this.#io = io;
-    this.#maxBuffered = maxBuffered;
+    this.#window = Math.min(Math.max(window, WS_INITIAL_WINDOW), WS_MAX_WINDOW);
     this.sink = new Writable({
-      write: (chunk: Buffer, _encoding, callback) => {
-        if (this.#closeSent || io.destroyed) return callback();
-        if (io.write(encodeWsFrame(WsOpcode.BINARY, chunk))) return callback();
-        // A transport that closes instead of draining must not leave the write pending forever.
-        const done = () => {
-          io.off('drain', done);
-          io.off('close', done);
-          callback();
-        };
-        io.on('drain', done);
-        io.on('close', done);
-      },
+      write: (chunk: Buffer, _encoding, callback) => this.#send(chunk, 0, callback),
       final: (callback) => {
         this.close(WsClose.NORMAL);
         callback();
@@ -184,7 +199,52 @@ export class WsConnection {
     this.sink.on('error', () => {});
     io.once('close', () => this.#onIoClose());
     io.on('error', () => {});
+    if (this.#window > WS_INITIAL_WINDOW) this.#grant(this.#window - WS_INITIAL_WINDOW);
     void this.#read(new WsParser(maxPayload), head);
+  }
+
+  /** Sends `chunk` from `offset` as binary frames, each within the credit; waits for credit and drain. */
+  #send(chunk: Uint8Array, offset: number, callback: () => void): void {
+    const io = this.#io;
+    while (offset < chunk.byteLength) {
+      if (this.#closeSent || io.destroyed) return callback();
+      if (this.#sendCredit <= 0) {
+        this.#blocked = () => this.#send(chunk, offset, callback);
+        return;
+      }
+      const n = Math.min(this.#sendCredit, chunk.byteLength - offset);
+      const flushed = io.write(encodeWsFrame(WsOpcode.BINARY, chunk.subarray(offset, offset + n)));
+      this.#sendCredit -= n;
+      offset += n;
+      if (!flushed) {
+        // A transport that closes instead of draining must not leave the write pending forever.
+        const next = () => {
+          io.off('drain', next);
+          io.off('close', next);
+          this.#send(chunk, offset, callback);
+        };
+        io.on('drain', next);
+        io.on('close', next);
+        return;
+      }
+    }
+    callback();
+  }
+
+  #grant(increment: number): void {
+    if (this.#closeSent || this.#io.destroyed) return;
+    this.#receiveAllowance += increment;
+    this.#io.write(encodeWsFrame(WsOpcode.TEXT, Buffer.from(String(increment))));
+  }
+
+  #onCredit(payload: Uint8Array): void {
+    const increment = parseCredit(Buffer.from(payload).toString('latin1'));
+    if (increment === undefined) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'invalid credit');
+    if (this.#sendCredit + increment > WS_MAX_WINDOW) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'credit beyond 2^31-1');
+    this.#sendCredit += increment;
+    const blocked = this.#blocked;
+    this.#blocked = undefined;
+    blocked?.();
   }
 
   /** Incoming binary payload bytes (message boundaries are irrelevant to apü framing). */
@@ -193,10 +253,10 @@ export class WsConnection {
       if (this.#queue.length > 0) {
         const chunk = this.#queue.shift()!;
         this.#queued -= chunk.byteLength;
-        if (this.#queued < this.#maxBuffered) {
-          const resume = this.#resumeReader;
-          this.#resumeReader = undefined;
-          resume?.();
+        this.#consumed += chunk.byteLength;
+        if (this.#consumed >= this.#window / 2) {
+          this.#grant(this.#consumed);
+          this.#consumed = 0;
         }
         yield chunk;
         continue;
@@ -224,7 +284,6 @@ export class WsConnection {
   }
 
   async #read(parser: WsParser, head: Uint8Array): Promise<void> {
-    let fragmentedText = false;
     // destroyOnReturn: false — returning after a close frame must not destroy the transport
     // before our own close frame has been flushed.
     const chunks = this.#io.iterator({ destroyOnReturn: false }) as AsyncIterable<Uint8Array>;
@@ -234,7 +293,6 @@ export class WsConnection {
     }
     try {
       for await (const chunk of withHead()) {
-        if (this.#queued >= this.#maxBuffered) await new Promise<void>((resolve) => (this.#resumeReader = resolve));
         for (const frame of parser.push(chunk)) {
           if (frame.opcode === WsOpcode.PING) {
             if (!this.#closeSent) this.#io.write(encodeWsFrame(WsOpcode.PONG, frame.payload));
@@ -245,10 +303,13 @@ export class WsConnection {
             this.#endInput(code === WsClose.NORMAL ? undefined : new ApueError(499, 'Client Closed Request', `WebSocket closed by peer (${code})`));
             this.close(code === 1005 || code === 1006 || code === 1015 ? WsClose.NORMAL : code);
             return;
-          } else if (frame.opcode === WsOpcode.TEXT || (frame.opcode === WsOpcode.CONTINUATION && fragmentedText)) {
-            fragmentedText = !frame.fin;
-            throw new WsProtocolError(WsClose.UNSUPPORTED_DATA, 'apü uses binary messages only');
+          } else if (frame.opcode === WsOpcode.TEXT) {
+            // Text messages carry credit only; unfragmented, so a continuation is always binary data.
+            if (!frame.fin) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'credit messages must not be fragmented');
+            this.#onCredit(frame.payload);
           } else {
+            this.#receiveAllowance -= frame.payload.byteLength;
+            if (this.#receiveAllowance < 0) throw new WsProtocolError(WsClose.POLICY_VIOLATION, 'flow control: more data than the window allows');
             this.#queue.push(frame.payload);
             this.#queued += frame.payload.byteLength;
             this.#notify();
@@ -279,8 +340,10 @@ export class WsConnection {
 
   #onIoClose(): void {
     this.#closed = true;
+    const blocked = this.#blocked; // a write waiting for credit completes (as a no-op) instead of hanging
+    this.#blocked = undefined;
+    blocked?.();
     this.sink.destroy(); // producers waiting for the sink's 'drain' get 'close' instead
-    this.#resumeReader?.();
     this.#endInput(this.#closeSent ? undefined : new ApueError(499, 'Client Closed Request', 'WebSocket connection lost'));
     for (const callback of this.#closeCallbacks.splice(0)) callback();
   }

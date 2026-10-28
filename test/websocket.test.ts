@@ -11,9 +11,9 @@ import { decodeFrames, decodeJson, endFrame, FrameDecoder, FrameType, msgFrame, 
 import { ApueError } from '../src/protocol.ts';
 import { t } from '../src/schema.ts';
 import type { Handlers } from '../src/server.ts';
-import { MAX_BUFFERED, pump, webSocketTransport } from '../src/transport-ws.ts';
+import { webSocketTransport } from '../src/transport-ws.ts';
 import { drained } from '../src/node-streams.ts';
-import { encodeWsFrame, WsConnection, WsParser } from '../src/websocket.ts';
+import { encodeWsFrame, parseCredit, WS_INITIAL_WINDOW, WsConnection, WsParser } from '../src/websocket.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const api = defineApi({
@@ -21,8 +21,13 @@ const api = defineApi({
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'slow.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.number() }),
   'plain.get': op({ effect: 'safe', input: t.void(), output: t.string() }),
+  'stall.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
+  'flood': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.string() }),
+  'echo.big': op({ effect: 'unsafe', stream: 'bidi', input: t.string(), output: t.string() }),
 });
 let aborted = 0;
+let flooded = 0;
+const ITEM = 'x'.repeat(64 * 1024);
 const handlers: Handlers<typeof api> = {
   'echo.duplex': async function* (inputs) {
     for await (const value of inputs) yield { echo: value };
@@ -40,6 +45,21 @@ const handlers: Handlers<typeof api> = {
     }
   },
   'plain.get': () => 'plain',
+  'stall.client': async (_inputs, ctx) => {
+    // never reads its input: whatever the client sends stays queued
+    await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+    return 0;
+  },
+  'flood': async function* (inputs) {
+    for await (const _ of inputs) break;
+    for (let i = 0; i < 4000; i++) {
+      flooded++;
+      yield ITEM;
+    }
+  },
+  'echo.big': async function* (inputs) {
+    for await (const s of inputs) yield s;
+  },
 };
 
 let server: { url: string; close(): Promise<void> };
@@ -121,7 +141,7 @@ describe('apü over WebSocket (Node client: HTTP/2 extended CONNECT)', () => {
 
   test('server.close() ends open WebSockets with 1001', async () => {
     const local = await startServer(api, handlers);
-    const ws = new WebSocket(`${local.url.replace('https', 'wss')}/slow.duplex`, 'apue.v0');
+    const ws = new WebSocket(`${local.url.replace('https', 'wss')}/slow.duplex`, 'apue.v1');
     await new Promise((resolve) => (ws.onopen = resolve));
     const closed = new Promise<number>((resolve) => (ws.onclose = (e) => resolve(e.code)));
     await local.close();
@@ -145,7 +165,7 @@ async function rawWs(path: string, headers: Record<string, string> = {}): Promis
   const socket = tls.connect({ host: '127.0.0.1', port: Number(port), ca: testCert().cert, ALPNProtocols: ['http/1.1'] });
   await new Promise((resolve) => socket.once('secureConnect', resolve));
   const key = randomBytes(16).toString('base64');
-  const all = { Host: `127.0.0.1:${port}`, Upgrade: 'websocket', Connection: 'Upgrade', 'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Protocol': 'apue.v0', ...headers };
+  const all = { Host: `127.0.0.1:${port}`, Upgrade: 'websocket', Connection: 'Upgrade', 'Sec-WebSocket-Key': key, 'Sec-WebSocket-Version': '13', 'Sec-WebSocket-Protocol': 'apue.v1', ...headers };
   socket.write(`GET ${path} HTTP/1.1\r\n${Object.entries(all).filter(([, v]) => v !== '').map(([k, v]) => `${k}: ${v}`).join('\r\n')}\r\n\r\n`);
   let buffered = Buffer.alloc(0);
   const pending: Buffer[] = [];
@@ -211,7 +231,7 @@ describe('WebSocket protocol details (HTTP/1.1 Upgrade)', () => {
   test('handshake, apü frames in fragmented binary messages, ping/pong, clean close', async () => {
     const ws = await rawWs('/sum.client');
     assert.equal(ws.status, 101);
-    assert.match(ws.head, /Sec-WebSocket-Protocol: apue\.v0/i);
+    assert.match(ws.head, /Sec-WebSocket-Protocol: apue\.v1/i);
     const bytes = concatBytes([msgFrame(2), msgFrame(40), endFrame({ status: 200 })]);
     ws.send(0x9, Buffer.from('ping!'));
     ws.send(0x2, bytes.subarray(0, 5), { fin: false }); // fragmented: binary + continuation
@@ -238,10 +258,19 @@ describe('WebSocket protocol details (HTTP/1.1 Upgrade)', () => {
     return 0;
   };
 
-  test('text frames → close 1003; unmasked client frames → close 1002', async () => {
-    const text = await rawWs('/sum.client');
-    text.send(0x1, Buffer.from('hello'));
-    assert.equal(await closeCodeFor(text), 1003);
+  test('text messages are credit: invalid, overflowing or fragmented → 1002; unmasked frames → 1002', async () => {
+    for (const payload of ['hello', '0', '-5', '0100', '2147483648', '']) {
+      const ws = await rawWs('/sum.client');
+      ws.send(0x1, Buffer.from(payload));
+      assert.equal(await closeCodeFor(ws), 1002, `credit ${JSON.stringify(payload)}`);
+    }
+    const overflow = await rawWs('/sum.client'); // 64 KiB initial + 2^31-1 > 2^31-1
+    overflow.send(0x1, Buffer.from('2147483647'));
+    assert.equal(await closeCodeFor(overflow), 1002);
+    const fragmented = await rawWs('/sum.client');
+    fragmented.send(0x1, Buffer.from('100'), { fin: false });
+    fragmented.send(0x0, Buffer.from('0'));
+    assert.equal(await closeCodeFor(fragmented), 1002);
     const unmasked = await rawWs('/sum.client');
     unmasked.send(0x2, msgFrame(1), { mask: false });
     assert.equal(await closeCodeFor(unmasked), 1002);
@@ -271,7 +300,7 @@ describe('WebSocket over HTTP/2 (extended CONNECT), negative cases', () => {
     });
 
   test('server advertises SETTINGS_ENABLE_CONNECT_PROTOCOL; checks subprotocol; other CONNECTs → 405', async () => {
-    assert.equal(await connect({ ':protocol': 'websocket', 'sec-websocket-version': '13', 'sec-websocket-protocol': 'apue.v0' }), 200);
+    assert.equal(await connect({ ':protocol': 'websocket', 'sec-websocket-version': '13', 'sec-websocket-protocol': 'apue.v1' }), 200);
     assert.equal(await connect({ ':protocol': 'websocket', 'sec-websocket-version': '13' }), 400);
     assert.equal(await connect({ ':protocol': 'something-else' }), 405);
   });
@@ -364,64 +393,117 @@ describe('WsParser', () => {
   });
 });
 
-describe('upload pacing (WebSocket has no drain event)', () => {
-  /** A socket whose send buffer drains at `bytesPerMs`; counts how often bufferedAmount is read. */
-  function fakeSocket(bytesPerMs: number) {
-    let buffered = 0;
-    let last = performance.now();
-    const drain = () => {
-      const now = performance.now();
-      buffered = Math.max(0, buffered - (now - last) * bytesPerMs);
-      last = now;
-    };
-    const socket = {
-      OPEN: 1 as const,
-      readyState: 1,
-      polls: 0,
-      maxBuffered: 0,
-      get bufferedAmount() {
-        drain();
-        socket.polls++;
-        return buffered;
-      },
-      send(chunk: Uint8Array) {
-        drain();
-        buffered += chunk.byteLength;
-        socket.maxBuffered = Math.max(socket.maxBuffered, buffered);
-      },
-      close() {},
-    };
-    return socket;
-  }
-  async function* chunks(count: number, size: number) {
-    for (let i = 0; i < count; i++) yield new Uint8Array(size);
-  }
-
-  test('memory stays bounded and a fast link stays busy', async () => {
-    const socket = fakeSocket(1024 * 1024); // 1 GiB/s
-    const start = performance.now();
-    await pump(socket as unknown as WebSocket, chunks(256, 64 * 1024)); // 16 MiB
-    const ms = performance.now() - start;
-    assert.ok(socket.maxBuffered <= MAX_BUFFERED + 64 * 1024, `buffered up to ${socket.maxBuffered}`);
-    // 16 ms of pure drain time; the old fixed 5 ms poll needed ≥ 80 ms (1 MiB per poll)
-    assert.ok(ms < 60, `${ms.toFixed(0)} ms for 16 MiB at 1 GiB/s`);
+describe('flow control (apue.v1 credit)', () => {
+  test('parseCredit: decimal 1..2^31-1, nothing else', () => {
+    assert.equal(parseCredit('1'), 1);
+    assert.equal(parseCredit('65536'), 65536);
+    assert.equal(parseCredit('2147483647'), 2 ** 31 - 1);
+    for (const bad of ['', '0', '01', '+1', '-1', '1.5', '1e3', ' 1', '2147483648', '99999999999', '١']) assert.equal(parseCredit(bad), undefined, bad);
   });
 
-  test('a slow link is polled rarely (the interval backs off)', async () => {
-    const socket = fakeSocket(10 * 1024); // 10 MiB/s
-    await pump(socket as unknown as WebSocket, chunks(48, 64 * 1024)); // 3 MiB, ≥ 200 ms
-    assert.ok(socket.maxBuffered <= MAX_BUFFERED + 64 * 1024);
-    // ~one wake-up (two reads) per chunk once the buffer is full; a fixed 1 ms poll: ~400 reads
-    assert.ok(socket.polls < 120, `${socket.polls} polls`);
+  test('a stalled consumer bounds what the server produces (was: everything, 250 MiB)', async () => {
+    const client = new ApueClient(api, webSocketTransport(server.url, { receiveWindow: 1024 * 1024 }));
+    flooded = 0;
+    async function* one() {
+      yield 1;
+      await sleep(3000);
+    }
+    const items = client.duplex('flood', one())[Symbol.asyncIterator]();
+    await items.next();
+    await sleep(500); // consumer stalls; the server must stop at the window
+    const stalledAt = flooded;
+    // 1 MiB client window + 256 KiB server frame buffer + one item in flight ≈ 22 items of 64 KiB
+    assert.ok(stalledAt < 30, `server produced ${stalledAt} items while the consumer stalled`);
+    await sleep(200);
+    assert.equal(flooded, stalledAt, 'still producing');
+    // consuming again resumes the flow, all items arrive
+    let received = 1;
+    for (;;) {
+      const next = await items.next();
+      if (next.done) break;
+      assert.equal(next.value.length, ITEM.length);
+      received++;
+    }
+    assert.equal(received, 4000);
+    await client.close();
   });
 
-  test('a socket closing mid-upload ends the pump', async () => {
-    const socket = fakeSocket(0); // never drains
-    const done = pump(socket as unknown as WebSocket, chunks(1000, 64 * 1024));
-    await sleep(20);
-    socket.readyState = 3;
-    await Promise.race([done, sleep(500).then(() => assert.fail('pump still running'))]);
+  test('both directions saturated with a read-one-write-one handler: no deadlock', { timeout: 30_000 }, async () => {
+    // Credit travels as text messages outside the windows and both sides read eagerly, so a
+    // credit can never wait behind data the other side refuses to read.
+    const client = new ApueClient(api, webSocketTransport(server.url, { receiveWindow: 128 * 1024 }));
+    const big = 'y'.repeat(200 * 1024); // larger than either window: always split
+    async function* inputs() {
+      for (let i = 0; i < 100; i++) yield big;
+    }
+    let count = 0;
+    for await (const echo of client.duplex('echo.big', inputs())) {
+      assert.equal(echo.length, big.length);
+      if (++count % 10 === 0) await sleep(5); // slow consumer
+    }
+    assert.equal(count, 100);
+    await client.close();
+  });
+
+  test('the server sends no more than the client granted, and resumes on credit', async () => {
+    const ws = await rawWs('/flood');
+    ws.send(0x2, concatBytes([msgFrame(1)])); // start the flood; grant nothing beyond the initial window
+    let received = 0;
+    let granted = WS_INITIAL_WINDOW;
+    const frames = ws.frames();
+    let pending: ReturnType<typeof frames.next> | undefined; // survives a timeout: no frame is lost
+    const take = async (until: number, ms: number) => {
+      const deadline = Date.now() + ms;
+      while (received < until && Date.now() < deadline) {
+        pending ??= frames.next();
+        const next = await Promise.race([pending, sleep(deadline - Date.now()).then(() => undefined)]);
+        if (!next) break;
+        pending = undefined;
+        if (next.done) break;
+        if (next.value.opcode === 0x2 || next.value.opcode === 0x0) received += next.value.payload.byteLength;
+      }
+    };
+    await take(granted + 1, 300);
+    assert.equal(received, granted); // exactly the initial window, split to fit
+    ws.send(0x1, Buffer.from(String(100_000)));
+    granted += 100_000;
+    await take(granted + 1, 300);
+    assert.equal(received, granted);
+    ws.socket.destroy();
+  });
+
+  test('a client sending beyond its window is closed with 1008; exactly the window is fine', async () => {
+    // The server grants 1 MiB right after the handshake (64 KiB initial + increment).
+    const exact = await rawWs('/stall.client');
+    const frames = exact.frames();
+    const first = await frames.next();
+    assert.equal(first.value!.opcode, 0x1);
+    const window = WS_INITIAL_WINDOW + parseCredit(Buffer.from(first.value!.payload).toString())!;
+    assert.equal(window, 1024 * 1024);
+    exact.send(0x2, new Uint8Array(window));
+    const closed = await Promise.race([frames.next().then(() => 'frame'), sleep(300).then(() => 'quiet')]);
+    assert.equal(closed, 'quiet');
+    exact.socket.destroy();
+
+    const over = await rawWs('/stall.client');
+    over.send(0x2, new Uint8Array(window));
+    over.send(0x2, new Uint8Array(1));
+    assert.equal(await closeCodeForFrames(over.frames()), 1008);
   });
 });
+
+test('webSocketWindow sets the window the server grants (over RFC 8441 too)', async () => {
+  const local = await startServer(api, handlers, { webSocketWindow: 256 * 1024 });
+  const ws = new WebSocket(`${local.url.replace('https', 'wss')}/stall.client`, 'apue.v1');
+  const credit = await new Promise<string>((resolve) => (ws.onmessage = (e) => resolve(String(e.data))));
+  assert.equal(WS_INITIAL_WINDOW + parseCredit(credit)!, 256 * 1024);
+  ws.close();
+  await local.close();
+});
+
+async function closeCodeForFrames(frames: AsyncGenerator<{ opcode: number; payload: Uint8Array }>): Promise<number> {
+  for await (const frame of frames) if (frame.opcode === 0x8) return Buffer.from(frame.payload).readUInt16BE(0);
+  return 0;
+}
 
 void decodeFrames;

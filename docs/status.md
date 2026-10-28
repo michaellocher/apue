@@ -8,7 +8,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 211 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 217 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -19,7 +19,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
   binary values as BLOB frames, idempotency keys, deadlines, compression (zstd/br/gzip),
   CORS, manifest + RFC 9727 catalog, codegen of typed clients from the manifest.
 - **Transports**: HTTP/2 (core API) with HTTP/1.1 fallback; clients over fetch, node:http2 (full
-  duplex) and WebSocket (RFC 8441/6455); `autoTransport` picks per browser.
+  duplex) and WebSocket (RFC 8441/6455, with HTTP/2-style byte windows so slow consumers can't
+  make the server flood browser memory); `autoTransport` picks per browser.
 - **Verification**: unit, integration, fuzz, chaos, leak, real-browser (Chrome, Firefox, WebKit), real
   proxies (nginx, Caddy, HAProxy, Envoy), constrained Docker benchmarks with WAN emulation, gRPC
   comparison.
@@ -43,6 +44,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 | tests | stuck producers outliving deadlines; `server.close()` hanging on closed sessions; `for await` resetting streams on early exit; hang after a 409 retry check; `$lit` unescaping user data in batches |
 | building the example | the batch endpoint at `/` blocked serving the app same-origin → `/$batch` |
 | browsers | Chrome only reuses an h2 session for WebSockets with an identical key (credentials mode) |
+| measuring T3 | a stalled WebSocket consumer let the server push 250 MiB into client memory in 3 s (now bounded by credit windows, `apue.v1`); uploads capped by 5 ms `bufferedAmount` polling (142 → 293 MiB/s) |
 | code review | unbounded request-stream blob memory; bytes lost on idempotent replay; CORS `Vary`/preflight gaps; missing `Retry-After` retried with no delay; duplicate items after two losses in one resume; quadratic WebSocket buffering; WebSocket writes hanging on close; regex flags dropped from the manifest |
 
 ## Known flake (not reproduced)
@@ -63,6 +65,6 @@ If it shows up again, keep the full `npm test` log.
 
 ## Open (spec §13)
 
-CBOR · CREDIT flow control · WebTransport (no Node server) · HTTP/3 in Node (no `node:quic`) ·
+CBOR · message-level CREDIT (T3 byte windows done) · WebTransport (no Node server) · HTTP/3 in Node (no `node:quic`) ·
 resumable uploads · generators for other languages · problem-type namespace · auth guidance.
 (Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14).)

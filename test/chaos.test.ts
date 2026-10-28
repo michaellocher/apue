@@ -128,7 +128,7 @@ test('WebSocket dropped in the middle of a frame', async () => {
   const socket = await rawTls('http/1.1');
   socket.write(
     'GET /echo.duplex HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
-      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: apue.v0\r\n\r\n',
+      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: apue.v1\r\n\r\n',
   );
   await new Promise((resolve) => socket.once('data', resolve)); // 101
   socket.write(Buffer.from([0x82, 0xfe, 0x01, 0x00, 1, 2, 3, 4, 9, 9])); // masked binary frame announcing 256 bytes, then gone

@@ -81,6 +81,11 @@ export interface ApueServerOptions {
   maxBufferedBytes?: number;
   /** HTTP/2 per-stream receive window (SETTINGS_INITIAL_WINDOW_SIZE). */
   streamWindow?: number;
+  /**
+   * WebSocket (T3) receive window granted to each client, re-granted as the handler consumes:
+   * bounds server memory per call and caps uploads at window / RTT. Default 1 MiB.
+   */
+  webSocketWindow?: number;
   /** HTTP/2 per-connection receive window. */
   connectionWindow?: number;
   /**
@@ -308,6 +313,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     coalesceBytes = 16 * 1024,
     maxBodyBytes = 1024 * 1024,
     streamWindow = 4 * 1024 * 1024,
+    webSocketWindow = 1024 * 1024,
     connectionWindow = 32 * 1024 * 1024,
     validateOutput = true,
     maxBatchCalls = 64,
@@ -380,14 +386,14 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     let path: string;
     if (upgrade.kind === 'h2') {
       upgrade.stream.respond({ ':status': 200, 'sec-websocket-protocol': WS_SUBPROTOCOL });
-      conn = new WsConnection(upgrade.stream);
+      conn = new WsConnection(upgrade.stream, { window: webSocketWindow });
       path = String(upgrade.headers[':path'] ?? '/');
     } else {
       upgrade.socket.setNoDelay(true);
       upgrade.socket.write(
         `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key as string)}\r\nSec-WebSocket-Protocol: ${WS_SUBPROTOCOL}\r\n\r\n`,
       );
-      conn = new WsConnection(upgrade.socket, { head: upgrade.head });
+      conn = new WsConnection(upgrade.socket, { head: upgrade.head, window: webSocketWindow });
       path = upgrade.req.url ?? '/';
     }
     webSockets.add(conn);

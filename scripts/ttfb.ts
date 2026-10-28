@@ -2,8 +2,10 @@
 // without frame coalescing. Local loopback over TLS + HTTP/2, warm connection.
 //   node scripts/ttfb.ts [--rows 20] [--rowMs 10] [--runs 30] [--messages 200000]
 import { parseArgs } from 'node:util';
+import { defineApi, op } from '../src/api.ts';
 import { ApueClient, type Transport } from '../src/client.ts';
-import type { Handler } from '../src/server.ts';
+import { t } from '../src/schema.ts';
+import type { Handlers } from '../src/server.ts';
 import { sleep, startServer, transports } from '../test/helpers.ts';
 
 const { values } = parseArgs({
@@ -27,10 +29,17 @@ async function* cursor(): AsyncGenerator<{ id: number; name: string; total: numb
   }
 }
 
-const handlers: Record<string, Handler> = {
+const Row = t.object({ id: t.number(), name: t.string(), total: t.number() });
+const api = defineApi({
+  'report.buffered': op({ effect: 'safe', input: t.void(), output: t.array(Row) }),
+  'report.stream': op({ effect: 'safe', stream: 'server', input: t.void(), output: Row }),
+  'flood.stream': op({ effect: 'safe', stream: 'server', input: t.object({ n: t.number() }), output: t.object({ i: t.number(), name: t.string(), ok: t.boolean() }) }),
+});
+
+const handlers: Handlers<typeof api> = {
   'report.buffered': () => Array.fromAsync(cursor()),
   'report.stream': () => cursor(),
-  'flood.stream': async function* ({ n }: { n: number }) {
+  'flood.stream': async function* ({ n }) {
     for (let i = 0; i < n; i++) yield { i, name: 'item', ok: true };
   },
 };
@@ -62,7 +71,7 @@ function stats(samples: number[]): { p50: number; p95: number } {
 const fmt = (ms: number) => `${ms.toFixed(1).padStart(7)} ms`;
 
 async function ttfbTable(name: string, transport: Transport): Promise<void> {
-  const client = new ApueClient(transport);
+  const client = new ApueClient(api, transport);
   const cases: Array<[string, () => AsyncIterable<unknown> | Promise<unknown>]> = [
     ['unary, buffered', () => client.call('report.buffered')],
     ['apü stream', () => client.stream('report.stream')],
@@ -81,8 +90,8 @@ async function ttfbTable(name: string, transport: Transport): Promise<void> {
 }
 
 async function throughput(label: string, coalesceBytes: number): Promise<void> {
-  const server = await startServer(handlers, { coalesceBytes });
-  const client = new ApueClient(new Map(transports(server.url)).get('http2')!);
+  const server = await startServer(api, handlers, { coalesceBytes });
+  const client = new ApueClient(api, new Map(transports(server.url)).get('http2')!);
   await Array.fromAsync(client.stream('flood.stream', { n: 1000 })); // warm-up
   const rates: number[] = [];
   for (let i = 0; i < 3; i++) {
@@ -96,7 +105,7 @@ async function throughput(label: string, coalesceBytes: number): Promise<void> {
 }
 
 console.log(`Node ${process.version} — ${rows} rows × ${rowMs} ms, ${runs} runs, loopback TLS + h2\n`);
-const server = await startServer(handlers);
+const server = await startServer(api, handlers);
 for (const [name, transport] of transports(server.url)) await ttfbTable(name, transport);
 await server.close();
 

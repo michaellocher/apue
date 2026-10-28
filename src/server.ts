@@ -1,6 +1,10 @@
-// apü server spike (S1): POST /{op}, unary JSON or framed streaming in both directions.
+// apü server: contract-driven HTTP mapping (S2) over node:http2 (h2 + HTTP/1.1 fallback),
+// unary JSON or framed streaming in both directions (S1).
+import { createHash } from 'node:crypto';
 import http2 from 'node:http2';
+import type { AddressInfo, Socket } from 'node:net';
 import type { Writable } from 'node:stream';
+import { canonicalJson, hasRequestStream, hasResponseStream, isCacheableRead, type Api, type OpDef } from './api.ts';
 import {
   concatBytes,
   decodeFrames,
@@ -11,8 +15,10 @@ import {
   type EndInfo,
   type Problem,
 } from './frame.ts';
+import { MemoryIdempotencyStore, type IdempotencyStore, type StoredResponse } from './idempotency.ts';
 import { drained } from './node-streams.ts';
-import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType } from './protocol.ts';
+import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
+import { ValidationError } from './schema.ts';
 
 export interface CallContext {
   readonly op: string;
@@ -20,13 +26,20 @@ export interface CallContext {
   readonly signal: AbortSignal;
   readonly headers: http2.IncomingHttpHeaders;
   readonly httpVersion: string;
+  readonly method: string;
 }
 
-/**
- * Returns a value (unary response) or an AsyncIterable (framed stream response).
- * `input` is the decoded JSON body, or an AsyncIterable of messages for streaming requests.
- */
-export type Handler = (input: any, ctx: CallContext) => unknown;
+type Awaitable<T> = T | Promise<T>;
+
+export type HandlerFor<D> =
+  D extends OpDef<infer I, infer O, infer S>
+    ? (
+        input: S extends 'client' | 'bidi' ? AsyncIterable<I> : I,
+        ctx: CallContext,
+      ) => S extends 'server' | 'bidi' ? Awaitable<AsyncIterable<O>> : Awaitable<O>
+    : never;
+
+export type Handlers<A extends Api> = { [K in keyof A]: HandlerFor<A[K]> };
 
 export interface ApueServerOptions {
   key: string | Buffer;
@@ -42,6 +55,10 @@ export interface ApueServerOptions {
   streamWindow?: number;
   /** HTTP/2 per-connection receive window. */
   connectionWindow?: number;
+  /** Validate (and strip unknown fields from) handler output. Default true: no accidental data leaks. */
+  validateOutput?: boolean;
+  /** Store for Idempotency-Key replays; `false` disables the feature. */
+  idempotency?: IdempotencyStore | false;
 }
 
 export interface ApueServer {
@@ -50,6 +67,9 @@ export interface ApueServer {
   close(): Promise<void>;
 }
 
+export const MANIFEST_PATH = '/.well-known/apue';
+export const PROTOCOL_VERSION = 'draft-00';
+
 const STREAM_HEADERS = {
   'content-type': MediaType.STREAM_JSON,
   'cache-control': 'no-store',
@@ -57,6 +77,9 @@ const STREAM_HEADERS = {
   incremental: '?1',
   'x-accel-buffering': 'no',
 };
+
+const IDEMPOTENCY_KEY = 'idempotency-key';
+const REPLAYED = 'apue-replayed';
 
 // ---------------------------------------------------------------------------------------------
 // Rendering: the same frame sequence as binary frames or as SSE (debug / curl view, §6).
@@ -167,7 +190,9 @@ export class FrameWriter {
 
 // ---------------------------------------------------------------------------------------------
 
-export function createApueServer(handlers: Record<string, Handler>, options: ApueServerOptions): ApueServer {
+type AnyHandler = (input: unknown, ctx: CallContext) => unknown;
+
+export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, options: ApueServerOptions): ApueServer {
   const {
     heartbeatMs = 15_000,
     commitAfterMs = 50,
@@ -175,7 +200,14 @@ export function createApueServer(handlers: Record<string, Handler>, options: Apu
     maxBodyBytes = 1024 * 1024,
     streamWindow = 4 * 1024 * 1024,
     connectionWindow = 32 * 1024 * 1024,
+    validateOutput = true,
   } = options;
+  const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
+  const handlerMap = handlers as unknown as Record<string, AnyHandler>;
+  for (const name of Object.keys(api)) {
+    if (typeof handlerMap[name] !== 'function') throw new Error(`missing handler for ${name}`);
+  }
+  const manifest = encodeJson(buildManifest(api));
 
   const serverOptions: http2.SecureServerOptions & { connectionWindowSize?: number } = {
     key: options.key,
@@ -185,10 +217,10 @@ export function createApueServer(handlers: Record<string, Handler>, options: Apu
     connectionWindowSize: connectionWindow, // Node ≥ 26.11
   };
   const server = http2.createSecureServer(serverOptions);
-  // Nagle + delayed ACK can stall small frames by 40–200 ms (research/02 §6).
-  const sockets = new Set<import('node:net').Socket>();
+  const sockets = new Set<Socket>();
   const sessions = new Set<http2.ServerHttp2Session>();
-  server.on('connection', (socket: import('node:net').Socket) => {
+  server.on('connection', (socket: Socket) => {
+    // Nagle + delayed ACK can stall small frames by 40–200 ms (research/02 §6).
     socket.setNoDelay(true);
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
@@ -209,34 +241,106 @@ export function createApueServer(handlers: Record<string, Handler>, options: Apu
       if (!completed) clientGone.abort(new ApueError(499, 'Client Closed Request'));
     });
     let signal = clientGone.signal;
+    const method = req.method;
+    const head = method === 'HEAD';
+    let idempotencyKey: string | undefined;
     try {
-      if (req.method !== 'POST') {
-        res.setHeader('allow', 'POST');
-        throw new ApueError(405, 'Method Not Allowed', `${req.method} is not supported yet (S1 is POST-only)`);
+      const url = new URL(req.url, 'https://apue.invalid');
+      if (url.pathname === MANIFEST_PATH) {
+        if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
+        complete();
+        return sendCacheable(req, res, manifest, { 'cache-control': 'no-cache' });
       }
-      const path = req.url.split('?', 1)[0]!;
-      const op = decodeURIComponent(path.slice(1));
-      const handler = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
-      if (!handler) throw new ApueError(404, 'Unknown Operation', op);
+      const opName = decodeURIComponent(url.pathname.slice(1));
+      const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
+      if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
+      const handler = handlerMap[opName]!;
+
+      const read = isCacheableRead(def);
+      const allow = read ? 'GET, HEAD, QUERY, POST' : 'POST';
+      if (!allow.split(', ').includes(method)) throw methodNotAllowed(method, allow);
+      if (def.deprecated) {
+        for (const [name, value] of Object.entries(deprecationHeaders(def.deprecated))) res.setHeader(name, value);
+      }
+      if (read) res.setHeader('accept-query', `"${MediaType.JSON}"`);
 
       const timeoutMs = parseTimeout(req.headers[Header.TIMEOUT]);
       if (timeoutMs !== undefined) signal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
 
-      const ctx: CallContext = { op, signal, headers: req.headers, httpVersion: req.httpVersion };
-      const input = await readInput(req, maxBodyBytes);
-      const result = await abortable(Promise.resolve(handler(input, ctx)), signal);
-      if (isAsyncIterable(result)) {
-        await streamResponse(req, res, result, signal, clientGone.signal, complete);
+      let input: unknown;
+      if (method === 'GET' || head) {
+        input = parseQueryInput(url);
+      } else if (hasRequestStream(def)) {
+        if (baseMediaType(req.headers['content-type']) !== MediaType.STREAM_JSON) {
+          throw new ApueError(415, 'Unsupported Media Type', `${opName} expects ${MediaType.STREAM_JSON}`);
+        }
+        input = validatedStream(readInputStream(req), def);
       } else {
-        complete();
-        sendJson(res, 200, MediaType.JSON, result ?? null);
+        input = await readJsonBody(req, maxBodyBytes, method === 'QUERY');
       }
+      if (!hasRequestStream(def)) input = validateInput(def, input);
+
+      // Idempotency-Key: only for unary non-safe ops (safe ops are idempotent by definition).
+      const keyHeader = req.headers[IDEMPOTENCY_KEY];
+      if (typeof keyHeader === 'string' && idempotency && def.effect !== 'safe' && def.stream === 'none') {
+        const key = parseIdempotencyKey(keyHeader);
+        const scope = `${opName}\n${hash(String(req.headers.authorization ?? ''))}\n${key}`;
+        const claim = idempotency.begin(scope, hash(canonicalJson(input ?? null)));
+        if (claim.state === 'replay') {
+          complete();
+          return replay(res, claim.response);
+        }
+        if (claim.state === 'in-progress') {
+          throw new ApueError(409, 'Idempotency Key In Progress', 'a request with this Idempotency-Key is still being processed', {
+            type: ProblemType.IDEMPOTENCY_IN_PROGRESS,
+            retryable: true,
+          });
+        }
+        if (claim.state === 'mismatch') {
+          throw new ApueError(422, 'Idempotency Key Reused', 'Idempotency-Key was already used with a different request payload', {
+            type: ProblemType.IDEMPOTENCY_MISMATCH,
+          });
+        }
+        idempotencyKey = scope;
+      }
+
+      if (head && hasResponseStream(def)) {
+        complete();
+        res.writeHead(200, { ...STREAM_HEADERS, vary: 'accept' });
+        return void res.end();
+      }
+      const ctx: CallContext = { op: opName, signal, headers: req.headers, httpVersion: req.httpVersion, method };
+      const result = await abortable(Promise.resolve(handler(input, ctx)), signal);
+
+      if (hasResponseStream(def)) {
+        if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
+        const items = validateOutput ? mapAsync(result, (item) => def.output.parse(item)) : result;
+        return await streamResponse(req, res, items, signal, clientGone.signal, complete);
+      }
+      const body = encodeJson((validateOutput ? def.output.parse(result) : result) ?? null);
+      complete();
+      if (read) return sendCacheable(req, res, body, { 'cache-control': cacheControl(def) });
+      const headers = { 'content-type': MediaType.JSON, 'cache-control': 'no-store' };
+      if (idempotencyKey) idempotency!.complete(idempotencyKey, { status: 200, headers, body });
+      return sendBytes(res, 200, headers, body);
     } catch (error) {
-      if (clientGone.signal.aborted) return;
+      if (clientGone.signal.aborted) {
+        if (idempotencyKey) idempotency!.release(idempotencyKey);
+        return;
+      }
       const problem = toProblem(error);
       complete();
-      if (res.headersSent) res.end();
-      else sendJson(res, problem.status, MediaType.PROBLEM, problem);
+      const headers: Record<string, string> = { 'content-type': MediaType.PROBLEM, 'cache-control': 'no-store' };
+      if (error instanceof ApueError) Object.assign(headers, error.headers);
+      const body = encodeJson(problem);
+      if (idempotencyKey) {
+        // Deterministic client errors are stored so a retry gets the same answer; server errors
+        // release the key so a retry can execute again.
+        if (problem.status < 500) idempotency!.complete(idempotencyKey, { status: problem.status, headers, body });
+        else idempotency!.release(idempotencyKey);
+      }
+      if (res.headersSent) return void res.end();
+      sendBytes(res, problem.status, headers, head ? undefined : body, body.byteLength);
     }
   }
 
@@ -260,7 +364,7 @@ export function createApueServer(handlers: Record<string, Handler>, options: Apu
 
     const accept = req.headers.accept ?? '';
     const renderer = accept.includes(MediaType.SSE) && !accept.includes(MediaType.STREAM_JSON) ? sseRenderer : frameRenderer;
-    res.writeHead(200, { ...STREAM_HEADERS, 'content-type': renderer.contentType });
+    res.writeHead(200, { ...STREAM_HEADERS, 'content-type': renderer.contentType, vary: 'accept' });
     const writer = new FrameWriter(res, { renderer, coalesceBytes });
     writer.startHeartbeat(heartbeatMs);
     try {
@@ -291,7 +395,7 @@ export function createApueServer(handlers: Record<string, Handler>, options: Apu
         server.once('error', reject);
         server.listen(port, host, () => {
           server.off('error', reject);
-          resolve((server.address() as import('node:net').AddressInfo).port);
+          resolve((server.address() as AddressInfo).port);
         });
       });
     },
@@ -306,17 +410,64 @@ export function createApueServer(handlers: Record<string, Handler>, options: Apu
 }
 
 // ---------------------------------------------------------------------------------------------
+// Manifest (§11): machine-readable contract, served at /.well-known/apue.
 
-function isClosed(sink: Writable): boolean {
-  return sink.destroyed === true || sink.writableEnded;
+export function buildManifest(api: Api): Record<string, unknown> {
+  return {
+    apue: PROTOCOL_VERSION,
+    ops: Object.fromEntries(
+      Object.entries(api).map(([name, def]) => [
+        name,
+        {
+          effect: def.effect,
+          stream: def.stream,
+          ...(def.description ? { description: def.description } : {}),
+          input: def.input.toJSONSchema(),
+          output: def.output.toJSONSchema(),
+          ...(def.cache ? { cache: def.cache } : {}),
+          ...(def.deprecated
+            ? {
+                deprecated: {
+                  since: def.deprecated.since.toISOString(),
+                  ...(def.deprecated.sunset ? { sunset: def.deprecated.sunset.toISOString() } : {}),
+                  ...(def.deprecated.link ? { link: def.deprecated.link } : {}),
+                },
+              }
+            : {}),
+        },
+      ]),
+    ),
+  };
 }
 
-async function readInput(req: http2.Http2ServerRequest, maxBodyBytes: number): Promise<unknown> {
-  const type = baseMediaType(req.headers['content-type']);
-  if (type === MediaType.STREAM_JSON) return readInputStream(req);
-  if (type !== MediaType.JSON && type !== '') {
-    throw new ApueError(415, 'Unsupported Media Type', type);
+export function deprecationHeaders(deprecated: NonNullable<OpDef['deprecated']>): Record<string, string> {
+  const headers: Record<string, string> = { deprecation: `@${Math.floor(deprecated.since.getTime() / 1000)}` };
+  if (deprecated.sunset) headers.sunset = deprecated.sunset.toUTCString();
+  if (deprecated.link) headers.link = `<${deprecated.link}>; rel="deprecation"`;
+  return headers;
+}
+
+// ---------------------------------------------------------------------------------------------
+
+function methodNotAllowed(method: string, allow: string): ApueError {
+  return new ApueError(405, 'Method Not Allowed', `${method} is not allowed here`, {}, { allow });
+}
+
+function parseQueryInput(url: URL): unknown {
+  const values = url.searchParams.getAll('i');
+  if (values.length > 1) throw new ApueError(400, 'Bad Request', 'query parameter i given more than once');
+  if (values.length === 0) return undefined;
+  try {
+    return JSON.parse(values[0]!);
+  } catch {
+    throw new ApueError(400, 'Bad Request', 'query parameter i is not valid JSON');
   }
+}
+
+async function readJsonBody(req: http2.Http2ServerRequest, maxBodyBytes: number, query: boolean): Promise<unknown> {
+  const type = baseMediaType(req.headers['content-type']);
+  // RFC 10008 §2: servers MUST fail a QUERY whose Content-Type is missing.
+  if (query && !type) throw new ApueError(400, 'Bad Request', 'QUERY requires a Content-Type');
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Uint8Array>) {
@@ -324,7 +475,13 @@ async function readInput(req: http2.Http2ServerRequest, maxBodyBytes: number): P
     if (size > maxBodyBytes) throw new ApueError(413, 'Content Too Large', `limit is ${maxBodyBytes} bytes`);
     chunks.push(chunk);
   }
-  return size === 0 ? undefined : decodeJson(concatBytes(chunks, size));
+  if (size === 0) return undefined;
+  if (type !== MediaType.JSON) throw new ApueError(415, 'Unsupported Media Type', `expected ${MediaType.JSON}, got ${type || 'none'}`);
+  try {
+    return decodeJson(concatBytes(chunks, size));
+  } catch {
+    throw new ApueError(400, 'Bad Request', 'body is not valid JSON');
+  }
 }
 
 async function* readInputStream(req: http2.Http2ServerRequest): AsyncGenerator<unknown> {
@@ -337,21 +494,106 @@ async function* readInputStream(req: http2.Http2ServerRequest): AsyncGenerator<u
       return;
     }
   }
-  throw new ApueError(400, 'Truncated Input Stream', 'request body ended without END frame');
+  throw new ApueError(400, 'Truncated Stream', 'request body ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
 }
 
-function sendJson(res: http2.Http2ServerResponse, status: number, contentType: string, body: unknown): void {
-  const bytes = encodeJson(body);
-  res.writeHead(status, { 'content-type': contentType, 'content-length': bytes.byteLength });
-  res.end(bytes);
+async function* validatedStream(source: AsyncIterable<unknown>, def: OpDef): AsyncGenerator<unknown> {
+  let index = 0;
+  for await (const item of source) {
+    try {
+      yield def.input.parse(item);
+    } catch (error) {
+      if (error instanceof ValidationError) throw validationProblem(error, `input message ${index}`);
+      throw error;
+    }
+    index++;
+  }
+}
+
+async function* mapAsync<T, R>(source: AsyncIterable<T>, fn: (item: T) => R): AsyncGenerator<R> {
+  for await (const item of source) yield fn(item);
+}
+
+function validateInput(def: OpDef, input: unknown): unknown {
+  try {
+    return def.input.parse(input);
+  } catch (error) {
+    if (error instanceof ValidationError) throw validationProblem(error, 'input');
+    throw error;
+  }
+}
+
+function validationProblem(error: ValidationError, what: string): ApueError {
+  return new ApueError(400, 'Validation Failed', `${what} does not match the schema`, { type: ProblemType.VALIDATION, fields: error.issues });
+}
+
+function parseIdempotencyKey(value: string): string {
+  // Structured Field String (RFC 9651 §3.3.3): "…" of printable ASCII. Bare tokens are tolerated.
+  const match = /^"((?:[\x20\x21\x23-\x5b\x5d-\x7e]|\\["\\])*)"$/.exec(value.trim());
+  const key = match ? match[1]!.replace(/\\(["\\])/g, '$1') : value.trim();
+  if (key.length === 0 || key.length > 255 || !/^[\x20-\x7e]+$/.test(key)) {
+    throw new ApueError(400, 'Bad Request', 'invalid Idempotency-Key');
+  }
+  return key;
+}
+
+function cacheControl(def: OpDef): string {
+  const policy = def.cache;
+  if (!policy || policy.maxAge === undefined) return policy?.private ? 'private, no-cache' : 'no-cache';
+  const parts = [policy.private ? 'private' : 'public', `max-age=${policy.maxAge}`];
+  if (policy.staleWhileRevalidate !== undefined) parts.push(`stale-while-revalidate=${policy.staleWhileRevalidate}`);
+  return parts.join(', ');
+}
+
+function hash(text: string | Uint8Array): string {
+  return createHash('sha256').update(text).digest('base64url');
+}
+
+/** Strong ETag over the representation bytes; If-None-Match → 304 (RFC 9110 §13.1.2). */
+function sendCacheable(
+  req: http2.Http2ServerRequest,
+  res: http2.Http2ServerResponse,
+  body: Uint8Array,
+  headers: Record<string, string>,
+): void {
+  const etag = `"${hash(body).slice(0, 22)}"`;
+  if (ifNoneMatch(req.headers['if-none-match'], etag)) return sendBytes(res, 304, { etag, ...headers });
+  sendBytes(res, 200, { 'content-type': MediaType.JSON, etag, ...headers }, req.method === 'HEAD' ? undefined : body, body.byteLength);
+}
+
+function ifNoneMatch(header: string | undefined, etag: string): boolean {
+  if (!header) return false;
+  if (header.trim() === '*') return true;
+  // If-None-Match uses weak comparison (RFC 9110 §13.1.2): W/ prefixes are ignored.
+  return header.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag);
+}
+
+function replay(res: http2.Http2ServerResponse, stored: StoredResponse): void {
+  sendBytes(res, stored.status, { ...stored.headers, [REPLAYED]: '?1' }, stored.body);
+}
+
+function sendBytes(
+  res: http2.Http2ServerResponse,
+  status: number,
+  headers: Record<string, string>,
+  body?: Uint8Array,
+  contentLength = body?.byteLength,
+): void {
+  res.writeHead(status, contentLength === undefined || status === 304 ? headers : { ...headers, 'content-length': String(contentLength) });
+  if (body) res.end(body);
+  else res.end();
 }
 
 function toProblem(error: unknown): Problem {
   if (error instanceof ApueError) return error.problem;
-  if (error instanceof DOMException && error.name === 'TimeoutError') {
-    return { title: 'Deadline Exceeded', status: 504, retryable: true };
+  if (error instanceof ValidationError) {
+    // Only output validation reaches here (input errors are converted earlier) → server bug.
+    console.error('apü: handler output does not match schema:', error.message);
+    return { title: 'Internal Server Error', status: 500 };
   }
-  if (error instanceof SyntaxError) return { title: 'Bad Request', status: 400, detail: 'malformed JSON' };
+  if (error instanceof DOMException && error.name === 'TimeoutError') {
+    return { type: ProblemType.DEADLINE, title: 'Deadline Exceeded', status: 504, retryable: true };
+  }
   console.error('apü handler error:', error);
   return { title: 'Internal Server Error', status: 500 };
 }
@@ -361,6 +603,10 @@ function parseTimeout(value: string | string[] | undefined): number | undefined 
   const ms = Number(value);
   if (!Number.isInteger(ms) || ms <= 0) throw new ApueError(400, 'Bad Request', `invalid ${Header.TIMEOUT}`);
   return ms;
+}
+
+function isClosed(sink: Writable): boolean {
+  return sink.destroyed === true || sink.writableEnded;
 }
 
 /** Rejects with the signal's reason as soon as it aborts; the underlying promise keeps running. */

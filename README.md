@@ -14,8 +14,11 @@ npm run certs        # dev cert in certs/ for running a server manually
 
 | Path | |
 |---|---|
+| `src/schema.ts` | TS-first schema builder (validation, inference, JSON Schema) |
+| `src/api.ts` | `op` / `defineApi`, effect → HTTP method rules, RFC 8785 canonical JSON |
+| `src/idempotency.ts` | Idempotency-Key store |
 | `src/frame.ts` | frame codec (web-only, runs in browsers) |
 | `src/protocol.ts` | media types, headers, `ApueError` |
 | `src/server.ts` | node:http2 server, `FrameWriter` (coalescing, backpressure, heartbeat) |
-| `src/client.ts` | `ApueClient` + fetch transport |
+| `src/client.ts` | typed `ApueClient` (method selection, retries) + fetch transport |
 | `src/transport-http2.ts` | node:http2 transport (full duplex) |

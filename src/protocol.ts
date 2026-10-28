@@ -12,15 +12,38 @@ export const Header = {
   TIMEOUT: 'apue-timeout',
 } as const;
 
+/**
+ * Problem type URIs for apü-specific errors (RFC 9457 §3.1.1). Generic errors use the default
+ * type about:blank with the HTTP status phrase as title (§4.2.1).
+ * NOTE: https://apue.dev is a placeholder namespace until the spec has a home.
+ */
+export const ProblemType = {
+  VALIDATION: 'https://apue.dev/problems/validation-failed',
+  UNKNOWN_OPERATION: 'https://apue.dev/problems/unknown-operation',
+  TRUNCATED_STREAM: 'https://apue.dev/problems/truncated-stream',
+  DEADLINE: 'https://apue.dev/problems/deadline-exceeded',
+  IDEMPOTENCY_IN_PROGRESS: 'https://apue.dev/problems/idempotency-key-in-progress',
+  IDEMPOTENCY_MISMATCH: 'https://apue.dev/problems/idempotency-key-reused',
+} as const;
+
 export class ApueError extends Error {
   readonly status: number;
   readonly problem: Problem;
+  /** Extra response header fields (e.g. `allow` on 405). */
+  readonly headers: Record<string, string>;
 
-  constructor(status: number, title: string, detail?: string, extensions: Record<string, unknown> = {}) {
+  constructor(
+    status: number,
+    title: string,
+    detail?: string,
+    extensions: Record<string, unknown> = {},
+    headers: Record<string, string> = {},
+  ) {
     super(detail ? `${title}: ${detail}` : title);
     this.name = 'ApueError';
     this.status = status;
     this.problem = { ...extensions, title, status, ...(detail === undefined ? {} : { detail }) };
+    this.headers = headers;
   }
 
   static fromProblem(problem: Partial<Problem> | undefined, fallbackStatus: number): ApueError {

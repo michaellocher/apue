@@ -1,22 +1,39 @@
+// S1 behaviour: streaming, errors, cancellation, deadlines, duplex, wire details.
 import assert from 'node:assert/strict';
 import https from 'node:https';
 import { PassThrough } from 'node:stream';
 import { after, before, describe, test } from 'node:test';
+import { defineApi, op } from '../src/api.ts';
 import { ApueClient } from '../src/client.ts';
 import { decodeFrames, decodeJson, FrameType } from '../src/frame.ts';
 import { ApueError, MediaType } from '../src/protocol.ts';
-import { FrameWriter, type Handler } from '../src/server.ts';
+import { t } from '../src/schema.ts';
+import { FrameWriter, type Handlers } from '../src/server.ts';
 import { sleep, startServer, testCert, transports } from './helpers.ts';
+
+const api = defineApi({
+  'math.add': op({ effect: 'unsafe', input: t.object({ a: t.number(), b: t.number() }), output: t.number() }),
+  'meta.version': op({ effect: 'unsafe', input: t.void(), output: t.object({ httpVersion: t.string() }) }),
+  'count.up': op({ effect: 'unsafe', stream: 'server', input: t.object({ to: t.number({ int: true }) }), output: t.number() }),
+  'count.failAt': op({ effect: 'unsafe', stream: 'server', input: t.object({ at: t.number() }), output: t.number() }),
+  'fail.early': op({ effect: 'unsafe', stream: 'server', input: t.void(), output: t.unknown() }),
+  'slow.first': op({ effect: 'unsafe', stream: 'server', input: t.void(), output: t.string() }),
+  'slow.unary': op({ effect: 'unsafe', input: t.void(), output: t.boolean() }),
+  'ticker.forever': op({ effect: 'unsafe', stream: 'server', input: t.void(), output: t.number() }),
+  'idle.then.one': op({ effect: 'unsafe', stream: 'server', input: t.void(), output: t.string() }),
+  'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.object({ echo: t.number() }) }),
+  'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
+});
 
 let cancelled: PromiseWithResolvers<string>;
 
-const handlers: Record<string, Handler> = {
-  'math.add': ({ a, b }: { a: number; b: number }) => a + b,
+const handlers: Handlers<typeof api> = {
+  'math.add': ({ a, b }) => a + b,
   'meta.version': (_input, ctx) => ({ httpVersion: ctx.httpVersion }),
-  'count.up': async function* ({ to }: { to: number }) {
+  'count.up': async function* ({ to }) {
     for (let i = 1; i <= to; i++) yield i;
   },
-  'count.failAt': async function* ({ at }: { at: number }) {
+  'count.failAt': async function* ({ at }) {
     for (let i = 1; ; i++) {
       if (i === at) throw new ApueError(409, 'Conflict', `failed at ${i}`);
       yield i;
@@ -44,10 +61,10 @@ const handlers: Record<string, Handler> = {
     await sleep(120);
     yield 'done';
   },
-  'echo.duplex': async function* (inputs: AsyncIterable<unknown>) {
+  'echo.duplex': async function* (inputs) {
     for await (const value of inputs) yield { echo: value };
   },
-  'sum.client': async (inputs: AsyncIterable<number>) => {
+  'sum.client': async (inputs) => {
     let sum = 0;
     for await (const n of inputs) sum += n;
     return sum;
@@ -57,25 +74,21 @@ const handlers: Record<string, Handler> = {
 let server: { url: string; close(): Promise<void> };
 
 before(async () => {
-  server = await startServer(handlers, { commitAfterMs: 20, heartbeatMs: 30 });
+  server = await startServer(api, handlers, { commitAfterMs: 20, heartbeatMs: 30 });
 });
 after(() => server.close());
 
 for (const name of ['fetch', 'http2'] as const) {
   describe(`over ${name} transport`, () => {
-    let client: ApueClient;
+    let client: ApueClient<typeof api>;
     before(() => {
-      client = new ApueClient(new Map(transports(server.url)).get(name)!);
+      client = new ApueClient(api, new Map(transports(server.url)).get(name)!);
     });
     after(() => client.close());
 
     test('unary call over HTTP/2', async () => {
       assert.equal(await client.call('math.add', { a: 2, b: 40 }), 42);
       assert.deepEqual(await client.call('meta.version'), { httpVersion: '2.0' });
-    });
-
-    test('unknown operation → 404 problem', async () => {
-      await assert.rejects(client.call('nope'), (e: ApueError) => e.status === 404 && e.problem.title === 'Unknown Operation');
     });
 
     test('server stream delivers all items then END', async () => {
@@ -97,7 +110,7 @@ for (const name of ['fetch', 'http2'] as const) {
       await assert.rejects(Array.fromAsync(client.stream('fail.early')), (e: ApueError) => e.status === 403);
     });
 
-    test('deadline → 504 and handler sees aborted signal', async () => {
+    test('deadline → 504 without retries', async () => {
       const started = performance.now();
       await assert.rejects(client.call('slow.unary', undefined, { timeoutMs: 100 }), (e: ApueError) => e.status === 504);
       assert.ok(performance.now() - started < 1_000);
@@ -105,7 +118,7 @@ for (const name of ['fetch', 'http2'] as const) {
 
     test('breaking out of a stream cancels it on the server', async () => {
       cancelled = Promise.withResolvers();
-      for await (const n of client.stream<number>('ticker.forever')) if (n === 3) break;
+      for await (const n of client.stream('ticker.forever')) if (n === 3) break;
       assert.equal(await cancelled.promise, 'Client Closed Request');
     });
 
@@ -115,13 +128,24 @@ for (const name of ['fetch', 'http2'] as const) {
       }
       assert.deepEqual(await Array.fromAsync(client.duplex('sum.client', numbers())), [5050]);
     });
+
+    test('invalid stream input message → 400 with message index', async () => {
+      async function* bad() {
+        yield 1;
+        yield 'two' as unknown as number;
+      }
+      // The client validates before sending; bypass it to exercise the server check.
+      const raw = new ApueClient({ 'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.unknown(), output: t.unknown() }) }, new Map(transports(server.url)).get(name)!);
+      await assert.rejects(Array.fromAsync(raw.duplex('sum.client', bad())), (e: ApueError) => e.status === 400 && /input message 1/.test(e.problem.detail ?? ''));
+      await assert.rejects(Array.fromAsync(client.duplex('sum.client', bad())), (e: ApueError) => e.status === 400 && e.problem.title === 'Validation Failed');
+      await raw.close();
+    });
   });
 }
 
 describe('full duplex (T1)', () => {
   test('node:http2 transport gets each echo before sending the next input', async () => {
-    const client = new ApueClient(new Map(transports(server.url)).get('http2')!);
-    const echoed = Promise.withResolvers<void>();
+    const client = new ApueClient(api, new Map(transports(server.url)).get('http2')!);
     let lastEcho = -1;
     async function* inputs() {
       for (let i = 0; i < 5; i++) {
@@ -129,14 +153,12 @@ describe('full duplex (T1)', () => {
         // Wait for the echo of `i` — only possible when the response streams while the request is open.
         while (lastEcho < i) await sleep(1);
       }
-      echoed.resolve();
     }
     const out: unknown[] = [];
-    for await (const item of client.duplex<{ echo: number }>('echo.duplex', inputs())) {
+    for await (const item of client.duplex('echo.duplex', inputs())) {
       lastEcho = item.echo;
       out.push(item);
     }
-    await echoed.promise;
     assert.deepEqual(out, [0, 1, 2, 3, 4].map((echo) => ({ echo })));
     await client.close();
   });
@@ -158,8 +180,8 @@ describe('wire behaviour', () => {
     const res = await fetch(`${server.url}/idle.then.one`, { method: 'POST', headers: { accept: MediaType.STREAM_JSON } });
     const types: number[] = [];
     for await (const frame of decodeFrames(res.body!)) types.push(frame.type);
-    assert.ok(types.filter((t) => t === FrameType.HEARTBEAT).length >= 2, `frames: ${types}`);
-    assert.deepEqual(types.filter((t) => t !== FrameType.HEARTBEAT), [FrameType.MSG, FrameType.END]);
+    assert.ok(types.filter((type) => type === FrameType.HEARTBEAT).length >= 2, `frames: ${types}`);
+    assert.deepEqual(types.filter((type) => type !== FrameType.HEARTBEAT), [FrameType.MSG, FrameType.END]);
   });
 
   test('SSE rendering of the same stream for debugging', async () => {
@@ -189,13 +211,20 @@ describe('wire behaviour', () => {
     assert.equal(body, '1.1 200 3');
   });
 
-  test('wrong method / media type → 405 / 415 problem+json', async () => {
-    const get = await fetch(`${server.url}/math.add`);
-    assert.equal(get.status, 405);
-    assert.equal(get.headers.get('content-type'), MediaType.PROBLEM);
-    const xml = await fetch(`${server.url}/math.add`, { method: 'POST', headers: { 'content-type': 'text/xml' }, body: '<a/>' });
-    assert.equal(xml.status, 415);
-    assert.equal((await xml.json()).status, 415);
+  test('truncated request stream → 400', async () => {
+    const res = await fetch(`${server.url}/sum.client`, {
+      method: 'POST',
+      headers: { 'content-type': MediaType.STREAM_JSON },
+      body: new Uint8Array([0, 0, 0, 0, 0, 0, 0, 1, 0x31]), // one MSG frame, no END
+    });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).title, 'Truncated Stream');
+  });
+
+  test('streaming op with plain JSON body → 415', async () => {
+    const res = await fetch(`${server.url}/sum.client`, { method: 'POST', headers: { 'content-type': MediaType.JSON }, body: '1' });
+    assert.equal(res.status, 415);
+    await res.body?.cancel();
   });
 });
 

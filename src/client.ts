@@ -1,6 +1,20 @@
-// apü client spike (S1). Web-platform only; transports are pluggable.
-import { decodeFrames, decodeJson, endFrame, FrameType, msgFrame, concatBytes, type EndInfo } from './frame.ts';
-import { ApueError, baseMediaType, Header, MediaType } from './protocol.ts';
+// apü client: typed from the API definition (TS-first, no codegen). Web-platform only; transports
+// are pluggable (fetch here, node:http2 in transport-http2.ts).
+import {
+  canonicalJson,
+  hasRequestStream,
+  isCacheableRead,
+  MAX_GET_URL,
+  readPath,
+  type Api,
+  type InputOf,
+  type OpDef,
+  type OutputOf,
+  type StreamKind,
+} from './api.ts';
+import { concatBytes, decodeFrames, decodeJson, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
+import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
+import { ValidationError } from './schema.ts';
 
 export interface TransportRequest {
   method: string;
@@ -25,64 +39,90 @@ export interface CallOptions {
   signal?: AbortSignal;
   /** Sent as `apue-timeout`; the server aborts the call and answers 504 after this many ms. */
   timeoutMs?: number;
+  /** Overrides the generated Idempotency-Key of a non-safe unary call. */
+  idempotencyKey?: string;
+  /** Overrides the client's retry budget for this call. */
+  retries?: number;
 }
 
+export interface ClientOptions {
+  /** Retries for retry-eligible calls (safe, idempotent, or keyed). Default 2. */
+  retries?: number;
+  /** Base backoff; attempt n waits a random time in [0, base·2ⁿ] (full jitter), capped at maxBackoffMs. */
+  backoffMs?: number;
+  maxBackoffMs?: number;
+}
+
+type OpsOf<A extends Api, S extends StreamKind> = {
+  [K in keyof A & string]: A[K] extends OpDef<any, any, infer X> ? ([X] extends [S] ? K : never) : never;
+}[keyof A & string];
+
+type Args<D> = undefined extends InputOf<D>
+  ? [input?: InputOf<D>, options?: CallOptions]
+  : [input: InputOf<D>, options?: CallOptions];
+
+const QUERY_REJECTED = new Set([400, 403, 405, 501]);
 const ACCEPT = `${MediaType.STREAM_JSON}, ${MediaType.JSON};q=0.9, ${MediaType.PROBLEM};q=0.8`;
+const textEncoder = new TextEncoder();
 
-export class ApueClient {
+interface Prepared {
+  method: string;
+  path: string;
+  headers: Record<string, string>;
+  body?: TransportRequest['body'];
+}
+
+export class ApueClient<A extends Api> {
+  #api: A;
   #transport: Transport;
+  #retries: number;
+  #backoffMs: number;
+  #maxBackoffMs: number;
+  /** Set once the server (or an intermediary) rejects QUERY; reads then fall back to POST. */
+  #queryUnsupported = false;
 
-  constructor(transport: Transport) {
+  constructor(api: A, transport: Transport, options: ClientOptions = {}) {
+    this.#api = api;
     this.#transport = transport;
+    this.#retries = options.retries ?? 2;
+    this.#backoffMs = options.backoffMs ?? 100;
+    this.#maxBackoffMs = options.maxBackoffMs ?? 2_000;
   }
 
-  /** Unary call. A streaming response is collected into an array. */
-  async call<T = unknown>(op: string, input?: unknown, options?: CallOptions): Promise<T> {
-    const body = input === undefined ? undefined : new TextEncoder().encode(JSON.stringify(input));
-    const out: unknown[] = [];
-    let streamed = false;
-    for await (const item of this.#run(op, body, MediaType.JSON, options, () => (streamed = true))) out.push(item);
-    return (streamed ? out : out[0]) as T;
+  /** Unary call. */
+  async call<K extends OpsOf<A, 'none'>>(op: K, ...[input, options]: Args<A[K]>): Promise<OutputOf<A[K]>> {
+    for await (const value of this.#run(op, input, options)) return value as OutputOf<A[K]>;
+    throw new ApueError(502, 'Empty Response');
   }
 
-  /** Server-streaming call. Breaking out of the loop cancels the call. */
-  stream<T = unknown>(op: string, input?: unknown, options?: CallOptions): AsyncGenerator<T> {
-    const body = input === undefined ? undefined : new TextEncoder().encode(JSON.stringify(input));
-    return this.#run(op, body, MediaType.JSON, options) as AsyncGenerator<T>;
+  /** Server-streaming call. Breaking out of the loop cancels the call on the server. */
+  stream<K extends OpsOf<A, 'server'>>(op: K, ...[input, options]: Args<A[K]>): AsyncGenerator<OutputOf<A[K]>> {
+    return this.#run(op, input, options) as AsyncGenerator<OutputOf<A[K]>>;
   }
 
-  /** Client-/bidi-streaming call. Full duplex depends on the transport (§8 tiers). */
-  duplex<T = unknown>(op: string, inputs: AsyncIterable<unknown>, options?: CallOptions): AsyncGenerator<T> {
-    return this.#run(op, encodeInputs(inputs), MediaType.STREAM_JSON, options) as AsyncGenerator<T>;
+  /** Client- or bidi-streaming call. Full duplex depends on the transport (§8 tiers). */
+  duplex<K extends OpsOf<A, 'client' | 'bidi'>>(
+    op: K,
+    inputs: AsyncIterable<InputOf<A[K]>>,
+    options?: CallOptions,
+  ): AsyncGenerator<OutputOf<A[K]>> {
+    return this.#run(op, inputs, options) as AsyncGenerator<OutputOf<A[K]>>;
   }
 
   close(): Promise<void> {
     return this.#transport.close?.() ?? Promise.resolve();
   }
 
-  async *#run(
-    op: string,
-    body: TransportRequest['body'],
-    contentType: string,
-    options: CallOptions = {},
-    onStream?: () => void,
-  ): AsyncGenerator<unknown> {
+  async *#run(opName: string, input: unknown, options: CallOptions = {}): AsyncGenerator<unknown> {
+    const def = this.#api[opName];
+    if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
     const controller = new AbortController();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
-    const headers: Record<string, string> = { accept: ACCEPT, 'content-type': contentType };
-    if (options.timeoutMs !== undefined) headers[Header.TIMEOUT] = String(options.timeoutMs);
     let finished = false;
     try {
-      const res = await this.#transport.request({
-        method: 'POST',
-        path: `/${encodeURIComponent(op)}`,
-        headers,
-        ...(body === undefined ? {} : { body }),
-        signal,
-      });
+      const res = await this.#send(opName, def, input, options, signal);
       const type = baseMediaType(res.headers.get('content-type'));
       if (type === MediaType.STREAM_JSON && res.status === 200) {
-        onStream?.();
         for await (const frame of decodeFrames(res.body)) {
           if (frame.type === FrameType.MSG) {
             yield decodeJson(frame.payload);
@@ -92,26 +132,140 @@ export class ApueClient {
             if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
             return;
           }
-          // HEARTBEAT, CHECKPOINT, unknown types: ignored in S1.
+          // HEARTBEAT, CHECKPOINT and unknown frame types are ignored.
         }
-        throw new ApueError(502, 'Truncated Stream', 'response ended without END frame');
+        throw new ApueError(502, 'Truncated Stream', 'response ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
       }
       const bytes = await readAll(res.body);
       finished = true;
-      if (type === MediaType.PROBLEM || res.status >= 400) {
-        throw ApueError.fromProblem(bytes.byteLength ? (decodeJson(bytes) as never) : undefined, res.status);
-      }
+      if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
       if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
       yield decodeJson(bytes);
     } finally {
       if (!finished) controller.abort();
     }
   }
+
+  #prepare(opName: string, def: OpDef, input: unknown, options: CallOptions): Prepared {
+    const headers: Record<string, string> = { accept: ACCEPT };
+    if (options.timeoutMs !== undefined) headers[Header.TIMEOUT] = String(options.timeoutMs);
+    if (hasRequestStream(def)) {
+      headers['content-type'] = MediaType.STREAM_JSON;
+      // RFC 10036 §3: must be set on the request too, or intermediaries may buffer the upload.
+      headers.incremental = '?1';
+      return { method: 'POST', path: `/${opName}`, headers, body: encodeInputs(input as AsyncIterable<unknown>, def) };
+    }
+    const value = validate(def, input, 'input');
+    if (isCacheableRead(def)) {
+      const getPath = readPath(opName, value);
+      if (getPath.length <= MAX_GET_URL) return { method: 'GET', path: getPath, headers };
+    }
+    if (value !== undefined) headers['content-type'] = MediaType.JSON;
+    const body = value === undefined ? undefined : textEncoder.encode(canonicalJson(value));
+    const method = isCacheableRead(def) && !this.#queryUnsupported ? 'QUERY' : 'POST';
+    if (def.effect !== 'safe' && def.stream === 'none') {
+      headers['idempotency-key'] = sfString(options.idempotencyKey ?? crypto.randomUUID());
+    }
+    return { method, path: `/${opName}`, headers, ...(body === undefined ? {} : { body }) };
+  }
+
+  async #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal): Promise<TransportResponse> {
+    let prepared = this.#prepare(opName, def, input, options);
+    // A request stream can't be replayed; everything else is safe to resend because it is safe,
+    // idempotent, or carries an Idempotency-Key.
+    const budget = hasRequestStream(def) ? 0 : (options.retries ?? this.#retries);
+    let queryRejectedWith: number | undefined;
+    for (let attempt = 0; ; attempt++) {
+      // Per-attempt signal: aborting it discards a response we won't use (resets the h2 stream).
+      // Merely returning an unstarted body iterator would leave the stream open.
+      const attemptController = new AbortController();
+      const attemptSignal = AbortSignal.any([signal, attemptController.signal]);
+      let res: TransportResponse;
+      try {
+        res = await this.#transport.request({ ...prepared, signal: attemptSignal });
+      } catch (error) {
+        if (signal.aborted || attempt >= budget) throw error;
+        await sleep(this.#backoff(attempt), signal);
+        continue;
+      }
+      // Intermediaries without QUERY support answer 405/501 (Akamai), 403 (CloudFront) or 400
+      // (Envoy < 1.40 on HTTP/1). Retry the read as POST; remember only if POST then fares better.
+      if (prepared.method === 'QUERY' && QUERY_REJECTED.has(res.status)) {
+        attemptController.abort();
+        queryRejectedWith = res.status;
+        prepared = { ...prepared, method: 'POST' };
+        attempt--; // a method fallback is not a retry
+        continue;
+      }
+      if (queryRejectedWith !== undefined && res.status !== queryRejectedWith) this.#queryUnsupported = true;
+      if (attempt < budget) {
+        const delay = await this.#retryDelay(res, attempt);
+        if (delay !== undefined) {
+          attemptController.abort();
+          await sleep(delay, signal);
+          continue;
+        }
+      }
+      return res;
+    }
+  }
+
+  /** Returns a delay if the response is a retryable failure, else undefined. Never consumes non-409 bodies. */
+  async #retryDelay(res: TransportResponse, attempt: number): Promise<number | undefined> {
+    if (res.status === 503 || res.status === 429) {
+      const retryAfter = Number(res.headers.get('retry-after'));
+      return Number.isFinite(retryAfter) && retryAfter >= 0 ? Math.min(retryAfter * 1000, this.#maxBackoffMs) : this.#backoff(attempt);
+    }
+    if (res.status === 409 && baseMediaType(res.headers.get('content-type')) === MediaType.PROBLEM) {
+      // 409 is only retryable when the server says so (Idempotency-Key still in progress).
+      const bytes = await readAll(res.body);
+      const problem = safeJson(bytes) as Partial<Problem> | undefined;
+      if (problem?.retryable === true) return this.#backoff(attempt);
+      res.body = single(bytes);
+    }
+    return undefined;
+  }
+
+  #backoff(attempt: number): number {
+    return Math.random() * Math.min(this.#maxBackoffMs, this.#backoffMs * 2 ** attempt);
+  }
 }
 
-async function* encodeInputs(inputs: AsyncIterable<unknown>): AsyncGenerator<Uint8Array> {
-  for await (const value of inputs) yield msgFrame(value);
+// ---------------------------------------------------------------------------------------------
+
+function validate(def: OpDef, value: unknown, what: string): unknown {
+  try {
+    return def.input.parse(value);
+  } catch (error) {
+    if (error instanceof ValidationError) {
+      throw new ApueError(400, 'Validation Failed', `${what} does not match the schema`, { type: ProblemType.VALIDATION, fields: error.issues });
+    }
+    throw error;
+  }
+}
+
+async function* encodeInputs(inputs: AsyncIterable<unknown>, def: OpDef): AsyncGenerator<Uint8Array> {
+  let index = 0;
+  for await (const value of inputs) yield msgFrame(validate(def, value, `input message ${index++}`));
   yield endFrame({ status: 200 });
+}
+
+/** RFC 9651 sf-string. */
+function sfString(value: string): string {
+  if (!/^[\x20-\x7e]*$/.test(value)) throw new TypeError('Idempotency-Key must be printable ASCII');
+  return `"${value.replace(/[\\"]/g, '\\$&')}"`;
+}
+
+function problemError(bytes: Uint8Array, status: number): ApueError {
+  return ApueError.fromProblem(safeJson(bytes) as Partial<Problem> | undefined, status);
+}
+
+function safeJson(bytes: Uint8Array): unknown {
+  try {
+    return bytes.byteLength ? decodeJson(bytes) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
@@ -122,6 +276,25 @@ async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
     length += chunk.byteLength;
   }
   return length === 0 ? new Uint8Array(0) : concatBytes(chunks, length);
+}
+
+async function* single(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield bytes;
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -139,11 +312,18 @@ export function fetchTransport(baseUrl: string, fetchImpl: typeof fetch = fetch)
         ...(body === undefined ? {} : { body: streaming ? toReadableStream(body) : (body as BodyInit) }),
         ...(streaming ? { duplex: 'half' } : {}),
       };
-      const res = await fetchImpl(base + path, init);
+      let res: Response;
+      try {
+        res = await fetchImpl(base + path, init);
+      } catch (error) {
+        // fetch wraps errors thrown by a streaming request body (e.g. client-side validation).
+        if (error instanceof TypeError && error.cause instanceof ApueError) throw error.cause;
+        throw error;
+      }
       return {
         status: res.status,
         headers: res.headers,
-        body: res.body ? fromReadableStream(res.body) : emptyBody(),
+        body: res.body ? fromReadableStream(res.body) : single(new Uint8Array(0)),
       };
     },
   };
@@ -181,5 +361,3 @@ async function* fromReadableStream(stream: ReadableStream<Uint8Array>): AsyncGen
     reader.releaseLock();
   }
 }
-
-async function* emptyBody(): AsyncGenerator<Uint8Array> {}

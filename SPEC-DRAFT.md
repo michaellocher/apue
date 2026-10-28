@@ -1,7 +1,7 @@
 # apü — draft 00
 
 *Status: design draft, 2026-10-28. Nothing here is final; every MUST is a hypothesis to be validated by a spike.*
-*Research basis: [`research/`](research/) — 01 existing-API problems, 02 HTTP/2 & modern HTTP (+ performance addendum), 03 data plane, 04 Node 26 platform.*
+*Research basis: [`research/`](research/) — 01 existing-API problems, 02 HTTP/2 & modern HTTP (+ performance addendum), 03 data plane, 04 Node 26 platform, 05 verified normative details.*
 
 ASCII identifier for media types and header names: **`apue`**.
 
@@ -64,16 +64,21 @@ URL: `{base}/{op}` — op name in `:path` (HPACK-friendly, routable, one preflig
 
 | effect | stream | Request |
 |---|---|---|
-| safe | none/server | `GET {base}/{op}?i={canonical-input}` if encoded URL ≤ 2 KiB, else `QUERY {base}/{op}` with body; if QUERY rejected (405/501) → `POST` with `Apue-Effect: safe` |
-| idempotent | any | `POST` (or `PUT`?) — open question; retries allowed |
-| unsafe | any | `POST`; `Idempotency-Key` RECOMMENDED; retried only with key |
+| safe | none/server | `GET {base}/{op}?i={canonical-input}` if the path ≤ 2 KiB, else `QUERY {base}/{op}` with canonical JSON body (Content-Type required, RFC 10008 §2). If QUERY is rejected with 400/403/405/501 (Envoy < 1.40, CloudFront, Akamai) → same request as `POST`; the client remembers this only if POST then fares better. `HEAD` supported wherever GET is. |
+| idempotent | none | `POST` + `Idempotency-Key` (client-generated UUID, SF String); retries allowed |
+| unsafe | none | `POST` + `Idempotency-Key` (client-generated); retries allowed because of the key |
+| any non-safe | client/bidi | `POST`, request stream; never retried (body can't be replayed) |
 
 - `i` = input as **RFC 8785 JCS canonical JSON**, percent-encoded → deterministic cache key.
 - Projection: `s=` query parameter or `select` in body (list of field paths).
 - Deadline: `Apue-Timeout: <ms>` (SF integer). Server aborts work after deadline; client maps to `AbortController` → RST_STREAM.
 - Unary response: real HTTP status, `Content-Type: application/json` (or `application/cbor`), errors as `application/problem+json`.
 - Streaming response/request: `Content-Type: application/apue+json` / `application/apue+cbor` (framed, §6), or `text/event-stream` (debug/EventSource rendering).
-- Safe responses carry `ETag`; clients use `If-None-Match`.
+- Safe responses carry a strong `ETag` (SHA-256 of the representation); `If-None-Match` → 304 (weak comparison). `Cache-Control` from the op's `cache` policy, default `no-cache` (revalidate), `private` for caller-dependent ops; non-safe and streams `no-store`. Reads advertise `Accept-Query: "application/json"`.
+- Server enforces the mapping: other methods → 405 + `Allow`.
+- **Idempotency-Key semantics** (draft-08): scope = op + hash(Authorization) + key; fingerprint = SHA-256 of canonical input. Same key + same payload → stored response replayed with `apue-replayed: ?1` (apü extension; the draft defines no header); different payload → 422; original still running → 409 `retryable: true`. Handler 4xx are stored; 5xx and client aborts release the key so a retry re-executes.
+- **Client retries** (default 2, full-jitter backoff): transport errors, 503/429 (honouring `Retry-After`), 409 with `retryable: true` — only for safe ops or keyed requests; 504 (deadline) is not retried.
+- Input is validated on the client (no request for invalid input) and on the server (400 with `fields`). Output is validated and stripped to the schema (no accidental field leaks); invalid output → 500.
 
 **CORS position:** recommended deployment is same-origin (no preflight). Cross-origin: few URLs + `Access-Control-Max-Age: 7200`. apü does **not** accept CORS-simple content types for non-safe ops (CSRF, cf. Apollo GHSA-2p3c-p3qw-69r4) — we pay the preflight rather than open a CSRF hole.
 
@@ -108,7 +113,7 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 
 ## 7. Errors
 
-- Unary: HTTP status + `application/problem+json` (RFC 9457). Extension members: `retryable` (bool), `retryAfter` (s), `fields` (per-field validation errors).
+- Unary: HTTP status + `application/problem+json` (RFC 9457). Generic errors use `about:blank` with the status phrase as `title`; apü protocol errors have `type` URIs (`…/validation-failed`, `…/unknown-operation`, `…/truncated-stream`, `…/deadline-exceeded`, `…/idempotency-key-in-progress`, `…/idempotency-key-reused`; namespace `https://apue.dev/problems/` is a placeholder). Extension members: `retryable` (bool), `fields` (per-field validation errors).
 - Streams: if the stream fails before its first item and within the **commit window** (server-chosen, default 50 ms), the server answers with a real HTTP status + problem+json — visible to proxies and dashboards. Otherwise headers are committed (short TTFB) and later failures go into an END frame `{status: <http-status-code>, problem}`.
 - Batches: each lane ends with its own END → partial failure is explicit. The HTTP status is 200 if the batch was *accepted*.
 
@@ -164,8 +169,9 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 
 ## 13. Open questions
 
-1. `idempotent` ops: POST + key vs. PUT? (PUT is preflighted cross-origin either way.)
-2. Do common CDNs pass `QUERY` through in 2026? Spike needed.
+1. ~~`idempotent` ops: POST + key vs. PUT?~~ → POST + key (PUT means "replace the target resource", wrong for RPC).
+2. ~~Do common CDNs pass `QUERY`?~~ → No for CloudFront (403) and Akamai (501), yes for Fastly/nginx/Envoy ≥ 1.40/HAProxy, none cache it (research/05) → client fallback to POST.
+7. Problem type namespace (placeholder `https://apue.dev/problems/`).
 3. Correlated-pair duplex for browsers without WebSocket/WebTransport — needs shared state; drop?
 4. Per-frame vs per-stream compression default.
 5. Projection syntax (paths vs. FieldMask-like).
@@ -213,3 +219,15 @@ Platform findings:
 - On RST_STREAM the h2 compat layer marks `res` finished *before* `'close'` and `res.destroyed` is undefined → cancellation needs an explicit completion flag.
 - `http2.Server.close()` waits for open sessions (fetch keeps them alive) → close sessions (GOAWAY) + keep-alive sockets explicitly.
 - `tls.setDefaultCACertificates()` makes built-in fetch trust a dev cert at runtime (no `NODE_EXTRA_CA_CERTS`).
+
+### S2 — 2026-10-28 ✅
+
+Implemented: `src/schema.ts` (TS-first schema builder: validation, static inference, JSON Schema), `src/api.ts` (`op`/`defineApi`, effect → method rules, RFC 8785 canonical JSON), `src/idempotency.ts` (in-memory store), server rewrite (contract-driven mapping, ETag/304, cache policy, HEAD, Accept-Query, Deprecation/Sunset/Link, manifest at `/.well-known/apue`, output stripping), typed client (`ApueClient<typeof api>`, no codegen) with method selection, QUERY→POST fallback, idempotency keys and retries.
+
+Tests: 82 (`schema`, `idempotency`, `http-mapping`, plus S1 suites ported to typed APIs), including RFC 8785 test vectors and type-level `@ts-expect-error` checks.
+
+Findings:
+- `op()` needed overloads: with a defaulted `S` type parameter, the contextual type from `defineApi` widened `stream` to the whole union.
+- Returning an *unstarted* async-generator body iterator does not run its `finally` → the h2 stream stayed open and `server.close()` hung. Fixed with a per-attempt AbortController (aborting resets the stream).
+- fetch wraps errors thrown by a streaming request body as `TypeError: fetch failed` with the original in `cause` → unwrapped in the fetch transport.
+- `QUERY` works on Node 26.12.1 over h1 (llhttp) and h2, from fetch and node:https.

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import tls from 'node:tls';
 import { fetchTransport, type Transport } from '../src/client.ts';
-import { createApueServer, type ApueServerOptions, type Handler } from '../src/server.ts';
+import type { Api } from '../src/api.ts';
+import { createApueServer, type ApueServerOptions, type Handlers } from '../src/server.ts';
 import { http2Transport } from '../src/transport-http2.ts';
 
 let cached: { key: string; cert: string } | undefined;
@@ -23,12 +24,13 @@ export function testCert(): { key: string; cert: string } {
   return cached;
 }
 
-export async function startServer(
-  handlers: Record<string, Handler>,
+export async function startServer<A extends Api>(
+  api: A,
+  handlers: Handlers<A>,
   options: Partial<ApueServerOptions> = {},
 ): Promise<{ url: string; close(): Promise<void> }> {
   const { key, cert } = testCert();
-  const apue = createApueServer(handlers, { key, cert, ...options });
+  const apue = createApueServer(api, handlers, { key, cert, ...options });
   const port = await apue.listen();
   return { url: `https://127.0.0.1:${port}`, close: () => apue.close() };
 }

@@ -1,0 +1,21 @@
+{
+  "name": "apue-spike",
+  "version": "0.0.0",
+  "private": true,
+  "description": "apü — spikes for a new HTTP/2-native API protocol",
+  "type": "module",
+  "engines": {
+    "node": ">=26.11.0"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:watch": "node --test --watch",
+    "typecheck": "tsc",
+    "certs": "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 -keyout certs/key.pem -out certs/cert.pem -subj /CN=localhost -addext subjectAltName=DNS:localhost,IP:127.0.0.1",
+    "ttfb": "node scripts/ttfb.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

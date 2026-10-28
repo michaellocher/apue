@@ -30,7 +30,8 @@ import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, project, SelectionError, type Selection } from './select.ts';
 import { BlobAssembler, blobChunks, decodeFramedValue, messageFrames, splitMessage } from './blobs.ts';
-import { containsBytes, ValidationError } from './schema.ts';
+import { containsBytes, mapBytes, ValidationError } from './schema.ts';
+import { handleUpload, UploadStore, UPLOADS_PATH, type UploadOptions } from './uploads.ts';
 
 export type { Exchange } from './exchange.ts';
 
@@ -106,6 +107,12 @@ export interface ApueServerOptions {
    * ~10,000 levels before this limit). Default 64.
    */
   maxJsonDepth?: number;
+  /**
+   * Resumable uploads at `/$uploads` (draft-ietf-httpbis-resumable-upload, research/06): op inputs
+   * reference them as { "$upload": id } where the schema says t.bytes(). Off by default (it is
+   * storage any client can fill); required by ops with bytes in a unary input.
+   */
+  uploads?: UploadOptions;
   /** Validate (and strip unknown fields from) handler output. Default true: no accidental data leaks. */
   validateOutput?: boolean;
   /** Store for Idempotency-Key replays; `false` disables the feature. */
@@ -337,6 +344,25 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   const resumeTokens = new ResumeTokens(options.resume);
   if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
   checkWindow('webSocketWindow', webSocketWindow);
+  const uploads = options.uploads ? new UploadStore(options.uploads) : undefined;
+  for (const [name, def] of Object.entries(api)) {
+    if (!hasRequestStream(def) && containsBytes(def.input) && !uploads) {
+      throw new Error(`${name} has bytes in a unary input: they arrive as upload references, enable options.uploads`);
+    }
+  }
+  /** Who is asking — uploads, like idempotency keys, are scoped to the credentials. */
+  const credentialScope = (req: Exchange) => hash(String(req.headers.authorization ?? ''));
+  /** Upload references → bytes at t.bytes() positions; 400 with the field path if one doesn't resolve. */
+  const resolveUploads = (def: OpDef, input: unknown, req: Exchange) =>
+    !uploads || !containsBytes(def.input)
+      ? input
+      : mapBytes(def.input, input, (value, path) => {
+          const id = (value as { $upload?: unknown } | null)?.$upload;
+          if (typeof id !== 'string' || Object.keys(value as object).length !== 1) return value; // validation reports it
+          const bytes = uploads.resolve(id, credentialScope(req));
+          if (!bytes) throw new ApueError(400, 'Validation Failed', 'input does not match the schema', { type: ProblemType.VALIDATION, fields: [{ path, message: 'unknown, incomplete or expired upload' }] });
+          return bytes;
+        });
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
   for (const name of Object.keys(api)) {
@@ -447,6 +473,12 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         complete();
         return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, 'cache-control': 'no-cache' }, manifest, true);
       }
+      if (url.pathname === UPLOADS_PATH || url.pathname.startsWith(`${UPLOADS_PATH}/`)) {
+        if (!uploads) throw new ApueError(404, 'Not Found', 'uploads are not enabled on this server');
+        const response = await handleUpload(req, uploads, credentialScope(req), url.pathname);
+        complete();
+        return void res.send(response.status, response.headers, head ? undefined : response.body);
+      }
       if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete);
       const opName = decodePathSegment(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
@@ -477,7 +509,14 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       } else {
         input = await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs, maxJsonDepth);
       }
-      if (!hasRequestStream(def)) input = validateInput(def, input);
+      // Identity for idempotency and resume tokens: the input with upload references, not the
+      // resolved bytes (canonical JSON of a 64 MiB Uint8Array would be a huge object).
+      let identity: unknown;
+      if (!hasRequestStream(def)) {
+        const withRefs = input;
+        input = validateInput(def, await resolveUploads(def, input, req));
+        identity = containsBytes(def.input) ? withRefs : input;
+      }
 
       // Resumable streams: checkpoints become signed tokens bound to this op and input.
       let resumeFrom: string | undefined;
@@ -486,7 +525,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       let emitCheckpoint: ((token: string) => void) | undefined;
       if (def.resumable) {
         // 128 bits are plenty to bind a token to its input and keep tokens compact.
-        const inputHash = hash(canonicalJson(input ?? null)).slice(0, 22);
+        const inputHash = hash(canonicalJson(identity ?? null)).slice(0, 22);
         const token = req.headers[Header.RESUME] ?? req.headers['last-event-id'];
         if (typeof token === 'string' && token !== '') resumeFrom = resumeTokens.verify(token, opName, inputHash);
         checkpoint = (cursor) => {
@@ -509,7 +548,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         const keyHeader = req.headers[IDEMPOTENCY_KEY];
         const keyed = typeof keyHeader === 'string' && def.effect !== 'safe' && def.stream === 'none';
         const key = keyed ? parseIdempotencyKey(keyHeader) : undefined;
-        const outcome = await runUnary(opName, def, input, ctx, key, selection);
+        const outcome = await runUnary(opName, def, input, ctx, key, selection, identity);
         if (outcome.aborted) return;
         complete();
         if (outcome.status === 200 && read) {
@@ -570,11 +609,12 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     ctx: CallContext,
     key: string | undefined,
     selection?: Selection,
+    identity: unknown = input,
   ): Promise<Outcome> {
     let scope: string | undefined;
     if (key !== undefined && idempotency && def.effect !== 'safe') {
       scope = `${opName}\n${hash(String(ctx.headers.authorization ?? ''))}\n${key}`;
-      const claim = idempotency.begin(scope, hash(canonicalJson(input ?? null)));
+      const claim = idempotency.begin(scope, hash(canonicalJson(identity ?? null)));
       if (claim.state === 'replay') {
         const stored = claim.response;
         const payload = baseMediaType(stored.headers['content-type']) === MediaType.STREAM_JSON ? decodeFramedValue(stored.body) : decodeJson(stored.body);
@@ -670,9 +710,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     // Batch lanes are not resumable (a batch is one request); checkpoints are ignored there.
     const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method, checkpoint: () => {} };
     try {
-      const input = validateInput(call.def, resolveRefs(call.input, output));
+      const withRefs = resolveRefs(call.input, output);
+      const input = validateInput(call.def, await resolveUploads(call.def, withRefs, req));
       if (call.def.stream === 'none') {
-        const outcome = await runUnary(call.op, call.def, input, ctx, call.key, call.selection);
+        const outcome = await runUnary(call.op, call.def, input, ctx, call.key, call.selection, containsBytes(call.def.input) ? withRefs : input);
         if (outcome.status !== 200) {
           await writer.end({ status: outcome.status, problem: outcome.payload as Problem }, lane);
           return { ok: false };
@@ -1152,9 +1193,10 @@ function hash(text: string | Uint8Array): string {
   return cryptoHash('sha256', text, 'base64url');
 }
 
-const CORS_ALLOW_METHODS = 'GET, HEAD, POST, QUERY';
-const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id']);
-const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding';
+// PATCH/DELETE and the Upload-* fields are for resumable uploads (`/$uploads`).
+const CORS_ALLOW_METHODS = 'DELETE, GET, HEAD, PATCH, POST, QUERY';
+const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version']);
+const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding, location, upload-offset, upload-complete, upload-limit, upload-length';
 
 /**
  * Adds CORS response headers for an allowed Origin and answers preflights. Returns true when the

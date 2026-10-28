@@ -57,7 +57,7 @@ describe('CORS', () => {
     assert.equal(h[':status'], 204);
     assert.equal(h['access-control-allow-origin'], ORIGIN);
     assert.equal(h['access-control-allow-credentials'], 'true');
-    assert.equal(h['access-control-allow-methods'], 'GET, HEAD, POST, QUERY');
+    assert.equal(h['access-control-allow-methods'], 'DELETE, GET, HEAD, PATCH, POST, QUERY');
     assert.equal(h['access-control-allow-headers'], 'content-type, idempotency-key');
     assert.equal(h['access-control-max-age'], '7200');
     assert.equal(h.vary, 'origin');

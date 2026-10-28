@@ -26,6 +26,32 @@ export function containsBytes(schema: Schema<unknown>): boolean {
   return result;
 }
 
+/**
+ * Rebuilds `value` with `fn` applied at every position the schema types as t.bytes() (object fields,
+ * array elements, optional/nullable values; absent and null values are left alone). Schema-directed,
+ * so no escaping is needed: a bytes position cannot hold arbitrary JSON. Unchanged parts are shared.
+ */
+export async function mapBytes(schema: Schema<unknown>, value: unknown, fn: (value: unknown, path: string) => unknown | Promise<unknown>, path = ''): Promise<unknown> {
+  if (!containsBytes(schema) || value === undefined || value === null) return value;
+  if (schema.kind === 'bytes') return fn(value, path);
+  if (schema.inner) return mapBytes(schema.inner, value, fn, path);
+  if (schema.element && Array.isArray(value)) {
+    const items = await Promise.all(value.map((item, i) => mapBytes(schema.element!, item, fn, `${path}[${i}]`)));
+    return items.every((item, i) => item === value[i]) ? value : items;
+  }
+  if (schema.fields && typeof value === 'object' && !Array.isArray(value)) {
+    let out: Record<string, unknown> | undefined;
+    for (const [key, field] of Object.entries(schema.fields)) {
+      if (!Object.hasOwn(value, key)) continue;
+      const before = (value as Record<string, unknown>)[key];
+      const after = await mapBytes(field, before, fn, path ? `${path}.${key}` : key);
+      if (after !== before) (out ??= { ...(value as Record<string, unknown>) })[key] = after;
+    }
+    return out ?? value;
+  }
+  return value; // shape mismatch: validation reports it
+}
+
 export class ValidationError extends Error {
   readonly issues: Issue[];
 

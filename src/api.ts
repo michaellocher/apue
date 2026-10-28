@@ -75,9 +75,8 @@ export function op(def: OpInit<Schema<unknown>, Schema<unknown>> & { stream?: St
   if (def.cache?.cdnMaxAge !== undefined && def.cache.private) throw new Error('cache.cdnMaxAge makes no sense for private responses');
   if (def.cache && def.effect !== 'safe') throw new Error('only safe ops are cacheable');
   if (def.invalidates?.length && def.effect === 'safe') throw new Error('invalidates is ignored on safe methods (RFC 9875 §3): use it on idempotent/unsafe ops');
-  if ((def.stream === undefined || def.stream === 'none' || def.stream === 'server') && containsBytes(def.input)) {
-    throw new Error('bytes in the input need a request stream (stream: client or bidi): a JSON body or URL cannot carry them');
-  }
+  // Bytes in a unary input travel as upload references ({ "$upload": id }, SPEC-DRAFT §6): the
+  // server must enable `uploads` for such ops (checked by createApueServer).
   if (def.resumable && def.effect === 'unsafe') throw new Error('resumable ops must be safe or idempotent (resuming re-sends the request)');
   return { ...def, stream: def.stream ?? 'none' };
 }

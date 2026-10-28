@@ -25,6 +25,8 @@ export interface Exchange extends AsyncIterable<Uint8Array> {
   end(): void;
   /** Called once when the exchange is over (completed, reset or connection lost). */
   onClose(callback: () => void): void;
+  /** Sends an interim (1xx) response, where the protocol allows it (HTTP/2; Node's HTTP/1.1 API cannot). */
+  interim?(status: number, headers: Record<string, string>): void;
 }
 
 export class H2Exchange implements Exchange {
@@ -65,6 +67,10 @@ export class H2Exchange implements Exchange {
     if (this.#gone()) return;
     this.#stream.respond({ ...mergeHeaders(this.#extra, headers), ':status': status });
     this.headersSent = true;
+  }
+
+  interim(status: number, headers: Record<string, string>): void {
+    if (!this.headersSent && !this.#gone()) this.#stream.additionalHeaders({ ...headers, ':status': status });
   }
 
   send(status: number, headers: Record<string, string>, body?: Uint8Array): void {

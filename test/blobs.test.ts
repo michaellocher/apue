@@ -99,7 +99,7 @@ describe('blob codec', () => {
     assert.throws(() => t.bytes().parse('AAEC'), /expected bytes/);
     assert.throws(() => t.bytes({ max: 1 }).parse(new Uint8Array(2)), /more than 1 bytes/);
     assert.ok(containsBytes(File) && containsBytes(t.array(File)) && !containsBytes(t.object({ a: t.string() })));
-    assert.throws(() => op({ effect: 'unsafe', input: File, output: t.void() }), /need a request stream/);
+    assert.doesNotThrow(() => op({ effect: 'unsafe', input: File, output: t.void() })); // bytes as upload references (§6)
   });
 });
 

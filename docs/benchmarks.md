@@ -74,7 +74,9 @@ numbers are isolated micro-benchmarks or A/B runs):
 
 Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCII checks (only
 14–17 % faster decode ≈ 3 % of client CPU, Node-only); larger per-stream buffers before waiting for
-`drain` (no measurable effect).
+`drain` (no measurable effect); a schema-compiled "validate + serialize in one pass" built from
+closures (no eval): 140 → 103 ns for a 3-field item but 421 → 448 ns for a nested user — V8's
+native `JSON.stringify` after validation stays.
 
 ## Caveats
 

@@ -23,8 +23,10 @@
   server failure, protocol-error closes leaving half-open transports, `close()` closing a shared
   transport / not closing live sockets; plus a `MaxListenersExceededWarning` on slow streams
   (FrameWriter created a drain waiter per blocked write).
-- Everything with failing-first tests (mutation-checked), plus a WebSocket fuzz test (400 seeded
-  sessions, half well-formed); 244 tests, all committed.
+- Every fix has a regression test; most were checked to fail without the fix (one, the WebSocket
+  reset → 499, cannot fail in Node and is marked as documenting behaviour). Plus a WebSocket fuzz
+  test (400 seeded sessions, half well-formed); 244 tests, all committed; the final state passed
+  25 consecutive full-suite runs.
 
 ## Where to start
 
@@ -84,8 +86,9 @@ browsers are skipped if missing). `npm run typecheck` is clean.
   (`net::ERR_FAILED` for e.g. `/src/batch.ts`, captured by the new CDP diagnostics at 07:17) — the
   page then never becomes ready (and once navigated by a native form submit). Server side shows no
   error; cause still open. The example server now logs abnormal streams (`APUE_DEBUG_STREAMS`, on in
-  the tests); 25 isolated browser runs and 23 consecutive full-suite runs (07:20–07:35) afterwards
-  did not reproduce it.
+  the tests); 25 isolated browser runs, 23 consecutive full-suite runs and a targeted repro (150
+  loads of the page in one Chrome under 6 busy CPU loops, network failures recorded) did not
+  reproduce it.
 - WebKit lost the last messages of a WebSocket stream and reported 1006 in ~1 of 10 runs: a
   server-initiated close right after the data, over RFC 8441. Reproduced with a raw WebSocket page
   (3–4 of 40), gone after letting the client close after END (0 of 40; spec §8).

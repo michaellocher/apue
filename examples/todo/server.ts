@@ -92,10 +92,11 @@ if (process.env.APUE_DEBUG_STREAMS) {
   // explain a rare net::ERR_FAILED for one module request in Chrome).
   server.server.on('stream', (stream, headers) => {
     stream.on('close', () => {
-      // CANCEL (8) is how browsers end live streams and WebSockets; `writableFinished` is no signal
-      // (node:http2 closes a stream whose request body was read without emitting 'finish').
+      // CANCEL (8) is how browsers end live streams and WebSockets (also before a stream committed its
+      // headers); `writableFinished` is no signal (node:http2 closes a stream whose request body was
+      // read without emitting 'finish'). Log other resets, and clean closes without a response.
       const status = stream.sentHeaders?.[':status'];
-      if ((stream.rstCode !== 0 && stream.rstCode !== 8) || status === undefined) {
+      if ((stream.rstCode !== 0 && stream.rstCode !== 8) || (stream.rstCode === 0 && status === undefined)) {
         console.error(`[stream] ${headers[':method']} ${headers[':path']} rst=${stream.rstCode} status=${status}`);
       }
     });

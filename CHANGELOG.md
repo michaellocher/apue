@@ -4,7 +4,7 @@ Versions follow [Semantic Versioning](https://semver.org/); tags have no `v` pre
 `0.1.0-beta.1`). Pre-1.0 betas may change the wire format and APIs between releases; every change
 is listed here.
 
-## 0.1.0-beta.1 — unreleased
+## 0.1.0-beta.1 — 2026-10-28
 
 First public beta of the apü toolkit (spec draft 01, see SPEC-DRAFT.md), published to GitHub
 Packages as `@michaellocher/apue` (installing needs a `read:packages` token; README, "Install").

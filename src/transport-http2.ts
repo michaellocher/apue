@@ -82,6 +82,7 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
             bytes: () =>
               new Promise<Uint8Array>((done, fail) => {
                 const readable = source as NodeJS.ReadableStream & import('node:stream').Readable;
+                if (readable.readableEnded || readable.destroyed) return fail(new Error('response body was already consumed'));
                 const chunks: Buffer[] = [];
                 readable.on('data', (chunk: Buffer) => chunks.push(chunk));
                 readable.once('end', () => done(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks)));

@@ -4,7 +4,8 @@ import { hash as cryptoHash } from 'node:crypto';
 import http2 from 'node:http2';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Transform, Writable } from 'node:stream';
-import { canonicalJson, hasRequestStream, hasResponseStream, isCacheableRead, type Api, type OpDef } from './api.ts';
+import { canonicalJson, deprecationHeaders, hasRequestStream, hasResponseStream, isCacheableRead, type Api, type OpDef } from './api.ts';
+export { deprecationHeaders } from './api.ts';
 import {
   concatBytes,
   decodeFrames,
@@ -24,12 +25,13 @@ import { STATUS_CODES } from 'node:http';
 import { onExchange, WsExchange, type Exchange, type WebSocketUpgrade } from './exchange.ts';
 import { acceptKey, checkHandshake, WsClose, WsConnection } from './websocket.ts';
 import { drained } from './node-streams.ts';
-import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClientGone, isUploadRef, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClientGone, isUploadRef, MAX_TIMEOUT_MS, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 export { isClientGone } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, MAX_SELECT_PATHS, project, SelectionError, type Selection } from './select.ts';
 import { HTTP_CONVENTIONS, opErrors, opExample, opHttp, PROTOCOL_ERRORS } from './docs.ts';
+import { buildOpenApi, OPENAPI_MEDIA_TYPE, type OpenApiInfo } from './openapi.ts';
 import { BlobAssembler, blobChunks, decodeFramedValue, messageFrames, splitMessage } from './blobs.ts';
 import { containsBytes, containsDownload, isDownloadRef, isDownloadSource, mapBytes, mapDownloads, ValidationError } from './schema.ts';
 import { DownloadStore, DOWNLOADS_PATH, serveDownload, type DownloadOptions } from './downloads.ts';
@@ -167,6 +169,13 @@ export interface ApueServerOptions {
    * app from the same origin, which needs no CORS preflights. Return true when handled.
    */
   fallback?: (exchange: Exchange) => boolean | Promise<boolean>;
+  /**
+   * OpenAPI 3.2 description at `/.well-known/openapi.json`, derived from the op definitions and
+   * linked from the API catalog; `info`/`servers` from these fields (read when it is built).
+   * Built on the first request and cached — nothing is spent if nobody asks. On by default: it
+   * says nothing the public manifest doesn't. `false` turns it off (404 like any unknown path).
+   */
+  openapi?: OpenApiInfo | false;
 }
 
 export interface PrincipalRequest {
@@ -207,6 +216,8 @@ export const MANIFEST_PATH = '/.well-known/apue';
 /** RFC 9727 API catalog (linkset) pointing at the manifest, for generic discovery. */
 export const CATALOG_PATH = '/.well-known/api-catalog';
 const CATALOG_TYPE = 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"';
+/** OpenAPI 3.2 description (src/openapi.ts), a second `service-desc` in the catalog. */
+export const OPENAPI_PATH = '/.well-known/openapi.json';
 // Op names start with a letter, so this never collides with an op — and `/` stays free for
 // serving the web app from the same origin.
 export const BATCH_PATH = '/$batch';
@@ -488,6 +499,19 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         : {}),
     },
   });
+  // Built on first request (research/08: 5–8× the manifest; most servers are never asked for it).
+  const openapi = options.openapi;
+  let openApiBody: Uint8Array | undefined;
+  const openApiDocument = (): Uint8Array =>
+    (openApiBody ??= encodeJson(
+      buildOpenApi(api, {
+        ...openapi,
+        idempotency: idempotency !== undefined,
+        ...(uploads ? { uploads: { maxBytes: uploads.maxSize, maxAgeSeconds: Math.floor(uploads.ttlMs / 1000) } } : {}),
+        downloads: downloads !== undefined,
+        manifest: MANIFEST_PATH,
+      }),
+    ));
 
   const serverOptions: http2.SecureServerOptions & { connectionWindowSize?: number } = {
     key: options.key,
@@ -616,9 +640,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         complete();
         const authority = String(req.headers[':authority'] ?? req.headers.host ?? 'localhost');
         const origin = `https://${authority}`;
-        const catalog = encodeJson({
-          linkset: [{ anchor: `${origin}/`, 'service-desc': [{ href: `${origin}${MANIFEST_PATH}`, type: MediaType.JSON }] }],
-        });
+        const descriptions: Array<{ href: string; type: string }> = [{ href: `${origin}${MANIFEST_PATH}`, type: MediaType.JSON }];
+        if (openapi !== false) descriptions.push({ href: `${origin}${OPENAPI_PATH}`, type: OPENAPI_MEDIA_TYPE });
+        const catalog = encodeJson({ linkset: [{ anchor: `${origin}/`, 'service-desc': descriptions }] });
         // RFC 9727 §2: HEAD (and GET) responses include a Link header to the catalog.
         return await sendBody(req, res, 200, { 'content-type': CATALOG_TYPE, link: `<${CATALOG_PATH}>; rel="api-catalog"`, 'cache-control': 'no-cache' }, catalog, true);
       }
@@ -626,6 +650,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
         complete();
         return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, 'cache-control': 'no-cache' }, manifest, true);
+      }
+      if (url.pathname === OPENAPI_PATH && openapi !== false) {
+        if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
+        complete();
+        return await sendBody(req, res, 200, { 'content-type': OPENAPI_MEDIA_TYPE, 'cache-control': 'no-cache' }, openApiDocument(), true);
       }
       if (url.pathname === UPLOADS_PATH || url.pathname.startsWith(`${UPLOADS_PATH}/`)) {
         if (!uploads) throw new ApueError(404, 'Not Found', 'uploads are not enabled on this server');
@@ -1260,13 +1289,6 @@ function exampleField(def: OpDef): { example?: { input?: unknown; output?: unkno
   return Object.keys(example).length > 0 ? { example } : {};
 }
 
-export function deprecationHeaders(deprecated: NonNullable<OpDef['deprecated']>): Record<string, string> {
-  const headers: Record<string, string> = { deprecation: `@${Math.floor(deprecated.since.getTime() / 1000)}` };
-  if (deprecated.sunset) headers.sunset = deprecated.sunset.toUTCString();
-  if (deprecated.link) headers.link = `<${deprecated.link}>; rel="deprecation"`;
-  return headers;
-}
-
 // ---------------------------------------------------------------------------------------------
 
 function methodNotAllowed(method: string, allow: string): ApueError {
@@ -1541,7 +1563,6 @@ function toProblem(error: unknown): Problem {
 }
 
 /** Upper bound for apue-timeout: what timers accept (2³¹−1 ms ≈ 24.8 days). */
-const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 function parseTimeout(value: string | string[] | undefined): number | undefined {
   if (typeof value !== 'string') return undefined;

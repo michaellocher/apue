@@ -15,6 +15,9 @@ export const Header = {
   REPLICA: 'apue-replica',
 } as const;
 
+/** Largest `apue-timeout` (milliseconds) a server accepts: the range of a Node timer. */
+export const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 /**
  * The replica that holds every upload referenced in `input` (ids `<instance>.<random>`), or
  * undefined when there are none, they are unprefixed, or they live on different replicas.

@@ -55,6 +55,12 @@ export function canonicalSelection(paths: readonly string[]): string {
   return [...new Set(paths.map((p) => p.trim()).filter(Boolean))].sort().join(',');
 }
 
+/** Top-level fields `?s=` can select (the output is an object, or an array or nullable of one); else undefined. */
+export function selectableFields(schema: Schema<unknown>): string[] | undefined {
+  const fields = objectOf(schema)?.fields;
+  return fields && Object.keys(fields);
+}
+
 /** Unwraps arrays, nullable and optional wrappers down to the object schema whose fields we select. */
 function objectOf(schema: Schema<unknown> | undefined): Schema<unknown> | undefined {
   let current = schema;

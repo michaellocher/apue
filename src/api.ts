@@ -117,6 +117,14 @@ export function hasResponseStream(def: OpDef): boolean {
   return def.stream === 'server' || def.stream === 'bidi';
 }
 
+/** RFC 9745 `Deprecation`, RFC 8594 `Sunset` and a `Link` to the successor for a deprecated op. */
+export function deprecationHeaders(deprecated: Deprecation): Record<string, string> {
+  const headers: Record<string, string> = { deprecation: `@${Math.floor(deprecated.since.getTime() / 1000)}` };
+  if (deprecated.sunset) headers.sunset = deprecated.sunset.toUTCString();
+  if (deprecated.link) headers.link = `<${deprecated.link}>; rel="deprecation"`;
+  return headers;
+}
+
 /** URLs above this length switch from GET to QUERY (CloudFront caps URLs at 8 KiB; stay well below). */
 export const MAX_GET_URL = 2048;
 

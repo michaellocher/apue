@@ -479,7 +479,15 @@ describe('deprecation and manifest', () => {
     assert.equal(res.headers.get('link'), '</.well-known/api-catalog>; rel="api-catalog"');
     const { port } = new URL(server.url);
     assert.deepEqual(await res.json(), {
-      linkset: [{ anchor: `https://127.0.0.1:${port}/`, 'service-desc': [{ href: `https://127.0.0.1:${port}/.well-known/apue`, type: 'application/json' }] }],
+      linkset: [
+        {
+          anchor: `https://127.0.0.1:${port}/`,
+          'service-desc': [
+            { href: `https://127.0.0.1:${port}/.well-known/apue`, type: 'application/json' },
+            { href: `https://127.0.0.1:${port}/.well-known/openapi.json`, type: 'application/openapi+json; version=3.2.0' }, // test/openapi.test.ts
+          ],
+        },
+      ],
     });
     const head = await raw('/.well-known/api-catalog', { method: 'HEAD' });
     assert.equal(head.status, 200);

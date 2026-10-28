@@ -55,6 +55,34 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     if (outcome !== 'done' || received !== 60_000) throw new Error(`stream ${outcome} after ${received} of 60000 items`);
     return '60000 items';
   });
+  await check('a fetch stream keeps delivering while a WebSocket upload runs next to it', async () => {
+    // The todo example's change stream stalled in WebKit on Linux (CI) while its import ran over a
+    // WebSocket. Isolated here: ticker over fetch, 1000 messages up over WebSocket at the same time.
+    const controller = new AbortController();
+    let ticks = 0;
+    const ticking = (async () => {
+      try {
+        for await (const n of client.stream('ticker', undefined, { signal: controller.signal })) ticks = n;
+      } catch {
+        // aborted at the end
+      }
+    })();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const ws = new ApueClient(browserApi, webSocketTransport(apiUrl));
+    async function* many() {
+      for (let i = 1; i <= 1000; i++) yield i;
+    }
+    const sum = await Array.fromAsync(ws.duplex('sum.client', many()));
+    const afterUpload = ticks;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const later = ticks;
+    controller.abort();
+    await ticking;
+    await ws.close();
+    equal(sum, [500500]);
+    if (later <= afterUpload) throw new Error(`the fetch stream stopped at tick ${later} (it was at ${afterUpload} when the upload ended)`);
+    return `ticks ${afterUpload} → ${later} in the second after the upload`;
+  });
   await check('server stream', async () => {
     equal(await Array.fromAsync(client.stream('count.up', { to: 100 })), Array.from({ length: 100 }, (_, i) => i + 1));
   });

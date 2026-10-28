@@ -76,8 +76,8 @@ for await (const todo of client.stream('todos.watch')) console.log(todo.title);
 
 | Import | What | Runs in |
 |---|---|---|
-| `apue` | `defineApi`, `op`, `t` (schemas), `ApueClient`, `fetchTransport`, `ApueError`, `Download` | browsers, Node |
-| `apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options, `MemoryIdempotencyStore` and the store contract | Node |
+| `apue` | `defineApi`, `op`, `t` (schemas), `ApueClient`, `fetchTransport`, `ApueError`, `Download`, `createDpopSigner`, `dpopHeaders` | browsers, Node |
+| `apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options, `MemoryIdempotencyStore` and the store contract, `dpopVerifier` | Node |
 | `apue/downloads` | `download.fromFile()`, `download.fromBytes()` for `t.download()` outputs | Node |
 | `apue/http2` | `http2Transport` (full duplex) | Node |
 | `apue/websocket` | `webSocketTransport`, `autoTransport` (streaming uploads in every browser) | browsers |
@@ -102,8 +102,9 @@ npx apue-types https://api.example --lang go --out api.go     # also: --lang jav
   (draft-ietf-httpbis-resumable-upload), streaming `t.file()` inputs, a persistent upload store,
   `t.download()` outputs served as short-lived links with Range/resume.
 - **Batches**: dependent calls in one round trip (`$ref`), results streamed as they complete.
-- **Operations**: a `principal` hook for callers and scoping, CORS, bounded shutdown, idle and body
-  timeouts, a manifest with derived documentation and an RFC 9727 API catalog.
+- **Operations**: a `principal` hook for callers and scoping, DPoP proofs (RFC 9449: verifier and
+  WebCrypto signer), CORS, bounded shutdown, idle and body timeouts, a manifest with derived
+  documentation and an RFC 9727 API catalog.
 
 What is measured and how: [docs/benchmarks.md](docs/benchmarks.md) and
 [docs/intermediaries.md](docs/intermediaries.md). What is still open: SPEC-DRAFT.md §13.
@@ -111,9 +112,10 @@ What is measured and how: [docs/benchmarks.md](docs/benchmarks.md) and
 ## Develop
 
 Requires Node ≥ 26.11 (the sources run with native type stripping), `openssl` (tests generate a
-throwaway certificate), Python ≥ 3.11 and Go for the generator tests (skipped if absent), Chrome,
-Firefox and Playwright's WebKit (`npx playwright-core install webkit`) for the real-browser tests
-(skipped if absent).
+throwaway certificate), Python ≥ 3.11, Go, a JDK and Swift for the generator tests (skipped if
+absent; on Linux the Swift test needs `APUE_TEST_SYSTEM_CA=1` and root or passwordless sudo, as it
+adds its throwaway certificate to the system trust store), Chrome, Firefox and Playwright's WebKit
+(`npx playwright-core install webkit`) for the real-browser tests (skipped if absent).
 
 ```sh
 npm install

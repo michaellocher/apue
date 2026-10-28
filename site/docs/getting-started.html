@@ -58,13 +58,13 @@
 <div class="table-wrap" role="region" tabindex="0" aria-label="Entry points"><table>
   <thead><tr><th scope="col">Import</th><th scope="col">What</th><th scope="col">Runs in</th></tr></thead>
   <tbody>
-    <tr><td><code>apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code></td><td>browsers, Node</td></tr>
-    <tr><td><code>apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options</td><td>Node</td></tr>
+    <tr><td><code>apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code>, <code>createDpopSigner</code>, <code>dpopHeaders</code></td><td>browsers, Node</td></tr>
+    <tr><td><code>apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options, <code>dpopVerifier</code></td><td>Node</td></tr>
     <tr><td><code>apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
     <tr><td><code>apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
     <tr><td><code>apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
-    <tr><td><code>apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code></td><td>Node</td></tr>
-    <tr><td><code>apue-types</code> (CLI)</td><td>typed TypeScript modules, or Python, Go and Java clients, from a server’s manifest</td><td>Node</td></tr>
+    <tr><td><code>apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code>, <code>generateSwift</code></td><td>Node</td></tr>
+    <tr><td><code>apue-types</code> (CLI)</td><td>typed TypeScript modules, or Python, Go, Java and Swift clients, from a server’s manifest</td><td>Node</td></tr>
   </tbody>
 </table></div>
 
@@ -181,7 +181,7 @@ data: {"status":200}</code></pre></figure>
 <ul>
   <li><a href="concepts.html">Operations &amp; HTTP mapping</a> — effects, methods, idempotency keys, field selection, schema types.</li>
   <li><a href="streaming.html">Streaming</a> — client and bidi streams, browsers, resumable streams.</li>
-  <li><a href="manifest.html">Clients, manifest &amp; OpenAPI</a> — Python, Go and Java clients for code that can’t import your TypeScript.</li>
+  <li><a href="manifest.html">Clients, manifest &amp; OpenAPI</a> — Python, Go, Java and Swift clients for code that can’t import your TypeScript.</li>
   <li><a href="deployment.html">Deployment</a> — proxies, several replicas, shutdown and logging.</li>
 </ul>
 

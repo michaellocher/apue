@@ -16,12 +16,14 @@ First public beta of the apü toolkit (spec draft 01, see SPEC-DRAFT.md).
   control, CORS, compression (zstd/br/gzip), manifest and RFC 9727 catalog with derived
   documentation, a `principal` hook for callers, bounded shutdown, resumable uploads
   (draft-ietf-httpbis-resumable-upload-14) with an optional file-backed and persistent store,
-  `t.file()` streaming inputs, `t.download()` download resources with Range support.
+  `t.file()` streaming inputs, `t.download()` download resources with Range support, DPoP proof
+  verification for the `principal` hook (`dpopVerifier`, RFC 9449).
 - **Clients**: `ApueClient` with fetch, HTTP/2 (`apue/http2`) and WebSocket (`apue/websocket`)
-  transports, retries, resume, uploads, downloads, batches.
+  transports, retries, resume, uploads, downloads, batches, DPoP proofs (`createDpopSigner`).
 - **Code generation** (`apue-types`, `apue/codegen`): typed TypeScript modules and self-contained
   clients from a server's manifest — Python (standard library; resume, batches, compression,
-  validation), Go (full duplex over HTTP/2), Java 17 and Swift (full duplex over HTTP/2).
+  validation), Go (full duplex over HTTP/2), Java 17, and Swift (full duplex over HTTP/2 on Apple
+  platforms, half duplex on Linux).
 - **OpenAPI 3.2** at `/.well-known/openapi.json`, derived from the definitions (lazy, cached).
 - **Production**: replicas (asynchronous shared idempotency stores, `instance`-prefixed upload and
   download ids with an `apue-replica` routing header, a verified nginx configuration), a `logger`

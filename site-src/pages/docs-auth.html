@@ -1,4 +1,4 @@
-<!--{"path":"docs/auth.html","layout":"docs","title":"Callers & auth — apü","description":"How apü identifies callers: the principal hook, credentials on every tier including WebSocket, CORS, protection against cross-site WebSocket hijacking and CSRF, and the DPoP groundwork."}-->
+<!--{"path":"docs/auth.html","layout":"docs","title":"Callers & auth — apü","description":"How apü identifies callers: the principal hook, credentials on every tier including WebSocket, CORS, protection against cross-site WebSocket hijacking and CSRF, and DPoP proofs."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
 <h1>Callers &amp; auth</h1>
 <p class="page-intro">apü defines no authentication scheme. Credentials are the standard <code>Authorization</code> header or cookies, checked by your application. What apü adds is a single place to name the caller — and the plumbing that makes credentials arrive the same way on every transport.</p>
@@ -46,4 +46,16 @@
 <p>apü does <strong>not</strong> accept CORS-“simple” content types for non-safe operations. A simple request skips the preflight, which is how cross-site request forgery happens (cf. Apollo’s advisory GHSA-2p3c-p3qw-69r4) — apü pays for the preflight instead.</p>
 
 <h2>DPoP</h2>
-<p><span class="tag tag-planned">deferred</span> A full DPoP (RFC 9449) profile — verifier, nonces, replay cache — is not part of apü. The groundwork lets an application add it without a protocol change: the principal hook gets <code>method</code> and <code>url</code> to check a proof’s <code>htm</code>/<code>htu</code>, the client’s <code>headers</code> hook adds a fresh proof per request, <code>apue.dpop.</code> carries it on T3, and CORS allows <code>DPoP</code> and exposes <code>WWW-Authenticate</code> and <code>DPoP-Nonce</code>.</p>
+<p>DPoP (RFC 9449) binds an access token to a key the client holds: every request carries a fresh proof signed with that key, so a stolen token is useless without it. apü checks proofs on the server and signs them on the client; issuing and validating tokens stays with your authorization server.</p>
+<h3>Server: <code>dpopVerifier</code></h3>
+{{code:docs/auth-dpop-server.ts|server.ts}}
+<p>The verifier runs every check of RFC 9449 §4.3: one well-formed compact JWS; <code>typ</code> <code>dpop+jwt</code>; an accepted asymmetric <code>alg</code> (default ES256, ES384, EdDSA/Ed25519, PS256, RS256 with keys of at least 2048 bits) that fits the key; no private key in <code>jwk</code>; the signature; <code>htm</code> equal to the request method; <code>htu</code> equal to the request URI without query and fragment, after normalization; <code>iat</code> at most 60 s old and 5 s ahead; with <code>Authorization: DPoP</code>, <code>ath</code> equal to the token’s hash; and a <code>jti</code> not seen before. It resolves with the key’s thumbprint (<code>jkt</code>, RFC 7638) — compare it with the token’s <code>cnf.jkt</code> — the token, and the claims.</p>
+<ul>
+  <li><strong>Refusals</strong> are <code>401</code> with <code>WWW-Authenticate: DPoP error="invalid_dpop_proof"</code> and the accepted <code>algs</code>; a request without a proof gets the challenge alone. <code>dpopError('invalid_token', …)</code> builds the same for your binding check.</li>
+  <li><strong>Replays</strong>: by default an in-process store remembers each <code>jti</code> while its proof is acceptable. Replicas share one through the <code>replay</code> option — <code>add(key, expiresAt)</code> must be atomic, e.g. Redis <code>SET key 1 NX PXAT expiresAt</code>.</li>
+  <li><strong>Nonces</strong> (§9, optional): with <code>nonces: { issue, check }</code> a proof without a valid nonce gets <code>401 use_dpop_nonce</code> with a fresh one in <code>DPoP-Nonce</code> — and in the problem’s <code>dpop-nonce</code> member, which WebSocket clients can read too. Set <code>signer.nonce</code> and retry.</li>
+  <li><strong>Tiers</strong>: a WebSocket call reports <code>POST</code> and its op path, so one proof format verifies everywhere; the proof travels as <code>apue.dpop.&lt;JWS&gt;</code>.</li>
+</ul>
+<h3>Client: <code>createDpopSigner</code></h3>
+{{code:docs/auth-dpop-client.ts|client.ts}}
+<p>The signer uses WebCrypto, in browsers and Node: ECDSA P-256 by default, or your own P-256, P-384 or Ed25519 key pair. Each proof gets a random <code>jti</code>, the current <code>iat</code> and, with a token, its <code>ath</code>. CORS allows the <code>DPoP</code> request header and exposes <code>WWW-Authenticate</code> and <code>DPoP-Nonce</code>.</p>

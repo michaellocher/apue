@@ -15,7 +15,7 @@ $ npm install apue@beta
         <a class="btn btn-ghost" href="docs/index.html">Read the docs</a>
         <a class="btn btn-ghost" href="docs/spec.html">Spec &amp; research</a>
       </div>
-      <p class="hero-note">Node ≥ 26.11 for the server and the Node client; the core runs in browsers too. No runtime dependencies. 395 tests, run in Chrome, Firefox and WebKit and through nginx, Caddy, HAProxy and Envoy. Betas may still change the wire format and APIs — every change is in the changelog.</p>
+      <p class="hero-note">Node ≥ 26.11 for the server and the Node client; the core runs in browsers too. No runtime dependencies. 404 tests, run in Chrome, Firefox and WebKit and through nginx, Caddy, HAProxy and Envoy. Betas may still change the wire format and APIs — every change is in the changelog.</p>
     </div>
 
     <figure class="flow" aria-labelledby="flow-caption">
@@ -175,8 +175,9 @@ $ npm install apue@beta
         <p class="duplex">Client and bidi streams: half duplex — JDK 17’s HttpClient answers only after the request body.</p>
       </div>
       <div class="lang">
-        <div class="lang-head"><b>Swift</b><span class="tag tag-planned">in progress</span></div>
-        <p>A generator is being built; it isn’t part of the beta yet.</p>
+        <div class="lang-head"><b>Swift</b><span class="tag tag-ok">generated</span></div>
+        <p>One Swift 6 file, Foundation only: <code>Codable</code> types and a <code>Client</code> with <code>async</code> methods over URLSession, certificate pinning on Apple platforms. Tested on macOS and Linux. Not yet: resuming broken streams, batches, compression, client-side validation.</p>
+        <p class="duplex">Client and bidi streams: full duplex over HTTP/2 on Apple platforms; half duplex on Linux (inputs collected first).</p>
       </div>
       <div class="lang">
         <div class="lang-head"><b>OpenAPI 3.2</b><span class="tag tag-ok">on by default</span></div>
@@ -189,7 +190,7 @@ $ npx apue-types https://api.example --lang python --out api.py
 $ npx apue-types https://api.example --lang go --package api --out api.go
 $ npx apue-types https://api.example --lang java --package com.example.api --out Api.java
 {{/pre}}
-    <p class="footnote">The release check generates Python, Go and Java clients with the installed CLI and compiles them. Usage for each language: <a href="docs/manifest.html">Clients, manifest &amp; OpenAPI</a>.</p>
+    <p class="footnote">The release check generates Python, Go, Java and Swift clients with the installed CLI and compiles them. Usage for each language: <a href="docs/manifest.html">Clients, manifest &amp; OpenAPI</a>.</p>
   </div>
 </section>
 
@@ -345,12 +346,12 @@ cache-control: no-store
     <div class="section-head">
       <span class="kicker">Status</span>
       <h2 id="status-title">Beta, honestly labelled</h2>
-      <p>The toolkit is <code>apue</code> 0.1.0-beta on npm; the protocol is spec draft 01, written alongside spikes S0–S31. Each spike’s goal, findings and measurements are logged in the spec, and every open question is now decided — or blocked by the platform.</p>
+      <p>The toolkit is <code>apue</code> 0.1.0-beta on npm; the protocol is spec draft 01, written alongside spikes S0–S32. Each spike’s goal, findings and measurements are logged in the spec, and every open question is now decided — or blocked by the platform.</p>
     </div>
     <div class="spikes">
-      <div class="spike-bar" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-      <div class="legend" aria-hidden="true"><span>S0 skeleton</span><span>S30–S31 beta hardening</span></div>
-      <p>32 spikes, from the project skeleton (S0) to production readiness (S28), the Python, Go and Java clients (S29) and beta hardening in WebKit on Linux and over emulated networks (S30–S31); the two newest are highlighted.</p>
+      <div class="spike-bar" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="legend" aria-hidden="true"><span>S0 skeleton</span><span>S31–S32 beta hardening</span></div>
+      <p>33 spikes, from the project skeleton (S0) to production readiness (S28), the Python, Go and Java clients (S29), beta hardening in WebKit on Linux and over emulated networks (S30–S31) and the release dry run, Swift on Linux and DPoP (S32); the two newest are highlighted.</p>
     </div>
     <div class="status-grid">
       <div class="card">
@@ -358,18 +359,16 @@ cache-control: no-store
         <ul>
           <li>The full HTTP mapping, framing and streaming tiers T0–T3</li>
           <li>Resumable streams and uploads, downloads, pipelined batches</li>
-          <li>Idempotency, compression, CORS, callers (<code>principal</code> hook)</li>
+          <li>Idempotency, compression, CORS, callers (<code>principal</code> hook), DPoP proofs</li>
           <li>Replicas: shared resume secret and idempotency store, routing by <code>instance</code></li>
-          <li>The manifest, OpenAPI 3.2, and TypeScript, Python, Go and Java clients</li>
+          <li>The manifest, OpenAPI 3.2, and TypeScript, Python, Go, Java and Swift clients</li>
           <li>Published as <code>apue</code>: JavaScript + declarations, no runtime dependencies</li>
         </ul>
       </div>
       <div class="card">
-        <h3><span class="tag tag-planned">Open</span> blocked, in progress or decided against</h3>
+        <h3><span class="tag tag-planned">Open</span> blocked or decided against</h3>
         <ul>
           <li>Blocked by the platform: WebTransport (tier T4) and HTTP/3 in Node — the official Node 26 build has no QUIC. apü works behind an HTTP/3-terminating proxy.</li>
-          <li>In progress: a Swift client generator</li>
-          <li>Deferred: a full DPoP profile (the groundwork exists)</li>
           <li>Decided against: per-frame compression, <code>$map</code> in batches, <code>Location</code> on <code>QUERY</code> responses, CBOR</li>
           <li>Betas may still change the wire format and APIs; every change is listed in the changelog</li>
         </ul>

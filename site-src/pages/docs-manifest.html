@@ -1,4 +1,4 @@
-<!--{"path":"docs/manifest.html","layout":"docs","title":"Clients, manifest & OpenAPI — apü","description":"The apü manifest at /.well-known/apue, the RFC 9727 API catalog, OpenAPI 3.2 at /.well-known/openapi.json, and apue-types: TypeScript modules and standard-library Python, Go and Java clients generated from a running server."}-->
+<!--{"path":"docs/manifest.html","layout":"docs","title":"Clients, manifest & OpenAPI — apü","description":"The apü manifest at /.well-known/apue, the RFC 9727 API catalog, OpenAPI 3.2 at /.well-known/openapi.json, and apue-types: TypeScript modules and standard-library Python, Go, Java and Swift clients generated from a running server."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
 <h1>Clients, manifest &amp; OpenAPI</h1>
 <p class="page-intro">Every apü server describes itself at <code>/.well-known/apue</code> and, as OpenAPI 3.2, at <code>/.well-known/openapi.json</code>. TypeScript clients that can import the API definition need nothing else; for everyone else, <code>apue-types</code> turns the manifest into a client — TypeScript, Python, Go or Java.</p>
@@ -96,22 +96,23 @@ $ npx apue-types https://api.example --out api.ts                               
 $ npx apue-types https://api.example --lang python --out api.py                           # Python ≥ 3.11
 $ npx apue-types https://api.example --lang go --package api --out api.go                 # Go ≥ 1.24
 $ npx apue-types https://api.example --lang java --package com.example.api --out Api.java # Java 17
+$ npx apue-types https://api.example --lang swift --out Api.swift                         # Swift 6
 {{/pre}}
-<p>Options: <code>--ca cert.pem</code> for a private certificate authority; for TypeScript <code>--runtime</code> (default <code>apue</code>) and <code>--name</code> (default <code>api</code>). The generator rejects JSON Schema keywords it can’t express instead of silently dropping constraints. The same generators are a library: <code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code> and <code>generateJava</code> from <code>apue/codegen</code>.</p>
+<p>Options: <code>--ca cert.pem</code> for a private certificate authority; for TypeScript <code>--runtime</code> (default <code>apue</code>) and <code>--name</code> (default <code>api</code>). The generator rejects JSON Schema keywords it can’t express instead of silently dropping constraints. The same generators are a library: <code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code> and <code>generateSwift</code> from <code>apue/codegen</code>.</p>
 <table data-label="Generated clients compared">
-  <thead><tr><th scope="col"></th><th scope="col">TypeScript</th><th scope="col">Python</th><th scope="col">Go</th><th scope="col">Java</th></tr></thead>
+  <thead><tr><th scope="col"></th><th scope="col">TypeScript</th><th scope="col">Python</th><th scope="col">Go</th><th scope="col">Java</th><th scope="col">Swift</th></tr></thead>
   <tbody>
-    <tr><th scope="row">Runtime</th><td>the <code>apue</code> package</td><td>standard library</td><td>standard library</td><td>JDK only</td></tr>
-    <tr><th scope="row">Unary calls, retries, idempotency keys</th><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
-    <tr><th scope="row">Server streams</th><td>resumable</td><td>resumable</td><td>yes (not resumed)</td><td>yes (not resumed)</td></tr>
-    <tr><th scope="row">Client and bidi streams</th><td>full duplex (HTTP/2, WebSocket)</td><td>half duplex</td><td>full duplex (HTTP/2)</td><td>half duplex</td></tr>
-    <tr><th scope="row">Pipelined batches</th><td>yes</td><td>yes</td><td>—</td><td>—</td></tr>
-    <tr><th scope="row">Compressed responses</th><td>yes (zstd, br, gzip)</td><td>zstd (Python ≥ 3.14), gzip</td><td>—</td><td>—</td></tr>
-    <tr><th scope="row">Client-side validation</th><td>yes</td><td>yes</td><td>— (the server validates)</td><td>— (the server validates)</td></tr>
-    <tr><th scope="row">Problems, deadlines, bytes, uploads, downloads</th><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><th scope="row">Runtime</th><td>the <code>apue</code> package</td><td>standard library</td><td>standard library</td><td>JDK only</td><td>Foundation only</td></tr>
+    <tr><th scope="row">Unary calls, retries, idempotency keys</th><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><th scope="row">Server streams</th><td>resumable</td><td>resumable</td><td>yes (not resumed)</td><td>yes (not resumed)</td><td>yes (not resumed)</td></tr>
+    <tr><th scope="row">Client and bidi streams</th><td>full duplex (HTTP/2, WebSocket)</td><td>half duplex</td><td>full duplex (HTTP/2)</td><td>half duplex</td><td>full duplex (HTTP/2, Apple); half duplex (Linux)</td></tr>
+    <tr><th scope="row">Pipelined batches</th><td>yes</td><td>yes</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><th scope="row">Compressed responses</th><td>yes (zstd, br, gzip)</td><td>zstd (Python ≥ 3.14), gzip</td><td>—</td><td>—</td><td>—</td></tr>
+    <tr><th scope="row">Client-side validation</th><td>yes</td><td>yes</td><td>— (the server validates)</td><td>— (the server validates)</td><td>— (the server validates)</td></tr>
+    <tr><th scope="row">Problems, deadlines, bytes, uploads, downloads</th><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
   </tbody>
 </table>
-<p class="source">“—” means not covered by that generator yet (SPEC-DRAFT §11). Each generator is tested end to end against a live server, and the release check generates Python, Go and Java clients with the installed CLI and compiles them.</p>
+<p class="source">“—” means not covered by that generator yet (SPEC-DRAFT §11). Each generator is tested end to end against a live server, and the release check generates Python, Go, Java and Swift clients with the installed CLI and compiles them.</p>
 
 <h3>TypeScript</h3>
 <p>The output is a <code>defineApi(…)</code> module with the same <code>t.*</code> schemas, importing from <code>apue</code>; use it with <code>ApueClient</code> like a hand-written definition. Verified by a round trip: API → manifest → generated code → identical manifest. Generated from the quick start’s server:</p>
@@ -142,9 +143,13 @@ export const api = defineApi({
 {{code:clients/Main.java|Main.java — against the quick start’s server}}
 <p>Covered: unary calls, server streams as an iterable, closeable <code>Stream</code> (closing resets the HTTP/2 stream), client and bidi streams (half duplex: JDK 17’s HttpClient exposes a response only after the request body), problems as <code>ApueException</code> including END frames, deadlines, bytes, uploads (<code>byte[]</code>, <code>Path</code>, <code>InputStream</code>) and downloads (resumed with <code>Range</code>, SHA-256 verified). Not covered: resuming broken streams, batches, compression, <code>QUERY</code>, client-side validation; enums are strict.</p>
 
+<h3>Swift</h3>
+<p>One Swift 6 file (strict concurrency), Foundation only: a runtime over <code>URLSession</code> (HTTP/2 where the server offers it), <code>Codable</code> structs (optional members as optionals, <code>Double?</code>-style nullables, enums with their JSON names) and a <code>Client</code> with one <code>async</code> method per operation (<code>todos.create</code> → <code>todosCreate</code>; Swift keywords are escaped).</p>
+{{code:clients/main.swift|main.swift — against the quick start’s server}}
+<p>Covered: unary calls (canonical <code>GET ?i=</code>, <code>POST</code> above 2 KiB, <code>Idempotency-Key</code>, retries on connection loss, <code>429</code>/<code>503</code> with <code>Retry-After</code> and retryable <code>409</code>s), server streams as <code>AsyncThrowingStream</code> (dropping it cancels the call), client and bidi streams, problems as <code>ApueError</code> including END frames, deadlines and <code>Task</code> cancellation, bytes, uploads (<code>Data</code> or a file) and downloads (resumed with <code>Range</code>, SHA-256 verified), certificate pinning on Apple platforms. Tested on macOS and on Linux (FoundationNetworking, Swift 6.4). On Apple platforms client and bidi streams are <strong>full duplex</strong> over HTTP/2. On Linux they are half duplex: FoundationNetworking can’t pause a streamed request body, and a waiting one would stall every URLSession in the process, so the inputs are collected (up to 64 MiB) and sent when they end; there is no pinning — the system trust store decides. Not covered: resuming broken streams, batches, <code>QUERY</code>, field selection, compression, client-side validation; numbers are <code>Double</code>s, as in JavaScript.</p>
+
 <h3>Other languages</h3>
 <ul>
-  <li><span class="tag tag-planned">in progress</span> A Swift generator — not part of the beta yet.</li>
   <li>Anything else: the manifest and the OpenAPI document describe the HTTP contract, and the <a href="wire-format.html">wire format</a> the frames.</li>
 </ul>
-<p class="source">The three usage examples above were run against the quick start’s server with clients generated from its manifest; each printed the created todo, <code>400 https://apue.dev/problems/validation-failed</code> and the titles from the stream.</p>
+<p class="source">The four usage examples above were run against the quick start’s server with clients generated from its manifest; each printed the created todo, <code>400 https://apue.dev/problems/validation-failed</code> and the titles from the stream.</p>

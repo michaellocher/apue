@@ -66,7 +66,7 @@
     <tr><td><code>backoffMs</code></td><td>100</td><td>Base backoff: attempt n waits a random time in [0, base·2ⁿ] (full jitter)</td></tr>
     <tr><td><code>maxBackoffMs</code></td><td>2000</td><td>Cap for backoff and for honoured <code>Retry-After</code> values</td></tr>
     <tr><td><code>authorization</code></td><td>none</td><td>An <code>Authorization</code> value for every request (calls, batches, uploads), or a function (may be async) asked before each one — a refreshed token is used from the next request on. Over WebSocket it travels as an <code>apue.auth.</code> subprotocol</td></tr>
-    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> (may be async), asked before each request — e.g. a fresh <code>DPoP</code> proof. Over WebSocket only <code>dpop</code> travels (as an <code>apue.dpop.</code> subprotocol), and WebSocket calls report <code>POST</code></td></tr>
+    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> (may be async), asked before each request — e.g. a fresh <code>DPoP</code> proof (<code>dpopHeaders(signer, origin)</code>, see <a href="auth.html#dpop">DPoP</a>). Over WebSocket only <code>dpop</code> travels (as an <code>apue.dpop.</code> subprotocol), and WebSocket calls report <code>POST</code></td></tr>
   </tbody>
 </table></div>
 <div class="table-wrap" role="region" tabindex="0" aria-label="CallOptions"><table>

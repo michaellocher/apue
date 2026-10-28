@@ -39,7 +39,7 @@ ASCII identifier for media types and header names: **`apue`**.
 
 ## 3. Transport rules
 
-- **MUST** be correct over HTTP/1.1, HTTP/2, HTTP/3. Streaming request bodies require h2/h3 (browser limitation).
+- **MUST** be correct over HTTP/1.1, HTTP/2, HTTP/3. Request streams work over HTTP/1.1 chunked bodies too (tested), but browsers only stream fetch request bodies over h2/h3, and full duplex needs h2/h3 or WebSocket.
 - **MUST NOT** depend on trailers, server push, 1xx, priority for correctness, stream IDs, connection affinity.
 - Final status of any streamed response **MUST** be carried in-band (END frame, §6).
 - Streamed responses **MUST** send `Incremental: ?1` (RFC 10036), `Cache-Control: no-store` (unless cacheable), `X-Accel-Buffering: no`, and commit headers immediately.
@@ -192,7 +192,7 @@ Built only from implemented features (resolves the AIP-151 / MCP-"Tasks" questio
 - `GET|HEAD /.well-known/api-catalog` (RFC 9727, implemented): `application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"` with a `service-desc` link to the manifest, and `Link: </.well-known/api-catalog>; rel="api-catalog"` — generic discovery for crawlers and agents.
 - **Typed clients without the server's sources** (implemented, S11): `node bin/apue-types.ts <base-url>` turns the manifest into a `defineApi(...)` module with the same `t.*` schemas; verified by a round trip (API → manifest → generated code → identical manifest). The generator rejects JSON Schema keywords it can't express instead of silently dropping constraints.
 - Evolution: only additive changes within a major; removal via `deprecated` → `Deprecation`/`Sunset` headers.
-- Limits are part of the schema (list max, select depth) → cost is bounded statically.
+- Limits are part of the schema (array `max`, string lengths, `t.bytes({max})`) plus server limits (body size, JSON nesting 64, batch size 64, selection ≤ 64 paths) → cost is bounded before a handler runs.
 
 ## 12. Data plane & performance guidance
 

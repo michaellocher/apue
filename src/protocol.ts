@@ -27,6 +27,7 @@ export const ProblemType = {
   FAILED_DEPENDENCY: 'https://apue.dev/problems/failed-dependency',
   UNRESOLVABLE_REFERENCE: 'https://apue.dev/problems/unresolvable-reference',
   INVALID_BATCH: 'https://apue.dev/problems/invalid-batch',
+  MALFORMED_STREAM: 'https://apue.dev/problems/malformed-stream',
 } as const;
 
 export class ApueError extends Error {

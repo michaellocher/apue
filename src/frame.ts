@@ -48,7 +48,16 @@ export interface Problem {
   [extension: string]: unknown;
 }
 
-export class FrameError extends Error {}
+export class FrameError extends Error {
+  /** 'too-large': a frame exceeds the payload limit; 'malformed': anything else (e.g. truncated). */
+  readonly code: 'too-large' | 'malformed';
+
+  constructor(message: string, code: 'too-large' | 'malformed' = 'malformed') {
+    super(message);
+    this.name = 'FrameError';
+    this.code = code;
+  }
+}
 
 const EMPTY = new Uint8Array(0);
 const textEncoder = new TextEncoder();
@@ -149,7 +158,7 @@ export class FrameDecoder {
       }
       const length = view.getUint32(offset + 4);
       if (length > this.maxPayload) {
-        throw new FrameError(`frame payload ${length} exceeds limit ${this.maxPayload}`);
+        throw new FrameError(`frame payload ${length} exceeds limit ${this.maxPayload}`, 'too-large');
       }
       if (available < HEADER_SIZE + length) {
         this.#need = HEADER_SIZE + length;

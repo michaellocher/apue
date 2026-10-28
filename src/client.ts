@@ -12,7 +12,7 @@ import {
   type OutputOf,
   type StreamKind,
 } from './api.ts';
-import { concatBytes, decodeFrameBatches, decodeJson, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
+import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
 import { ValidationError } from './schema.ts';
 import { Batch } from './batch.ts';
@@ -107,7 +107,7 @@ export class ApueClient<A extends Api> {
       // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
       // always get their own abort reason.
       if (options.signal?.aborted) throw options.signal.reason;
-      throw error;
+      throw asProtocolError(error);
     } finally {
       unlink();
     }
@@ -185,7 +185,7 @@ export class ApueClient<A extends Api> {
       // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
       // always get their own abort reason.
       if (options.signal?.aborted) throw options.signal.reason;
-      throw error;
+      throw asProtocolError(error);
     } finally {
       unlink();
       if (!finished) controller.abort();
@@ -333,6 +333,14 @@ export async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Arr
 
 async function* single(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
   yield bytes;
+}
+
+/** A response that can't be decoded (bad framing, invalid JSON) is a bad gateway, not a crash. */
+export function asProtocolError(error: unknown): unknown {
+  if (error instanceof FrameError || error instanceof SyntaxError) {
+    return new ApueError(502, 'Malformed Stream', error.message, { type: ProblemType.MALFORMED_STREAM });
+  }
+  return error;
 }
 
 /**

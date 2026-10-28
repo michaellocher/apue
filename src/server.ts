@@ -11,6 +11,7 @@ import {
   decodeJson,
   encodeFrame,
   encodeJson,
+  FrameError,
   FrameType,
   jsonFrame,
   type EndInfo,
@@ -331,7 +332,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         if (baseMediaType(req.headers['content-type']) !== MediaType.STREAM_JSON) {
           throw new ApueError(415, 'Unsupported Media Type', `${opName} expects ${MediaType.STREAM_JSON}`);
         }
-        input = validatedStream(readInputStream(req), def);
+        input = validatedStream(readInputStream(req, maxBodyBytes), def);
       } else {
         input = await readJsonBody(req, maxBodyBytes, method === 'QUERY');
       }
@@ -785,17 +786,35 @@ async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean)
   }
 }
 
-async function* readInputStream(req: Exchange): AsyncGenerator<unknown> {
-  for await (const frame of decodeFrames(req as AsyncIterable<Uint8Array>)) {
-    if (frame.type === FrameType.MSG) {
-      yield decodeJson(frame.payload);
-    } else if (frame.type === FrameType.END) {
-      const info = decodeJson(frame.payload) as EndInfo;
-      if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
-      return;
+/** Request stream messages; each message is limited to maxMessageBytes. Garbage → 400/413, never 500. */
+async function* readInputStream(req: Exchange, maxMessageBytes: number): AsyncGenerator<unknown> {
+  try {
+    for await (const frame of decodeFrames(req as AsyncIterable<Uint8Array>, maxMessageBytes)) {
+      if (frame.type === FrameType.MSG) {
+        yield parseJson(frame.payload, 'request stream message');
+      } else if (frame.type === FrameType.END) {
+        const info = parseJson(frame.payload, 'END frame') as EndInfo;
+        if (typeof info?.status !== 'number') throw new ApueError(400, 'Malformed Stream', 'END frame without status', { type: ProblemType.MALFORMED_STREAM });
+        if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
+        return;
+      }
     }
+  } catch (error) {
+    if (error instanceof FrameError) {
+      if (error.code === 'too-large') throw new ApueError(413, 'Content Too Large', error.message);
+      throw new ApueError(400, 'Malformed Stream', error.message, { type: ProblemType.MALFORMED_STREAM });
+    }
+    throw error;
   }
   throw new ApueError(400, 'Truncated Stream', 'request body ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
+}
+
+function parseJson(payload: Uint8Array, what: string): unknown {
+  try {
+    return decodeJson(payload);
+  } catch {
+    throw new ApueError(400, 'Malformed Stream', `${what} is not valid JSON`, { type: ProblemType.MALFORMED_STREAM });
+  }
 }
 
 async function* validatedStream(source: AsyncIterable<unknown>, def: OpDef): AsyncGenerator<unknown> {

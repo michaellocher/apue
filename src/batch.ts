@@ -1,7 +1,7 @@
 // Client side of pipelined batches (SPEC-DRAFT §10): dependent calls in one round trip, results
 // streamed back per lane as each call completes. Web-only.
 import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from './api.ts';
-import { ACCEPT, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared } from './client.ts';
+import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared } from './client.ts';
 import { decodeFrameBatches, decodeJson, FrameType, type EndInfo } from './frame.ts';
 import { ApueError, baseMediaType, MediaType, ProblemType } from './protocol.ts';
 import { containsRef, encodeArgs, Ref } from './refs.ts';
@@ -150,7 +150,7 @@ export class Batch<A extends Api> {
     } catch (caught) {
       // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
       // always get their own abort reason.
-      const error = options.signal?.aborted ? options.signal.reason : caught;
+      const error = options.signal?.aborted ? options.signal.reason : asProtocolError(caught);
       for (const sink of sinks) sink.fail(error);
       throw error;
     }

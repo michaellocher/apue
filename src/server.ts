@@ -18,6 +18,7 @@ import {
 import { MemoryIdempotencyStore, type IdempotencyStore, type StoredResponse } from './idempotency.ts';
 import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
+import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ValidationError } from './schema.ts';
 
 export interface CallContext {
@@ -59,6 +60,8 @@ export interface ApueServerOptions {
   validateOutput?: boolean;
   /** Store for Idempotency-Key replays; `false` disables the feature. */
   idempotency?: IdempotencyStore | false;
+  /** Maximum number of calls in one pipelined batch. */
+  maxBatchCalls?: number;
 }
 
 export interface ApueServer {
@@ -68,6 +71,7 @@ export interface ApueServer {
 }
 
 export const MANIFEST_PATH = '/.well-known/apue';
+export const BATCH_PATH = '/';
 export const PROTOCOL_VERSION = 'draft-00';
 
 const STREAM_HEADERS = {
@@ -201,6 +205,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     streamWindow = 4 * 1024 * 1024,
     connectionWindow = 32 * 1024 * 1024,
     validateOutput = true,
+    maxBatchCalls = 64,
   } = options;
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
@@ -243,7 +248,6 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     let signal = clientGone.signal;
     const method = req.method;
     const head = method === 'HEAD';
-    let idempotencyKey: string | undefined;
     try {
       const url = new URL(req.url, 'https://apue.invalid');
       if (url.pathname === MANIFEST_PATH) {
@@ -251,11 +255,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         complete();
         return sendCacheable(req, res, manifest, { 'cache-control': 'no-cache' });
       }
+      if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete);
       const opName = decodeURIComponent(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
       if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
-      const handler = handlerMap[opName]!;
-
       const read = isCacheableRead(def);
       const allow = read ? 'GET, HEAD, QUERY, POST' : 'POST';
       if (!allow.split(', ').includes(method)) throw methodNotAllowed(method, allow);
@@ -264,8 +267,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       if (read) res.setHeader('accept-query', `"${MediaType.JSON}"`);
 
-      const timeoutMs = parseTimeout(req.headers[Header.TIMEOUT]);
-      if (timeoutMs !== undefined) signal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
+      signal = timeoutSignal(signal, req);
 
       let input: unknown;
       if (method === 'GET' || head) {
@@ -280,68 +282,215 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       if (!hasRequestStream(def)) input = validateInput(def, input);
 
-      // Idempotency-Key: only for unary non-safe ops (safe ops are idempotent by definition).
-      const keyHeader = req.headers[IDEMPOTENCY_KEY];
-      if (typeof keyHeader === 'string' && idempotency && def.effect !== 'safe' && def.stream === 'none') {
-        const key = parseIdempotencyKey(keyHeader);
-        const scope = `${opName}\n${hash(String(req.headers.authorization ?? ''))}\n${key}`;
-        const claim = idempotency.begin(scope, hash(canonicalJson(input ?? null)));
-        if (claim.state === 'replay') {
-          complete();
-          return replay(res, claim.response);
-        }
-        if (claim.state === 'in-progress') {
-          throw new ApueError(409, 'Idempotency Key In Progress', 'a request with this Idempotency-Key is still being processed', {
-            type: ProblemType.IDEMPOTENCY_IN_PROGRESS,
-            retryable: true,
-          });
-        }
-        if (claim.state === 'mismatch') {
-          throw new ApueError(422, 'Idempotency Key Reused', 'Idempotency-Key was already used with a different request payload', {
-            type: ProblemType.IDEMPOTENCY_MISMATCH,
-          });
-        }
-        idempotencyKey = scope;
+      const ctx: CallContext = { op: opName, signal, headers: req.headers, httpVersion: req.httpVersion, method };
+      if (!hasResponseStream(def)) {
+        // Keys apply to plain unary calls only: a request stream cannot be fingerprinted or replayed.
+        const keyHeader = req.headers[IDEMPOTENCY_KEY];
+        const keyed = typeof keyHeader === 'string' && def.effect !== 'safe' && def.stream === 'none';
+        const key = keyed ? parseIdempotencyKey(keyHeader) : undefined;
+        const outcome = await runUnary(opName, def, input, ctx, key);
+        if (outcome.aborted) return;
+        complete();
+        if (outcome.status === 200 && read) return sendCacheable(req, res, outcome.body, { 'cache-control': cacheControl(def) });
+        const headers = outcome.replayed ? { ...outcome.headers, [REPLAYED]: '?1' } : outcome.headers;
+        return sendBytes(res, outcome.status, headers, head ? undefined : outcome.body, outcome.body.byteLength);
       }
 
-      if (head && hasResponseStream(def)) {
+      if (head) {
         complete();
         res.writeHead(200, { ...STREAM_HEADERS, vary: 'accept' });
         return void res.end();
       }
-      const ctx: CallContext = { op: opName, signal, headers: req.headers, httpVersion: req.httpVersion, method };
-      const result = await abortable(Promise.resolve(handler(input, ctx)), signal);
-
-      if (hasResponseStream(def)) {
-        if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
-        const items = validateOutput ? mapAsync(result, (item) => def.output.parse(item)) : result;
-        return await streamResponse(req, res, items, signal, clientGone.signal, complete);
-      }
-      const body = encodeJson((validateOutput ? def.output.parse(result) : result) ?? null);
-      complete();
-      if (read) return sendCacheable(req, res, body, { 'cache-control': cacheControl(def) });
-      const headers = { 'content-type': MediaType.JSON, 'cache-control': 'no-store' };
-      if (idempotencyKey) idempotency!.complete(idempotencyKey, { status: 200, headers, body });
-      return sendBytes(res, 200, headers, body);
+      const result = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
+      if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
+      const items = validateOutput ? mapAsync(result, (item) => def.output.parse(item)) : result;
+      return await streamResponse(req, res, items, signal, clientGone.signal, complete);
     } catch (error) {
-      if (clientGone.signal.aborted) {
-        if (idempotencyKey) idempotency!.release(idempotencyKey);
-        return;
-      }
+      if (clientGone.signal.aborted) return;
       const problem = toProblem(error);
       complete();
-      const headers: Record<string, string> = { 'content-type': MediaType.PROBLEM, 'cache-control': 'no-store' };
-      if (error instanceof ApueError) Object.assign(headers, error.headers);
-      const body = encodeJson(problem);
-      if (idempotencyKey) {
-        // Deterministic client errors are stored so a retry gets the same answer; server errors
-        // release the key so a retry can execute again.
-        if (problem.status < 500) idempotency!.complete(idempotencyKey, { status: problem.status, headers, body });
-        else idempotency!.release(idempotencyKey);
-      }
       if (res.headersSent) return void res.end();
-      sendBytes(res, problem.status, headers, head ? undefined : body, body.byteLength);
+      const outcome = problemOutcome(problem, error);
+      sendBytes(res, outcome.status, outcome.headers, head ? undefined : outcome.body, outcome.body.byteLength);
     }
+  }
+
+  interface Outcome extends StoredResponse {
+    /** Decoded output (status 200) or problem object. */
+    payload: unknown;
+    replayed?: boolean;
+    /** The client went away; nothing must be sent. */
+    aborted?: boolean;
+  }
+
+  /**
+   * Executes a unary op including Idempotency-Key handling. Never throws: failures become
+   * problem outcomes, so HTTP calls and batch lanes behave identically.
+   */
+  async function runUnary(opName: string, def: OpDef, input: unknown, ctx: CallContext, key: string | undefined): Promise<Outcome> {
+    let scope: string | undefined;
+    if (key !== undefined && idempotency && def.effect !== 'safe') {
+      scope = `${opName}\n${hash(String(ctx.headers.authorization ?? ''))}\n${key}`;
+      const claim = idempotency.begin(scope, hash(canonicalJson(input ?? null)));
+      if (claim.state === 'replay') {
+        return { ...claim.response, payload: decodeJson(claim.response.body), replayed: true };
+      }
+      if (claim.state === 'in-progress') {
+        return problemOutcome(
+          new ApueError(409, 'Idempotency Key In Progress', 'a request with this Idempotency-Key is still being processed', {
+            type: ProblemType.IDEMPOTENCY_IN_PROGRESS,
+            retryable: true,
+          }).problem,
+        );
+      }
+      if (claim.state === 'mismatch') {
+        return problemOutcome(
+          new ApueError(422, 'Idempotency Key Reused', 'Idempotency-Key was already used with a different request payload', {
+            type: ProblemType.IDEMPOTENCY_MISMATCH,
+          }).problem,
+        );
+      }
+    }
+    try {
+      const handler = handlerMap[opName]!;
+      const result = await abortable(Promise.resolve(handler(input, ctx)), ctx.signal);
+      const value = (validateOutput ? def.output.parse(result) : result) ?? null;
+      const outcome: Outcome = {
+        status: 200,
+        headers: { 'content-type': MediaType.JSON, 'cache-control': 'no-store' },
+        body: encodeJson(value),
+        payload: value,
+      };
+      if (scope) idempotency!.complete(scope, outcome);
+      return outcome;
+    } catch (error) {
+      const clientGone = ctx.signal.aborted && ctx.signal.reason instanceof ApueError && ctx.signal.reason.status === 499;
+      const outcome = clientGone ? { ...problemOutcome({ title: 'Client Closed Request', status: 499 }), aborted: true } : problemOutcome(toProblem(error), error);
+      if (scope) {
+        // Deterministic client errors are stored so a retry gets the same answer; server errors
+        // and aborted calls release the key so a retry can execute again.
+        if (outcome.status < 500 && !clientGone) idempotency!.complete(scope, outcome);
+        else idempotency!.release(scope);
+      }
+      return outcome;
+    }
+  }
+
+  async function handleBatch(
+    req: http2.Http2ServerRequest,
+    res: http2.Http2ServerResponse,
+    signal: AbortSignal,
+    gone: AbortSignal,
+    complete: () => void,
+  ): Promise<void> {
+    const method = req.method;
+    if (method !== 'POST' && method !== 'QUERY') throw methodNotAllowed(method, 'QUERY, POST');
+    const calls = parseBatch(await readJsonBody(req, maxBodyBytes, method === 'QUERY'));
+    if (method === 'QUERY' && calls.some((call) => call.def.effect !== 'safe')) {
+      throw new ApueError(422, 'Unprocessable Content', 'a QUERY batch may only contain safe calls');
+    }
+
+    // Batches always stream: every lane reports as soon as it completes (TTFB = fastest call).
+    res.writeHead(200, STREAM_HEADERS);
+    const writer = new FrameWriter(res, { coalesceBytes });
+    writer.startHeartbeat(heartbeatMs);
+    const results: Array<Promise<{ ok: boolean; value?: unknown }>> = [];
+    for (const [lane, call] of calls.entries()) {
+      results.push(
+        (async () => {
+          const deps = await Promise.all([...call.deps].map((dep) => results[dep]!));
+          const failed = [...call.deps].filter((_, i) => !deps[i]!.ok);
+          if (failed.length > 0) {
+            const problem = { type: ProblemType.FAILED_DEPENDENCY, title: 'Failed Dependency', status: 424, detail: `depends on failed call ${failed.join(', ')}` };
+            await writer.end({ status: 424, problem }, lane);
+            return { ok: false };
+          }
+          return runLane(lane, call, (dep) => deps[[...call.deps].indexOf(dep)]!.value, writer, signal, req);
+        })(),
+      );
+    }
+    await Promise.all(results);
+    writer.close();
+    if (!gone.aborted) {
+      complete();
+      res.end();
+    }
+  }
+
+  async function runLane(
+    lane: number,
+    call: BatchCall,
+    output: (lane: number) => unknown,
+    writer: FrameWriter,
+    signal: AbortSignal,
+    req: http2.Http2ServerRequest,
+  ): Promise<{ ok: boolean; value?: unknown }> {
+    const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method };
+    try {
+      const input = validateInput(call.def, resolveRefs(call.input, output));
+      if (call.def.stream === 'none') {
+        const outcome = await runUnary(call.op, call.def, input, ctx, call.key);
+        if (outcome.status !== 200) {
+          await writer.end({ status: outcome.status, problem: outcome.payload as Problem }, lane);
+          return { ok: false };
+        }
+        await writer.msg(outcome.payload, lane);
+        await writer.end({ status: 200 }, lane);
+        return { ok: true, value: outcome.payload };
+      }
+      const result = await abortable(Promise.resolve(handlerMap[call.op]!(input, ctx)), signal);
+      if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${call.op} did not return an AsyncIterable`);
+      for await (const item of result) {
+        await writer.msg(validateOutput ? call.def.output.parse(item) : item, lane);
+        if (signal.aborted) throw signal.reason;
+      }
+      await writer.end({ status: 200 }, lane);
+      return { ok: true };
+    } catch (error) {
+      const problem =
+        error instanceof RefError
+          ? new ApueError(400, 'Unresolvable Reference', error.message, { type: ProblemType.UNRESOLVABLE_REFERENCE }).problem
+          : toProblem(error);
+      await writer.end({ status: problem.status, problem }, lane);
+      return { ok: false };
+    }
+  }
+
+  interface BatchCall {
+    op: string;
+    def: OpDef;
+    input: unknown;
+    key?: string;
+    deps: Set<number>;
+  }
+
+  /** Structural validation of a batch before anything executes (all-or-nothing 400). */
+  function parseBatch(body: unknown): BatchCall[] {
+    const bad = (detail: string) => new ApueError(400, 'Invalid Batch', detail, { type: ProblemType.INVALID_BATCH });
+    if (body === null || typeof body !== 'object' || !Array.isArray((body as { calls?: unknown }).calls)) {
+      throw bad('expected {"calls": [...]}');
+    }
+    const raw = (body as { calls: unknown[] }).calls;
+    if (raw.length === 0 || raw.length > maxBatchCalls) throw bad(`a batch has 1 to ${maxBatchCalls} calls`);
+    return raw.map((entry, lane) => {
+      if (entry === null || typeof entry !== 'object') throw bad(`call ${lane} is not an object`);
+      const { op: name, in: input, key } = entry as { op?: unknown; in?: unknown; key?: unknown };
+      if (typeof name !== 'string' || !Object.hasOwn(api, name)) throw bad(`call ${lane}: unknown operation ${String(name)}`);
+      const def = api[name]!;
+      if (hasRequestStream(def)) throw bad(`call ${lane}: ${name} has a request stream and cannot be batched`);
+      if (key !== undefined && (typeof key !== 'string' || key.length === 0 || key.length > 255)) throw bad(`call ${lane}: invalid key`);
+      let deps: Set<number>;
+      try {
+        deps = collectRefs(input, lane);
+      } catch (error) {
+        if (error instanceof RefError) throw bad(`call ${lane}: ${error.message}`);
+        throw error;
+      }
+      for (const dep of deps) {
+        if (api[(raw[dep] as { op: string }).op]!.stream !== 'none') throw bad(`call ${lane} references streaming call ${dep}`);
+      }
+      return { op: name, def, input, deps, ...(typeof key === 'string' ? { key } : {}) };
+    });
   }
 
   async function streamResponse(
@@ -568,8 +717,15 @@ function ifNoneMatch(header: string | undefined, etag: string): boolean {
   return header.split(',').some((tag) => tag.trim().replace(/^W\//, '') === etag);
 }
 
-function replay(res: http2.Http2ServerResponse, stored: StoredResponse): void {
-  sendBytes(res, stored.status, { ...stored.headers, [REPLAYED]: '?1' }, stored.body);
+function problemOutcome(problem: Problem, error?: unknown): StoredResponse & { payload: unknown } {
+  const headers: Record<string, string> = { 'content-type': MediaType.PROBLEM, 'cache-control': 'no-store' };
+  if (error instanceof ApueError) Object.assign(headers, error.headers);
+  return { status: problem.status, headers, body: encodeJson(problem), payload: problem };
+}
+
+function timeoutSignal(signal: AbortSignal, req: http2.Http2ServerRequest): AbortSignal {
+  const timeoutMs = parseTimeout(req.headers[Header.TIMEOUT]);
+  return timeoutMs === undefined ? signal : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
 }
 
 function sendBytes(

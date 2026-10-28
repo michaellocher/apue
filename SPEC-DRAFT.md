@@ -138,19 +138,25 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 
 ## 10. Pipelined batches (promise pipelining)
 
-`QUERY {base}/` (all calls safe) or `POST {base}/`:
+`QUERY {base}/` (only if every call is `safe`, else 422) or `POST {base}/`, `Content-Type: application/json`:
 
 ```json
 { "calls": [
   { "op": "users.get",   "in": { "id": "42" } },
-  { "op": "orders.list", "in": { "userId": { "$ref": [0, "id"] } }, "select": ["id", "total"] }
+  { "op": "orders.list", "in": { "userId": { "$ref": [0, "id"] } } },
+  { "op": "orders.create", "in": { "item": "x" }, "key": "1f0c…" }
 ] }
 ```
 
-- `$ref: [lane, ...path]` references the output of an earlier call; the server resolves the dependency graph and runs independent calls concurrently.
-- Response is a framed stream; each lane delivers MSG… END as soon as it completes (out of order) → TTFB = fastest call.
-- If a referenced call fails, dependent lanes END with `424 Failed Dependency`.
+- **References**: an object with exactly one member `"$ref": [lane, ...path]` is replaced by the output of an earlier call (path segments: member names or array indices; own properties only; `__proto__`/`constructor`/`prototype` rejected). Data that would look like a reference (exactly one member named `$ref` or `$lit`) is escaped as `{"$lit": value}`; `$lit` content is taken verbatim.
+- **Structural validation first** (all-or-nothing `400 invalid-batch`): 1..64 calls (server-configurable), known ops, no request-stream ops, references only to *earlier* calls (⇒ acyclic) and only to unary (`stream: none`) calls, valid `key`.
+- **Execution**: each call starts once its dependencies finished; independent calls run concurrently. Inputs are validated after reference resolution (400 `validation-failed`; missing path → 400 `unresolvable-reference`).
+- **Response**: always a framed stream, headers committed immediately; each lane delivers `MSG… END` as soon as it completes (out of order) → TTFB = fastest call. Server-streaming ops may be batched (lane carries many MSGs).
+- **Failures are per lane**: a failed call ENDs with its problem; dependents END with `424 failed-dependency` (transitively); independent lanes are unaffected. A lane without END when the body ends is truncated (client: 502).
+- **Idempotency**: non-safe calls carry a per-call `key` (client-generated), scoped like `Idempotency-Key` → resending the same batch replays keyed calls, so batches are retry-safe as a whole.
+- `apue-timeout` applies to the whole batch; cancelling the request aborts all running calls.
 - Batching is for **dependencies**; independent calls should just be separate requests multiplexed on h2.
+- Client API: `const b = client.batch(); const u = b.call('users.get', {id}); const o = b.call('orders.list', {userId: u.ref('id')}); await b.send(); await o.result` — `ref()` is typed along the output type (up to 3 path segments, through optional fields).
 - Later: `$map` over arrays (Cap'n Web-style).
 
 ## 11. Schemas, manifest, evolution
@@ -231,3 +237,14 @@ Findings:
 - Returning an *unstarted* async-generator body iterator does not run its `finally` → the h2 stream stayed open and `server.close()` hung. Fixed with a per-attempt AbortController (aborting resets the stream).
 - fetch wraps errors thrown by a streaming request body as `TypeError: fetch failed` with the original in `cause` → unwrapped in the fetch transport.
 - `QUERY` works on Node 26.12.1 over h1 (llhttp) and h2, from fetch and node:https.
+
+### S3 — 2026-10-28 ✅
+
+Implemented: `src/refs.ts` (reference encoding/escaping/resolution), server batch endpoint (structural validation, dependency scheduling, per-lane streaming, 424 propagation, per-call idempotency through a shared `runUnary`), `src/batch.ts` (typed client batch API with `ref()`, `BatchCall.result`, `BatchStream`).
+
+Tests: 97 total; batch suite covers dependency chains in one request (QUERY), out-of-order delivery and concurrency (fast lane < 200 ms while 2×300 ms lanes finish in < 550 ms), transitive 424, post-resolution validation, unresolvable refs, `$ref`/`$lit` escaping, streaming lanes, per-call keys and replay on resend, cancellation reaching handlers, batch-wide deadline, truncated lanes, 10 structural error cases, prototype-pollution guards.
+
+Findings:
+- `ref()` path typing must strip `undefined` at every step (optional fields), else the next key is `never`.
+- Transports report aborts differently (fetch rejects with the abort reason, node:http2 with a generic `AbortError` whose `cause` is the reason) → the client rethrows the caller's `signal.reason`.
+- Refactoring unary execution into one never-throwing `runUnary` made HTTP calls and batch lanes share idempotency, validation and error semantics.

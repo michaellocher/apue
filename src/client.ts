@@ -15,6 +15,7 @@ import {
 import { concatBytes, decodeFrames, decodeJson, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
 import { ValidationError } from './schema.ts';
+import { Batch } from './batch.ts';
 
 export interface TransportRequest {
   method: string;
@@ -53,19 +54,19 @@ export interface ClientOptions {
   maxBackoffMs?: number;
 }
 
-type OpsOf<A extends Api, S extends StreamKind> = {
+export type OpsOf<A extends Api, S extends StreamKind> = {
   [K in keyof A & string]: A[K] extends OpDef<any, any, infer X> ? ([X] extends [S] ? K : never) : never;
 }[keyof A & string];
 
-type Args<D> = undefined extends InputOf<D>
+export type Args<D> = undefined extends InputOf<D>
   ? [input?: InputOf<D>, options?: CallOptions]
   : [input: InputOf<D>, options?: CallOptions];
 
 const QUERY_REJECTED = new Set([400, 403, 405, 501]);
-const ACCEPT = `${MediaType.STREAM_JSON}, ${MediaType.JSON};q=0.9, ${MediaType.PROBLEM};q=0.8`;
+export const ACCEPT = `${MediaType.STREAM_JSON}, ${MediaType.JSON};q=0.9, ${MediaType.PROBLEM};q=0.8`;
 const textEncoder = new TextEncoder();
 
-interface Prepared {
+export interface Prepared {
   method: string;
   path: string;
   headers: Record<string, string>;
@@ -113,6 +114,21 @@ export class ApueClient<A extends Api> {
     return this.#transport.close?.() ?? Promise.resolve();
   }
 
+  /** Starts a pipelined batch: dependent calls in one round trip (SPEC-DRAFT §10). */
+  batch(): Batch<A> {
+    return new Batch(this.#api, this);
+  }
+
+  /** @internal */
+  get queryAllowed(): boolean {
+    return !this.#queryUnsupported;
+  }
+
+  /** @internal */
+  get retryBudget(): number {
+    return this.#retries;
+  }
+
   async *#run(opName: string, input: unknown, options: CallOptions = {}): AsyncGenerator<unknown> {
     const def = this.#api[opName];
     if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
@@ -141,6 +157,11 @@ export class ApueClient<A extends Api> {
       if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
       if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
       yield decodeJson(bytes);
+    } catch (error) {
+      // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
+      // always get their own abort reason.
+      if (options.signal?.aborted) throw options.signal.reason;
+      throw error;
     } finally {
       if (!finished) controller.abort();
     }
@@ -162,18 +183,22 @@ export class ApueClient<A extends Api> {
     }
     if (value !== undefined) headers['content-type'] = MediaType.JSON;
     const body = value === undefined ? undefined : textEncoder.encode(canonicalJson(value));
-    const method = isCacheableRead(def) && !this.#queryUnsupported ? 'QUERY' : 'POST';
+    const method = isCacheableRead(def) && this.queryAllowed ? 'QUERY' : 'POST';
     if (def.effect !== 'safe' && def.stream === 'none') {
       headers['idempotency-key'] = sfString(options.idempotencyKey ?? crypto.randomUUID());
     }
     return { method, path: `/${opName}`, headers, ...(body === undefined ? {} : { body }) };
   }
 
-  async #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal): Promise<TransportResponse> {
-    let prepared = this.#prepare(opName, def, input, options);
+  #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal): Promise<TransportResponse> {
     // A request stream can't be replayed; everything else is safe to resend because it is safe,
     // idempotent, or carries an Idempotency-Key.
     const budget = hasRequestStream(def) ? 0 : (options.retries ?? this.#retries);
+    return this.sendPrepared(this.#prepare(opName, def, input, options), budget, signal);
+  }
+
+  /** @internal Sends with QUERY→POST fallback and retries; used by calls and batches. */
+  async sendPrepared(prepared: Prepared, budget: number, signal: AbortSignal): Promise<TransportResponse> {
     let queryRejectedWith: number | undefined;
     for (let attempt = 0; ; attempt++) {
       // Per-attempt signal: aborting it discards a response we won't use (resets the h2 stream).
@@ -233,7 +258,7 @@ export class ApueClient<A extends Api> {
 
 // ---------------------------------------------------------------------------------------------
 
-function validate(def: OpDef, value: unknown, what: string): unknown {
+export function validate(def: OpDef, value: unknown, what: string): unknown {
   try {
     return def.input.parse(value);
   } catch (error) {
@@ -256,7 +281,7 @@ function sfString(value: string): string {
   return `"${value.replace(/[\\"]/g, '\\$&')}"`;
 }
 
-function problemError(bytes: Uint8Array, status: number): ApueError {
+export function problemError(bytes: Uint8Array, status: number): ApueError {
   return ApueError.fromProblem(safeJson(bytes) as Partial<Problem> | undefined, status);
 }
 
@@ -268,7 +293,7 @@ function safeJson(bytes: Uint8Array): unknown {
   }
 }
 
-async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+export async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let length = 0;
   for await (const chunk of body) {

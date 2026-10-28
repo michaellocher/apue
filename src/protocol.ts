@@ -24,6 +24,9 @@ export const ProblemType = {
   DEADLINE: 'https://apue.dev/problems/deadline-exceeded',
   IDEMPOTENCY_IN_PROGRESS: 'https://apue.dev/problems/idempotency-key-in-progress',
   IDEMPOTENCY_MISMATCH: 'https://apue.dev/problems/idempotency-key-reused',
+  FAILED_DEPENDENCY: 'https://apue.dev/problems/failed-dependency',
+  UNRESOLVABLE_REFERENCE: 'https://apue.dev/problems/unresolvable-reference',
+  INVALID_BATCH: 'https://apue.dev/problems/invalid-batch',
 } as const;
 
 export class ApueError extends Error {

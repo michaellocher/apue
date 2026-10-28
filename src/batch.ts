@@ -181,7 +181,7 @@ export class Batch<A extends Api> {
     if (options.timeoutMs !== undefined) headers['apue-timeout'] = String(options.timeoutMs);
     const prepared: Prepared = {
       method: allSafe && this.#client.queryAllowed ? 'QUERY' : 'POST',
-      path: '/',
+      path: '/$batch',
       headers,
       body: new TextEncoder().encode(canonicalJson({ calls })),
     };

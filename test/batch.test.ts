@@ -87,7 +87,7 @@ afterEach(() => {
 });
 
 const rawBatch = (body: unknown, method = 'POST', headers: Record<string, string> = {}) =>
-  fetch(`${server.url}/`, { method, headers: { 'content-type': MediaType.JSON, ...headers }, body: JSON.stringify(body) });
+  fetch(`${server.url}/$batch`, { method, headers: { 'content-type': MediaType.JSON, ...headers }, body: JSON.stringify(body) });
 
 describe('pipelined batches', () => {
   test('dependent calls in one request (QUERY when all calls are safe)', async () => {
@@ -287,7 +287,7 @@ describe('batch validation', () => {
     const res = await rawBatch({ calls: [{ op: 'count.inc', in: { by: 1 } }] }, 'QUERY');
     assert.equal(res.status, 422);
     await res.arrayBuffer();
-    const get = await fetch(`${server.url}/`);
+    const get = await fetch(`${server.url}/$batch`);
     assert.equal(get.status, 405);
     assert.equal(get.headers.get('allow'), 'QUERY, POST');
     await get.arrayBuffer();

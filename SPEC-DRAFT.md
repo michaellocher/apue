@@ -140,7 +140,7 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 
 ## 10. Pipelined batches (promise pipelining)
 
-`QUERY {base}/` (only if every call is `safe`, else 422) or `POST {base}/`, `Content-Type: application/json`:
+`QUERY {base}/$batch` (only if every call is `safe`, else 422) or `POST {base}/$batch`, `Content-Type: application/json` (not `/`: that path must stay free for serving the app same-origin; op names start with a letter, so `$batch` can't collide):
 
 ```json
 { "calls": [

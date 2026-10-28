@@ -2,6 +2,16 @@
 
 Spikes for a new HTTP/2-native API protocol. Design: [`SPEC-DRAFT.md`](SPEC-DRAFT.md) · research: [`research/`](research/).
 
+## Try it
+
+```sh
+node examples/todo/server.ts     # https://localhost:8443 — open it in a browser (self-signed cert)
+node examples/todo/cli.ts        # typed calls, a pipelined batch, a resumable change stream
+```
+
+The example ([`examples/todo`](examples/todo)) serves page and API from one origin; the browser
+imports `src/*.ts` type-stripped by the server (no build step).
+
 Requires Node ≥ 26.11 (native TypeScript, no build step) and `openssl` (tests generate a throwaway cert).
 
 ```sh

@@ -1,0 +1,91 @@
+// Todo server: API + web page from one origin (no CORS preflights).
+//   node examples/todo/server.ts   →  https://localhost:8443
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { stripTypeScriptTypes } from 'node:module';
+import { join, normalize, resolve } from 'node:path';
+import { ApueError } from '../../src/protocol.ts';
+import { createApueServer, type Exchange, type Handlers } from '../../src/server.ts';
+import { testCert } from '../../test/helpers.ts';
+import { todoApi, type Todo } from './api.ts';
+
+const todos = new Map<number, Todo>();
+const changes: Array<{ seq: number; todo: Todo }> = [];
+const listeners = new Set<() => void>();
+let nextId = 1;
+
+function record(todo: Todo): Todo {
+  todos.set(todo.id, todo);
+  changes.push({ seq: changes.length, todo });
+  for (const wake of listeners) wake();
+  return todo;
+}
+
+const handlers: Handlers<typeof todoApi> = {
+  'todos.list': () => [...todos.values()],
+  'todos.get': ({ id }) => {
+    const todo = todos.get(id);
+    if (!todo) throw new ApueError(404, 'Not Found', `todo ${id}`);
+    return todo;
+  },
+  'todos.create': ({ title }) => record({ id: nextId++, title, done: false }),
+  'todos.complete': ({ id }) => {
+    const todo = todos.get(id);
+    if (!todo) throw new ApueError(404, 'Not Found', `todo ${id}`);
+    return record({ ...todo, done: true });
+  },
+  'todos.changes': async function* (_input, ctx) {
+    // The change log is the cursor space: resuming replays everything after the checkpoint.
+    let seq = ctx.resumeFrom === undefined ? 0 : Number(ctx.resumeFrom) + 1;
+    while (!ctx.signal.aborted) {
+      while (seq < changes.length) {
+        yield changes[seq]!;
+        ctx.checkpoint(String(seq++));
+      }
+      let wake!: () => void;
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+        listeners.add(wake);
+        ctx.signal.addEventListener('abort', wake, { once: true });
+      });
+      listeners.delete(wake);
+    }
+  },
+  'todos.import': async (inputs) => {
+    let count = 0;
+    for await (const { title } of inputs) {
+      record({ id: nextId++, title, done: false });
+      count++;
+    }
+    return count;
+  },
+};
+
+// Static files: the page and the type-stripped TypeScript modules it imports (no build step).
+const root = resolve(import.meta.dirname, '../..');
+function serveStatic(exchange: Exchange): boolean {
+  const path = exchange.url.split('?')[0]!;
+  if (path === '/') {
+    exchange.send(200, { 'content-type': 'text/html; charset=utf-8' }, readFileSync(join(import.meta.dirname, 'index.html')));
+    return true;
+  }
+  const file = normalize(join(root, decodeURIComponent(path)));
+  const allowed = [join(root, 'src') + '/', join(root, 'examples') + '/'].some((dir) => file.startsWith(dir)) && file.endsWith('.ts');
+  if (!allowed || !existsSync(file)) return false;
+  const js = stripTypeScriptTypes(readFileSync(file, 'utf8'), { mode: 'strip' });
+  exchange.send(200, { 'content-type': 'text/javascript; charset=utf-8' }, new TextEncoder().encode(js));
+  return true;
+}
+
+// certs/ (gitignored): created once with a throwaway self-signed cert, or bring your own (mkcert).
+const certDir = join(root, 'certs');
+if (!existsSync(join(certDir, 'cert.pem'))) {
+  const generated = testCert();
+  mkdirSync(certDir, { recursive: true });
+  writeFileSync(join(certDir, 'key.pem'), generated.key);
+  writeFileSync(join(certDir, 'cert.pem'), generated.cert);
+}
+const key = readFileSync(join(certDir, 'key.pem'));
+const cert = readFileSync(join(certDir, 'cert.pem'));
+const server = createApueServer(todoApi, handlers, { key, cert, fallback: serveStatic });
+const port = await server.listen(Number(process.env.PORT ?? 8443), process.env.HOST ?? '127.0.0.1');
+console.log(`todo example on https://localhost:${port} (self-signed cert; use mkcert or accept it in the browser)`);

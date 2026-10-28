@@ -1,0 +1,53 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>apü todo</title>
+<style>
+  body { font: 16px/1.4 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  li.done { text-decoration: line-through; color: #888; }
+  #log { font: 12px ui-monospace, monospace; color: #555; white-space: pre-wrap; }
+</style>
+<h1>apü todo</h1>
+<form id="add"><input name="title" placeholder="What needs doing?" required> <button>Add</button></form>
+<ul id="list"></ul>
+<button id="import">Import 100 (client stream)</button>
+<div id="log"></div>
+<script type="module">
+  import { ApueClient, fetchTransport } from '/src/client.ts';
+  import { autoTransport } from '/src/transport-ws.ts';
+  import { todoApi } from '/examples/todo/api.ts';
+
+  const client = new ApueClient(todoApi, fetchTransport(location.origin));
+  const uploads = new ApueClient(todoApi, autoTransport(location.origin));
+  const list = document.querySelector('#list');
+  const log = (text) => (document.querySelector('#log').textContent = `${new Date().toLocaleTimeString()} ${text}\n` + document.querySelector('#log').textContent);
+  const items = new Map();
+
+  function render() {
+    list.replaceChildren(...[...items.values()].map((todo) => {
+      const li = document.createElement('li');
+      li.textContent = todo.title;
+      li.className = todo.done ? 'done' : '';
+      li.onclick = () => client.call('todos.complete', { id: todo.id });
+      return li;
+    }));
+  }
+
+  document.querySelector('#add').onsubmit = async (event) => {
+    event.preventDefault();
+    const title = event.target.title.value;
+    event.target.reset();
+    await client.call('todos.create', { title }); // validated before sending, retried safely (Idempotency-Key)
+  };
+  document.querySelector('#import').onclick = async () => {
+    async function* titles() { for (let i = 1; i <= 100; i++) yield { title: `imported #${i}` }; }
+    const [count] = await Array.fromAsync(uploads.duplex('todos.import', titles()));
+    log(`imported ${count}`);
+  };
+
+  // Live updates: one server stream; reconnects resume from the last checkpoint.
+  for await (const { seq, todo } of client.stream('todos.changes', undefined, { resumes: 100 })) {
+    items.set(todo.id, todo);
+    render();
+    log(`change #${seq}: ${todo.title}${todo.done ? ' ✓' : ''}`);
+  }
+</script>

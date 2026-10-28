@@ -28,6 +28,8 @@ import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { ValidationError, type Schema } from './schema.ts';
 
+export type { Exchange } from './exchange.ts';
+
 export interface CallContext {
   readonly op: string;
   /** Aborted when the client goes away or the deadline (`apue-timeout`) passes. */
@@ -95,6 +97,11 @@ export interface ApueServerOptions {
   cors?: CorsOptions;
   /** Resume tokens: share `secret` between replicas so any instance can resume a stream. */
   resume?: ResumeOptions;
+  /**
+   * Handles paths that are not operations (static assets, health checks) — e.g. to serve the web
+   * app from the same origin, which needs no CORS preflights. Return true when handled.
+   */
+  fallback?: (exchange: Exchange) => boolean | Promise<boolean>;
 }
 
 export interface CorsOptions {
@@ -112,7 +119,9 @@ export interface ApueServer {
 }
 
 export const MANIFEST_PATH = '/.well-known/apue';
-export const BATCH_PATH = '/';
+// Op names start with a letter, so this never collides with an op — and `/` stays free for
+// serving the web app from the same origin.
+export const BATCH_PATH = '/$batch';
 export const PROTOCOL_VERSION = 'draft-00';
 
 const STREAM_HEADERS = {
@@ -384,6 +393,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete);
       const opName = decodeURIComponent(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
+      if (!def && options.fallback && (await options.fallback(req))) {
+        complete();
+        return;
+      }
       if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
       const read = isCacheableRead(def);
       const allow = read ? 'GET, HEAD, QUERY, POST' : 'POST';

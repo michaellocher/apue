@@ -126,7 +126,7 @@ describe('server fuzzing', () => {
     const statuses = new Map<number, number>();
     for (let i = 0; i < 300; i++) {
       const body = JSON.stringify({ calls: undefined, ...(r.next() < 0.5 ? (randomJson(r) as object) : { items: randomJson(r) }) });
-      const path = ['/orders.create', '/users.get', '/'][r.int(3)]!;
+      const path = ['/orders.create', '/users.get', '/$batch'][r.int(3)]!;
       const status = await send({ ':method': 'POST', ':path': path, 'content-type': MediaType.JSON }, body);
       statuses.set(status, (statuses.get(status) ?? 0) + 1);
       assert.ok(status < 500, `5xx for ${path} ${body.slice(0, 200)}`);

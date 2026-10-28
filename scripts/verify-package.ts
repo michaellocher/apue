@@ -1,9 +1,10 @@
 // Verifies the package as users get it: `npm pack`, install the tarball into a fresh project (no
 // network: the package has no dependencies), then use every entry point from JavaScript — a server
-// and a client talking over TLS, a download, the CLI generating TypeScript (typechecked against the
-// installed declarations) and Python. Node strips types only outside node_modules, so this is the
-// only way to know the published JavaScript works. `npm run verify:package` (after `npm run build`).
-import { execFileSync } from 'node:child_process';
+// and a client talking over TLS, a download, DPoP, the CLI generating TypeScript (typechecked against
+// the installed declarations), Python, Go, Java and Swift. Node strips types only outside
+// node_modules, so this is the only way to know the published JavaScript works.
+// `npm run verify:package` (after `npm run build`).
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +22,10 @@ try {
     if (!paths.includes(required)) throw new Error(`missing from the package: ${required}`);
   }
   console.log(`package: ${filename}, ${paths.length} files, ${(size / 1024).toFixed(0)} KiB`);
+  // The manifest the registry would get: npm silently rewrites what it considers invalid (it once
+  // "corrected" the bin path) — the package.json must be what is published.
+  const publish = spawnSync('npm', ['publish', '--dry-run', '--ignore-scripts', '--tag', 'beta'], { cwd: root, encoding: 'utf8' });
+  if (publish.status !== 0 || /auto-corrected|errors corrected/.test(publish.stderr)) throw new Error(`npm publish --dry-run:\n${publish.stderr}`);
 
   const app = join(work, 'app');
   execFileSync('mkdir', ['-p', app]);
@@ -83,6 +88,33 @@ process.exit(0);
     const expected = { user: { id: 'a', name: 'user a' }, items: [1, 2, 3], exported: 'exported', problem: 400, entries: ['function', 'function', 'function', 'function'] };
     if (JSON.stringify(result) !== JSON.stringify(expected)) throw new Error(`client result ${JSON.stringify(result)} ≠ ${JSON.stringify(expected)}`);
     console.log('runtime: server, client (unary, stream, download, problem) and all entry points work from the installed package');
+    writeFileSync(join(app, 'dpop.mjs'), `
+import { readFileSync } from 'node:fs';
+import { ApueClient, createDpopSigner, dpopHeaders } from 'apue';
+import { createApueServer, dpopVerifier } from 'apue/server';
+import { http2Transport } from 'apue/http2';
+import { api } from './api.mjs';
+const dpop = dpopVerifier();
+const server = createApueServer(api, {
+  'users.get': ({ id }, ctx) => ({ id, name: ctx.principal }),
+  'count.up': async function* () {},
+  'export.get': () => { throw new Error('unused'); },
+}, { key: readFileSync('key.pem'), cert: readFileSync('cert.pem'), principal: async (request) => (await dpop(request)).jkt });
+const url = 'https://127.0.0.1:' + await server.listen(0);
+const signer = await createDpopSigner();
+const client = new ApueClient(api, http2Transport(url, { ca: readFileSync('cert.pem', 'utf8') }), { headers: dpopHeaders(signer, url) });
+const bound = (await client.call('users.get', { id: 'a' })).name === signer.jkt;
+const unsigned = new ApueClient(api, http2Transport(url, { ca: readFileSync('cert.pem', 'utf8') }));
+const refused = await unsigned.call('users.get', { id: 'a' }).then(() => 0, (e) => e.status);
+await client.close();
+await unsigned.close();
+await server.close();
+console.log(JSON.stringify({ bound, refused }));
+process.exit(0);
+`);
+    const dpop = run('node', ['dpop.mjs'], app).trim();
+    if (dpop !== JSON.stringify({ bound: true, refused: 401 })) throw new Error(`DPoP from the package: ${dpop}`);
+    console.log('dpop: signer (apue) and verifier (apue/server) work together from the installed package');
 
     const url = `https://127.0.0.1:${readFileSync(join(app, 'port.txt'), 'utf8')}`;
     run(join(app, 'node_modules', '.bin', 'apue-types'), [url, '--ca', 'cert.pem', '--out', 'api.gen.ts'], app);
@@ -119,6 +151,11 @@ process.exit(0);
       run('javac', ['-d', join(app, 'classes'), 'Api.java'], app);
       console.log('java: the CLI from the package generates a Java client that compiles');
     } else console.log('java: skipped (no javac)');
+    if (has('swiftc')) {
+      run(join(app, 'node_modules', '.bin', 'apue-types'), [url, '--ca', 'cert.pem', '--lang', 'swift', '--out', 'Api.swift'], app);
+      run('swiftc', ['-swift-version', '6', '-typecheck', 'Api.swift'], app);
+      console.log('swift: the CLI from the package generates a Swift client that typechecks');
+    } else console.log('swift: skipped (no swiftc)');
 
     // The README's quick start, verbatim: api.ts, server.ts, client.ts against the installed package.
     const readme = readFileSync(join(root, 'README.md'), 'utf8');

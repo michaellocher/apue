@@ -74,7 +74,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "apue-types": "./dist/bin/apue-types.js"
+    "apue-types": "dist/bin/apue-types.js"
   },
   "files": [
     "dist",

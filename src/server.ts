@@ -388,7 +388,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       bodyTimeoutMs,
       heartbeatMs,
       ...(uploads
-        ? { uploads: { path: '/$uploads', maxBytes: uploads.maxBytes, clientBytes: uploads.scopeBytes, clientUploads: uploads.scopeUploads, maxAgeSeconds: Math.floor(uploads.ttlMs / 1000) } }
+        ? { uploads: { path: UPLOADS_PATH, maxBytes: uploads.maxSize, clientBytes: uploads.scopeBytes, clientUploads: uploads.scopeUploads, maxAgeSeconds: Math.floor(uploads.ttlMs / 1000) } }
         : {}),
     },
   });
@@ -498,8 +498,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       if (url.pathname === UPLOADS_PATH || url.pathname.startsWith(`${UPLOADS_PATH}/`)) {
         if (!uploads) throw new ApueError(404, 'Not Found', 'uploads are not enabled on this server');
+        // Uploads are plain HTTP requests (resumable by design); a WebSocket call has no address to
+        // count against and nothing to resume.
+        if (req instanceof WsExchange) throw new ApueError(400, 'Bad Request', 'uploads use plain HTTP requests, not WebSocket');
         const scope = credentialScope(req);
-        const quota = req.headers.authorization ? scope : `addr:${req.remoteAddress ?? ''}`;
+        const quota = options.uploads?.clientKey?.({ headers: req.headers, remoteAddress: req.remoteAddress }) ?? `addr:${req.remoteAddress ?? ''}`;
         const response = await handleUpload(req, uploads, scope, quota, url.pathname);
         complete();
         return void res.send(response.status, response.headers, head ? undefined : response.body);

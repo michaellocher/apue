@@ -52,7 +52,11 @@ export class H2Exchange implements Exchange {
   }
 
   get remoteAddress(): string | undefined {
-    return this.#stream.session?.socket?.remoteAddress;
+    try {
+      return this.#stream.session?.socket?.remoteAddress;
+    } catch {
+      return undefined; // a session whose socket is already detached
+    }
   }
 
   get sink(): Writable {

@@ -87,7 +87,14 @@ type JsonSchema = Record<string, any>;
  * schema can't be sampled (e.g. bytes in an output: they travel as BLOB frames).
  */
 function sample(schema: JsonSchema, side: 'input' | 'output'): { value: unknown; json: unknown } | undefined {
-  if (Array.isArray(schema.anyOf)) return sample(schema.anyOf[0], side);
+  if (Array.isArray(schema.anyOf)) {
+    // The first branch that can be sampled (a nullable bytes output still has `null`).
+    for (const branch of schema.anyOf) {
+      const sampled = sample(branch, side);
+      if (sampled) return sampled;
+    }
+    return undefined;
+  }
   if (Object.keys(schema).length === 0) return { value: null, json: null }; // t.unknown()
   switch (schema.type) {
     case 'null':
@@ -115,9 +122,13 @@ function sample(schema: JsonSchema, side: 'input' | 'output'): { value: unknown;
     case 'object': {
       const value: Record<string, unknown> = {};
       const json: Record<string, unknown> = {};
+      const required = new Set<string>(schema.required ?? []);
       for (const [key, property] of Object.entries<JsonSchema>(schema.properties ?? {})) {
         const field = sample(property, side);
-        if (!field) return undefined;
+        if (!field) {
+          if (required.has(key)) return undefined;
+          continue; // an optional field that can't be shown (e.g. bytes) is left out, not the whole example
+        }
         value[key] = field.value;
         json[key] = field.json;
       }

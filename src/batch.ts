@@ -117,6 +117,8 @@ interface Entry {
   def: OpDef;
   input: unknown;
   sink: LaneSink;
+  /** Validated in add() already (send() then only uploads). */
+  validated: boolean;
 }
 
 export class Batch<A extends Api> {
@@ -167,8 +169,9 @@ export class Batch<A extends Api> {
     }
     // Inputs containing refs can only be validated on the server, after resolution; inputs holding
     // upload() references are validated at send, when they stand in for bytes.
-    const value = containsRef(input) || hasUploadRef(input) ? input : validate(def, input, `input of call ${sink.lane}`);
-    this.#entries.push({ op, def, input: value, sink });
+    const validated = !containsRef(input) && !(containsBytes(def.input) && hasUploadRef(input));
+    const value = validated ? validate(def, input, `input of call ${sink.lane}`) : input;
+    this.#entries.push({ op, def, input: value, sink, validated });
     return sink;
   }
 
@@ -179,7 +182,10 @@ export class Batch<A extends Api> {
     // the batch has settled — also when one lane's upload or validation fails (the others are stopped).
     const created: UploadRef[] = [];
     try {
-      const lanes = this.#entries.map(({ def, input }, lane) => this.#client.prepareUploads(def, input, controller.signal, created, `input of call ${lane}`, !containsRef(input)));
+      const uploads = new Map<Uint8Array, Promise<UploadRef>>(); // one buffer in several calls: one upload
+      const lanes = this.#entries.map(({ def, input, validated }, lane) =>
+        this.#client.prepareUploads(def, input, controller.signal, created, `input of call ${lane}`, !validated && !containsRef(input), uploads),
+      );
       for (const lane of lanes) lane.catch((error: unknown) => controller.abort(error)); // one fails: stop the others
       const results = await Promise.allSettled(lanes); // all settled: `created` is complete for the cleanup
       const failed = results.find((result) => result.status === 'rejected');

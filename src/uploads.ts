@@ -2,6 +2,7 @@
 // values are uploaded to `/$uploads` — resumably, over plain HTTP requests — and op inputs reference
 // them as { "$upload": id } where the schema says t.bytes() (SPEC-DRAFT §6). Node-only.
 import { createHash, randomBytes, type Hash } from 'node:crypto';
+import type { IncomingHttpHeaders } from 'node:http';
 import type { Exchange } from './exchange.ts';
 import { concatBytes } from './frame.ts';
 import { ApueError, baseMediaType, MediaType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH } from './protocol.ts';
@@ -18,13 +19,18 @@ export interface UploadOptions {
   /** Lifetime of an upload resource from its creation (Upload-Limit max-age). Default 1 h. */
   ttlMs?: number;
   /**
-   * Bytes one client may hold (so one client can't lock out the rest). A client is its credentials
-   * (Authorization) or, without them, its address — behind a proxy all anonymous clients share
-   * the proxy's address. Default storeBytes / 4.
+   * Bytes one client may hold, received or announced (Upload-Length), so one client can't lock
+   * out the rest. Default storeBytes / 4. Who "one client" is: see `clientKey`.
    */
   scopeBytes?: number;
   /** Upload resources one client may hold, complete or not. Default 100. */
   scopeUploads?: number;
+  /**
+   * Whose quota a request counts against. Default: its address — an Authorization header can't be
+   * trusted here (nothing checks it), so a made-up one must not buy a fresh quota; behind a proxy
+   * that is the proxy's address for everyone. Applications that authenticate can return their user id.
+   */
+  clientKey?: (request: { headers: IncomingHttpHeaders; remoteAddress: string | undefined }) => string;
   now?: () => number;
 }
 
@@ -43,6 +49,8 @@ interface Upload {
   writer: { abort(): void; done: Promise<void> } | undefined;
   /** Joined once on completion. */
   bytes: Uint8Array | undefined;
+  /** Announced (Upload-Length) but not yet received: already counted against the client's quota. */
+  reserved: number;
   /** SHA-256 over the content in offset order, fed as data arrives; hex once complete. */
   hash: Hash;
   digest: string | undefined;
@@ -94,6 +102,7 @@ export class UploadStore {
     if (length !== undefined && length > this.maxSize) throw tooLarge(this.maxSize);
     const usage = this.#usageOf(quota);
     if (usage.uploads >= this.scopeUploads) throw quotaExceeded(`${this.scopeUploads} uploads`);
+    // An announced length is reserved now, so parallel creations can't all pass and fail midway.
     if (length !== undefined && usage.bytes + length > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
     const upload: Upload = {
       id: randomBytes(16).toString('base64url'),
@@ -108,10 +117,26 @@ export class UploadStore {
       bytes: undefined,
       hash: createHash('sha256'),
       digest: undefined,
+      reserved: length ?? 0,
     };
     this.#uploads.set(upload.id, upload);
     usage.uploads++;
+    usage.bytes += upload.reserved;
     return upload;
+  }
+
+  /** A length announced after creation (on an append): reserve what is still to come. */
+  announce(upload: Upload, length: number): void {
+    if (length > this.maxSize) {
+      this.delete(upload);
+      throw tooLarge(this.maxSize);
+    }
+    const more = Math.max(0, length - upload.offset - upload.reserved);
+    const usage = this.#usageOf(upload.quota);
+    if (usage.bytes + more > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
+    upload.length = length;
+    upload.reserved += more;
+    usage.bytes += more;
   }
 
   /** The upload if it exists, has not expired and belongs to `scope` — else undefined (a 404). */
@@ -141,20 +166,24 @@ export class UploadStore {
       this.delete(upload);
       throw inconsistentLength(`content beyond Upload-Length ${upload.length}`);
     }
-    if (upload.offset + chunk.byteLength > this.maxBytes) {
+    // Beyond what one client may ever hold, the content is too large (413) — not a quota to free (507).
+    if (upload.offset + chunk.byteLength > this.maxSize) {
       this.delete(upload);
-      throw tooLarge(this.maxBytes);
+      throw tooLarge(this.maxSize);
     }
     const usage = this.#usageOf(upload.quota);
-    if (usage.bytes + chunk.byteLength > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
+    const covered = Math.min(chunk.byteLength, upload.reserved); // already counted when announced
+    const extra = chunk.byteLength - covered;
+    if (usage.bytes + extra > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
     if (this.#stored + chunk.byteLength > this.storeBytes) {
       throw new ApueError(503, 'Service Unavailable', 'upload storage is full', { retryable: true }, { 'retry-after': '60' });
     }
     upload.chunks.push(chunk);
     upload.hash.update(chunk);
     upload.offset += chunk.byteLength;
+    upload.reserved -= covered;
     this.#stored += chunk.byteLength;
-    usage.bytes += chunk.byteLength;
+    usage.bytes += extra;
   }
 
   /** Marks the upload complete: its content and digest are final. */
@@ -169,7 +198,7 @@ export class UploadStore {
     this.#uploads.delete(upload.id);
     this.#stored -= upload.offset;
     const usage = this.#usageOf(upload.quota);
-    usage.bytes -= upload.offset;
+    usage.bytes -= upload.offset + upload.reserved;
     if (--usage.uploads === 0) this.#usage.delete(upload.quota);
     upload.writer?.abort();
   }
@@ -272,7 +301,7 @@ async function append(req: Exchange, store: UploadStore, upload: Upload): Promis
       store.delete(upload);
       throw inconsistentLength(`Upload-Length ${length} differs from ${upload.length}`);
     }
-    upload.length = length;
+    store.announce(upload, length);
   }
   await receive(req, store, upload);
   if (complete) return finish(store, upload, location);

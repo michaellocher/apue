@@ -64,6 +64,16 @@ describe('derived documentation in the manifest', () => {
     assert.deepEqual(statuses('numbers.sum'), ['400 Malformed Stream', '400 Truncated Stream']);
   });
 
+  test('an optional field that cannot be shown is left out, not the whole example; nullable bytes → null', () => {
+    const docsApi = defineApi({
+      'a.get': op({ effect: 'safe', input: t.void(), output: t.object({ name: t.string(), avatar: t.optional(t.bytes()) }) }),
+      'b.get': op({ effect: 'safe', input: t.void(), output: t.object({ data: t.nullable(t.bytes()) }) }),
+    });
+    const ops = (buildManifest(docsApi) as { ops: Record<string, any> }).ops;
+    assert.deepEqual(ops['a.get'].example, { output: { name: 'string' } });
+    assert.deepEqual(ops['b.get'].example, { output: { data: null } });
+  });
+
   test('placeholder examples: valid against the schema, left out when they cannot be, never for void', () => {
     assert.deepEqual(manifest.ops['users.get'].example, { input: { id: 'string' }, output: { id: 'string', role: 'admin', age: 18 } });
     assert.equal(manifest.ops['users.code'].example, undefined); // a pattern the placeholder can't meet; void input

@@ -12,6 +12,7 @@ import { http2Transport } from '../src/transport-http2.ts';
 import { t } from '../src/schema.ts';
 import { createApueServer, type Handlers } from '../src/server.ts';
 import { UploadStore } from '../src/uploads.ts';
+import { FrameDecoder, FrameType } from '../src/frame.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const MiB = 1024 * 1024;
@@ -23,6 +24,7 @@ const api = defineApi({
   }),
   'files.flaky': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.number() }),
   'files.scramble': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.string() }),
+  'meta.put': op({ effect: 'unsafe', input: t.object({ meta: t.unknown(), n: t.number() }), output: t.number() }),
 });
 let flakyCalls = 0;
 let executions = 0;
@@ -37,6 +39,7 @@ const handlers: Handlers<typeof api> = {
     data.fill(0); // a handler changing its input in place
     return before;
   },
+  'meta.put': ({ n }) => n,
   'files.flaky': ({ data }) => {
     if (++flakyCalls === 1) throw new ApueError(503, 'Service Unavailable', 'try again', { retryable: true }, { 'retry-after': '0' });
     return data.byteLength;
@@ -178,8 +181,9 @@ describe('resumable uploads (draft-14)', () => {
     assert.equal((await patch(await careful(), 0, true, new Uint8Array(3 * MiB))).status, 201);
   });
 
-  test('per-credential quotas: bytes and uploads, so one client cannot lock out the others', async () => {
-    const small = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, scopeBytes: 1 * MiB, scopeUploads: 3 } });
+  /** A server with small quotas; `at` sends one raw request to it. */
+  async function quotaServer(uploads: Record<string, unknown>) {
+    const small = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, scopeBytes: 1 * MiB, scopeUploads: 3, ...uploads } });
     const at = (method: string, path: string, headers: Record<string, string>, body?: Uint8Array) =>
       new Promise<Reply>((resolve, reject) => {
         const session = http2.connect(small.url, { ca: testCert().cert });
@@ -193,24 +197,79 @@ describe('resumable uploads (draft-14)', () => {
         req.on('error', reject);
         if (body !== undefined) req.end(body);
       });
+    return { small, at };
+  }
+
+  test('quotas per client address: a made-up Authorization does not buy a fresh quota', async () => {
+    const { small, at } = await quotaServer({});
+    try {
+      assert.equal((await at('OPTIONS', '/$uploads', {})).headers['upload-limit'], `max-size=${MiB}, max-age=3600`); // min(maxBytes, scopeBytes)
+      assert.equal((await at('POST', '/$uploads', { authorization: 'x1', 'upload-complete': '?1' }, new Uint8Array(MiB))).status, 201);
+      // review finding: a new Authorization value used to open a new bucket (four filled the store)
+      assert.equal((await at('POST', '/$uploads', { authorization: 'x2', 'upload-complete': '?1' }, new Uint8Array(1))).status, 507);
+      assert.equal((await at('POST', '/$uploads', { 'upload-complete': '?1' }, new Uint8Array(1))).status, 507);
+      const served = await (await fetch(`${small.url}/.well-known/apue`)).json();
+      assert.deepEqual(served.limits.uploads, { path: '/$uploads', maxBytes: MiB, clientBytes: MiB, clientUploads: 3, maxAgeSeconds: 3600 }); // the effective limit
+    } finally {
+      await small.close();
+    }
+  });
+
+  test('clientKey: an application that authenticates gives each user a quota (bytes and uploads)', async () => {
+    const { small, at } = await quotaServer({ clientKey: ({ headers }: { headers: http2.IncomingHttpHeaders }) => String(headers.authorization) });
     try {
       const alice = { authorization: 'Bearer alice', 'upload-complete': '?1' };
-      assert.equal((await at('OPTIONS', '/$uploads', {})).headers['upload-limit'], `max-size=${MiB}, max-age=3600`); // min(maxBytes, scopeBytes)
       assert.equal((await at('POST', '/$uploads', { ...alice, 'upload-length': String(MiB + 1) }, new Uint8Array(0))).status, 413); // can never fit
       assert.equal((await at('POST', '/$uploads', alice, new Uint8Array(MiB))).status, 201);
-      const over = await at('POST', '/$uploads', alice, new Uint8Array(1));
-      assert.equal(over.status, 507); // alice's 1 MiB are used up (Insufficient Storage: retrying won't help) …
+      assert.equal((await at('POST', '/$uploads', alice, new Uint8Array(1))).status, 507); // alice's 1 MiB are used up …
       assert.equal((await at('POST', '/$uploads', { authorization: 'Bearer bob', 'upload-complete': '?1' }, new Uint8Array(MiB))).status, 201); // … bob is unaffected
       const many = { authorization: 'Bearer carol', 'upload-complete': '?0' };
       for (let i = 0; i < 3; i++) assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 201);
       assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 507); // 3 uploads per client
-      // Without credentials the quota is per address (here all tests share 127.0.0.1): one bucket, not unlimited.
-      const anonymous = { 'upload-complete': '?1' };
-      assert.equal((await at('POST', '/$uploads', anonymous, new Uint8Array(MiB))).status, 201);
-      assert.equal((await at('POST', '/$uploads', anonymous, new Uint8Array(1))).status, 507);
     } finally {
       await small.close();
     }
+  });
+
+  test('announced lengths are reserved: parallel creations cannot overbook; a later Upload-Length too', async () => {
+    const { small, at } = await quotaServer({});
+    try {
+      const announce = (n: number) => at('POST', '/$uploads', { 'upload-complete': '?0', 'upload-length': String(n) }, new Uint8Array(0));
+      assert.equal((await announce(600 * 1024)).status, 201);
+      assert.equal((await announce(600 * 1024)).status, 507); // used to pass and fail midway
+      const later = await at('POST', '/$uploads', { 'upload-complete': '?0' }, new Uint8Array(0));
+      const location = String(later.headers.location);
+      const appended = await at('PATCH', location, { 'content-type': 'application/partial-upload', 'upload-offset': '0', 'upload-complete': '?0', 'upload-length': String(600 * 1024) }, new Uint8Array(1));
+      assert.equal(appended.status, 507);
+    } finally {
+      await small.close();
+    }
+  });
+
+  test('unannounced content beyond what one client may hold is 413 (too large), not 507 (quota)', async () => {
+    const { small, at } = await quotaServer({});
+    try {
+      assert.equal((await at('POST', '/$uploads', { 'upload-complete': '?1' }, new Uint8Array(MiB + 1))).status, 413);
+    } finally {
+      await small.close();
+    }
+  });
+
+  test('uploads are refused over WebSocket (plain HTTP only)', async () => {
+    tls.setDefaultCACertificates([...tls.getCACertificates('default'), testCert().cert]);
+    const ws = new WebSocket(`${server.url.replace('https', 'wss')}/$uploads`, 'apue.v1');
+    ws.binaryType = 'arraybuffer';
+    const chunks: Uint8Array[] = [];
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) chunks.push(new Uint8Array(event.data));
+    };
+    await new Promise((resolve) => (ws.onopen = resolve));
+    ws.send(new Uint8Array(0));
+    await new Promise((resolve) => (ws.onclose = resolve));
+    const frames = [...new FrameDecoder().push(Buffer.concat(chunks))];
+    const end = frames.find((f) => f.type === FrameType.END);
+    assert.ok(end, 'no END frame');
+    assert.equal((JSON.parse(Buffer.from(end.payload).toString()) as { status: number }).status, 400);
   });
 
   test('DELETE cancels (§9); unknown ids and other credentials see 404 (§20.1)', async () => {
@@ -560,6 +619,24 @@ describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
     const picked = await client.pick('files.store', { name: 'p', data: ref }, ['size']); // UploadRef is typed for pick() too
     assert.deepEqual(picked, { size: 4 });
     await client.close();
+  });
+
+  test('batch: an op without bytes is validated in add() even if its input looks like an upload reference', () => {
+    const batch = new ApueClient(api, h2()).batch();
+    assert.throws(() => batch.call('meta.put', { meta: { $upload: 'x' }, n: 'oops' as unknown as number }), /input of call 0/);
+  });
+
+  test('batch: one buffer in two calls is uploaded once', async () => {
+    const { transport, log } = recording(h2());
+    const client = new ApueClient(api, transport);
+    const shared = new Uint8Array(randomBytes(3000));
+    const batch = client.batch();
+    const a = batch.call('files.store', { name: 'a', data: shared });
+    const b = batch.call('files.store', { name: 'b', data: shared });
+    await batch.send();
+    assert.equal((await a.result).sha256, (await b.result).sha256);
+    await client.close();
+    assert.equal(log.filter((r) => r.method === 'POST' && r.path === '/$uploads').length, 1);
   });
 
   test('invalid input fails on the client before anything is uploaded', async () => {

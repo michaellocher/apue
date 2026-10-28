@@ -447,7 +447,15 @@ export class ApueClient<A extends Api> {
    * Each upload's reference is pushed to `created` as soon as it completes; if one fails, the
    * others are stopped and awaited before rethrowing — so `created` is complete for the cleanup.
    */
-  async prepareUploads(def: OpDef, input: unknown, signal: AbortSignal, created: UploadRef[], what = 'input', validateFirst = true): Promise<unknown> {
+  async prepareUploads(
+    def: OpDef,
+    input: unknown,
+    signal: AbortSignal,
+    created: UploadRef[],
+    what = 'input',
+    validateFirst = true,
+    uploads = new Map<Uint8Array, Promise<UploadRef>>(), // shared by the calls of a batch: one buffer, one upload
+  ): Promise<unknown> {
     if (hasRequestStream(def) || !containsBytes(def.input)) return input;
     let value = input;
     const placeholders = new Map<Uint8Array, UploadRef>(); // upload() references, stood in for during validation
@@ -462,7 +470,6 @@ export class ApueClient<A extends Api> {
     }
     const local = new AbortController();
     const unlink = linkSignal(signal, local);
-    const uploads = new Map<Uint8Array, Promise<UploadRef>>();
     const start = (bytes: Uint8Array) => {
       let pending = uploads.get(bytes);
       if (!pending) {

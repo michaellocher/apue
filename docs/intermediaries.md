@@ -15,7 +15,7 @@ this file records what was actually observed. Configs: `bench/proxy/`.
 | client stream sent as a whole | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | WebSocket (tier T3) | ✗ no upgrade headers | ✓ | ✓ | ✓ | ✗ no `upgrade_configs` | ✓ |
 | zstd response passed through | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| stalled consumer: server ahead, HTTP/2 (T1) | — (request buffered) | 5.8–6.3 MiB | **125 MiB** (all of it) | 6.5–7.0 MiB | 32 MiB | 32 MiB |
+| stalled consumer: server ahead, HTTP/2 (T1) | — (request buffered) | 5.8–6.3 MiB | 9.5 MiB | 6.5–7.0 MiB | 32 MiB | 32 MiB |
 | stalled consumer: server ahead, WebSocket (T3 credit) | — (no upgrade) | 4.0 MiB | 4.0 MiB | 4.0 MiB | — (no upgrade) | 4.0 MiB |
 
 Versions:
@@ -44,14 +44,18 @@ Versions:
 6. **HTTP/2 backpressure does not survive proxies; T3 credit does** (S17): a consumer that stalls
    for 1.5 s while the server produces 64 KiB items as fast as allowed. Direct, HTTP/2 flow control
    stops the server at the client's 4 MiB window. Through proxies each hop has its own window and
-   buffers: the server got 5.8–7.0 MiB ahead through nginx and HAProxy (two runs), 32 MiB through Envoy, and through
-   Caddy (defaults) it produced the entire 125 MiB response. Cross-checked from a client inside the
-   Docker network (no Docker Desktop port forwarder): same 125 MiB through Caddy, 4.0 MiB directly to
-   the server. During the stall the client held exactly its 4.0 MiB window, the TCP queues in both
-   containers were empty and Caddy's RSS was 51 MiB — where the remaining bytes were is not
-   determined. With T3's end-to-end credit the server stopped at exactly the
+   buffers: the server got 5.8–7.0 MiB ahead through nginx and HAProxy, 9.5 MiB through Caddy and
+   32 MiB through Envoy. With T3's end-to-end credit the server stopped at exactly the
    client's 4 MiB window behind every proxy that passes WebSockets. This is the measured case for
    app-level credit (spec §8: message-level CREDIT across tiers remains planned).
+
+   Corrected at 07:39: earlier runs reported **125 MiB** through Caddy. That was an artifact of the
+   probe: its items were `'x'` × 64 KiB, and Caddy's upstream transport (Go) adds `Accept-Encoding:
+   gzip` on its own, so the server gzipped the stream ~1000× and all of it fit inside the windows —
+   nothing was buffered anywhere (a 500 MiB flood grew no container's memory; the server's stream
+   log showed `encoding=gzip accept=gzip`). The probe now sends random (base64) items. Worth knowing
+   in itself: behind Caddy, apü compresses responses the client never asked to be compressed (Caddy
+   decompresses for the client).
 
 Recommended configs: `bench/proxy/nginx-tuned.conf`, `bench/proxy/envoy-tuned.yaml`; Caddy and
 HAProxy work as in `bench/proxy/*-defaults.*`.
@@ -65,7 +69,7 @@ HAProxy work as in `bench/proxy/*-defaults.*`.
 | unary GET (safe op) | ✓ |
 | QUERY method (large read) | ✓ forwarded |
 | unsafe POST + Idempotency-Key | ✓ |
-| stream: first item before the stream ends (TTFB) | ✓ first item after 4 ms (stream 1521 ms) |
+| stream: first item before the stream ends (TTFB) | ✓ first item after 4 ms (stream 1532 ms) |
 | cancellation reaches the backend | ✓ after 0 ms |
 | full duplex over HTTP/2 (request stream, tier T1) | ✗ no echo for 1 within 3 s (request buffered by proxy) |
 | client stream as a whole (no duplex needed) | ✓ |
@@ -81,12 +85,12 @@ HAProxy work as in `bench/proxy/*-defaults.*`.
 | unary GET (safe op) | ✓ |
 | QUERY method (large read) | ✓ forwarded |
 | unsafe POST + Idempotency-Key | ✓ |
-| stream: first item before the stream ends (TTFB) | ✓ first item after 3 ms (stream 1507 ms) |
+| stream: first item before the stream ends (TTFB) | ✓ first item after 4 ms (stream 1530 ms) |
 | cancellation reaches the backend | ✓ after 0 ms |
 | full duplex over HTTP/2 (request stream, tier T1) | ✓ echoes arrived while the request was open |
 | client stream as a whole (no duplex needed) | ✓ |
 | WebSocket (tier T3) | ✓ full duplex |
-| stalled consumer, HTTP/2 (T1) | ℹ server 6.3 MiB ahead of a stalled consumer |
+| stalled consumer, HTTP/2 (T1) | ℹ server 6.0 MiB ahead of a stalled consumer |
 | stalled consumer, WebSocket (T3, credit) | ✓ server 4.0 MiB ahead of a stalled consumer |
 | zstd response passes through | ✓ content-encoding: zstd |
 
@@ -97,12 +101,12 @@ HAProxy work as in `bench/proxy/*-defaults.*`.
 | unary GET (safe op) | ✓ |
 | QUERY method (large read) | ✓ forwarded |
 | unsafe POST + Idempotency-Key | ✓ |
-| stream: first item before the stream ends (TTFB) | ✓ first item after 3 ms (stream 1512 ms) |
+| stream: first item before the stream ends (TTFB) | ✓ first item after 3 ms (stream 1513 ms) |
 | cancellation reaches the backend | ✓ after 0 ms |
 | full duplex over HTTP/2 (request stream, tier T1) | ✓ echoes arrived while the request was open |
 | client stream as a whole (no duplex needed) | ✓ |
 | WebSocket (tier T3) | ✓ full duplex |
-| stalled consumer, HTTP/2 (T1) | ℹ server 125.0 MiB ahead of a stalled consumer |
+| stalled consumer, HTTP/2 (T1) | ℹ server 9.5 MiB ahead of a stalled consumer |
 | stalled consumer, WebSocket (T3, credit) | ✓ server 4.0 MiB ahead of a stalled consumer |
 | zstd response passes through | ✓ content-encoding: zstd |
 
@@ -113,12 +117,12 @@ HAProxy work as in `bench/proxy/*-defaults.*`.
 | unary GET (safe op) | ✓ |
 | QUERY method (large read) | ✓ forwarded |
 | unsafe POST + Idempotency-Key | ✓ |
-| stream: first item before the stream ends (TTFB) | ✓ first item after 3 ms (stream 1529 ms) |
+| stream: first item before the stream ends (TTFB) | ✓ first item after 2 ms (stream 1515 ms) |
 | cancellation reaches the backend | ✓ after 50 ms |
 | full duplex over HTTP/2 (request stream, tier T1) | ✓ echoes arrived while the request was open |
 | client stream as a whole (no duplex needed) | ✓ |
 | WebSocket (tier T3) | ✓ full duplex |
-| stalled consumer, HTTP/2 (T1) | ℹ server 7.0 MiB ahead of a stalled consumer |
+| stalled consumer, HTTP/2 (T1) | ℹ server 6.5 MiB ahead of a stalled consumer |
 | stalled consumer, WebSocket (T3, credit) | ✓ server 4.0 MiB ahead of a stalled consumer |
 | zstd response passes through | ✓ content-encoding: zstd |
 
@@ -129,7 +133,7 @@ HAProxy work as in `bench/proxy/*-defaults.*`.
 | unary GET (safe op) | ✓ |
 | QUERY method (large read) | ✓ forwarded |
 | unsafe POST + Idempotency-Key | ✓ |
-| stream: first item before the stream ends (TTFB) | ✓ first item after 2 ms (stream 1508 ms) |
+| stream: first item before the stream ends (TTFB) | ✓ first item after 2 ms (stream 1524 ms) |
 | cancellation reaches the backend | ✓ after 50 ms |
 | full duplex over HTTP/2 (request stream, tier T1) | ✓ echoes arrived while the request was open |
 | client stream as a whole (no duplex needed) | ✓ |
@@ -145,7 +149,7 @@ HAProxy work as in `bench/proxy/*-defaults.*`.
 | unary GET (safe op) | ✓ |
 | QUERY method (large read) | ✓ forwarded |
 | unsafe POST + Idempotency-Key | ✓ |
-| stream: first item before the stream ends (TTFB) | ✓ first item after 2 ms (stream 1510 ms) |
+| stream: first item before the stream ends (TTFB) | ✓ first item after 2 ms (stream 1525 ms) |
 | cancellation reaches the backend | ✓ after 50 ms |
 | full duplex over HTTP/2 (request stream, tier T1) | ✓ echoes arrived while the request was open |
 | client stream as a whole (no duplex needed) | ✓ |

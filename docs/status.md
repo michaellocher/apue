@@ -8,7 +8,8 @@
 - **WebSocket tier flow control (`apue.v1`)**: browsers can't pause a WebSocket, and a slow consumer
   let the server push 250 MiB into page memory in 3 s. Now HTTP/2-style byte windows with credit
   in text messages; holds at exactly the window in Chrome, Firefox, WebKit and behind nginx, Caddy,
-  HAProxy and Envoy — where HTTP/2's own backpressure let the server run up to 125 MiB ahead (Caddy).
+  HAProxy and Envoy — where HTTP/2's own backpressure let the server run 6–32 MiB ahead (Envoy most).
+  (An earlier "125 MiB through Caddy" was a probe artifact: compressible data + gzip added by Caddy.)
 - **Second review (flow-control code): 10 more fixes**; a WebSocket leak test then found 4 more
   (incl. a client-process crash in the HTTP/2 transport, unary-over-WebSocket 415s).
 - **A WebKit race**: over RFC 8441 WebKit dropped the last messages when the server closed right
@@ -55,8 +56,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 - vs grpc-js: 1.5× unary throughput, 30× small-message streaming.
 - 63 ms RTT / 100 Mbit/s: batches 3.0× faster than sequential calls, zstd streams 2.7×,
   tuned flow-control windows 5–12× (Node still defaults to 64 KiB).
-- Stalled consumer, server ahead: T3 credit 4.0 MiB behind every proxy; HTTP/2 up to 125 MiB through
-  Caddy (hop-by-hop windows) — docs/intermediaries.md.
+- Stalled consumer, server ahead: T3 credit 4.0 MiB behind every proxy; HTTP/2 6–32 MiB (hop-by-hop
+  windows; Envoy most) — docs/intermediaries.md.
 - Overhead vs a hand-written node:http2 handler (which validates nothing): 62 % of its unary
   throughput locally, 75 % of its stream throughput.
 

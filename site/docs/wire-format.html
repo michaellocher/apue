@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wire format — apü</title>
+<meta name="description" content="apü wire format reference: the 8-byte frame header, MSG, END, BLOB, HEARTBEAT and CHECKPOINT frames, media types, header fields, the SSE rendering and the WebSocket tier's messages and close codes, with real captured traffic.">
+<link rel="canonical" href="https://apue.dev/docs/wire-format.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Wire format — apü">
+<meta property="og:description" content="apü wire format reference: the 8-byte frame header, MSG, END, BLOB, HEARTBEAT and CHECKPOINT frames, media types, header fields, the SSE rendering and the WebSocket tier's messages and close codes, with real captured traffic.">
+<meta property="og:url" content="https://apue.dev/docs/wire-format.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html">Docs</a></li><li><a href="../docs/wire-format.html" aria-current="page">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html" aria-current="page">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html" aria-current="page">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
+<h1>Wire format</h1>
+<p class="page-intro">Unary calls are plain JSON over HTTP. Streaming bodies — in both directions, on every transport — are a sequence of frames with an 8-byte header. This page is the reference for both.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#frame-header">Frame header</a></li><li><a href="#frame-types">Frame types</a></li><li><a href="#messages-and-binary-values">Messages and binary values</a></li><li><a href="#resume-tokens">Resume tokens</a></li><li><a href="#media-types">Media types</a></li><li><a href="#header-fields">Header fields</a></li><li><a href="#sse-rendering">SSE rendering</a></li><li><a href="#websocket-tier-t3">WebSocket tier (T3)</a></li></ul></nav>
+
+<h2 id="frame-header">Frame header</h2>
+<figure class="code"><pre tabindex="0"><code class="language-text"> 0       1       2       3       4       5       6       7
++-------+-------+-------+-------+-------+-------+-------+-------+
+| type  | flags |   lane (u16 BE)   |       length (u32 BE)         |
++-------+-------+-------+-------+-------+-------+-------+-------+
+| payload (length bytes) ...</code></pre></figure>
+<ul>
+  <li><strong>lane</strong>: the call’s index in a <a href="batches.html">pipelined batch</a>; 0 for single calls. Lane 0xFFFF is reserved.</li>
+  <li><strong>length</strong>: payload bytes. A header announcing more than the limit is rejected before anything is buffered (request streams: <code>maxBodyBytes</code> → <code>413</code>; malformed → <code>400</code>; clients map undecodable responses to <code>502</code>).</li>
+  <li>Parsers are byte-stream state machines: HTTP/2 DATA frame and chunk boundaries mean nothing.</li>
+  <li>Receivers ignore unknown frame types; reserved flag bits must be 0.</li>
+</ul>
+<p>Why 8 bytes and not the 5 of gRPC and Connect: the lane is needed for batches and blobs, and three extra bytes are noise next to HTTP/2’s 9-byte frame header.</p>
+
+<h2 id="frame-types">Frame types</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Frame types"><table>
+  <thead><tr><th scope="col">Type</th><th scope="col">Name</th><th scope="col">Payload</th></tr></thead>
+  <tbody>
+    <tr><td><code>0x00</code></td><td>MSG</td><td>One encoded message (JSON)</td></tr>
+    <tr><td><code>0x01</code></td><td>END</td><td><code>{status, problem?, meta?}</code> — terminates a lane. A body that ends while a lane has no END is <em>truncated</em> and must be treated as an error.</td></tr>
+    <tr><td><code>0x02</code></td><td>BLOB</td><td>A raw chunk of a binary value of the <em>next</em> MSG on the same lane; flag <code>last</code> ends the value</td></tr>
+    <tr><td><code>0x03</code></td><td>HEARTBEAT</td><td>Empty; sent after 15 s without other frames</td></tr>
+    <tr><td><code>0x04</code></td><td>CHECKPOINT</td><td>A resume token (<a href="streaming.html#resumable-streams">resumable streams</a>)</td></tr>
+    <tr><td><code>0x05</code></td><td>—</td><td>Reserved (formerly CREDIT for message-level pacing; not specified — see <a href="streaming.html#backpressure-and-consumer-pacing">consumer pacing</a>)</td></tr>
+  </tbody>
+</table></div>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Frame flags"><table>
+  <thead><tr><th scope="col">Flag bit</th><th scope="col">Name</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>0</td><td><code>compressed</code></td><td><span class="tag tag-planned">planned</span> per-frame compression with an independent context; today compression is per stream via <code>Content-Encoding</code></td></tr>
+    <tr><td>1</td><td><code>last</code></td><td>Last BLOB chunk of a value</td></tr>
+    <tr><td>2–7</td><td>—</td><td>Reserved, must be 0</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="a-real-stream">A real stream</h3>
+<p>A resumable server stream from the todo example, captured with curl after one todo was created. Response headers, then the body in hex:</p>
+<figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i -N https://localhost:8443/todos.changes
+HTTP/2 200
+accept-query: "application/json"
+content-type: application/apue+json
+cache-control: no-store
+incremental: ?1
+x-accel-buffering: no
+vary: accept, accept-encoding</code></pre></figure>
+<figure class="code"><figcaption>body (xxd)</figcaption><pre tabindex="0"><code class="language-hex">00000000: 0000 0000 0000 0039 7b22 7365 7122 3a30  .......9{"seq":0
+00000010: 2c22 746f 646f 223a 7b22 6964 223a 312c  ,"todo":{"id":1,
+00000020: 2274 6974 6c65 223a 2262 7579 206d 696c  "title":"buy mil
+00000030: 6b22 2c22 646f 6e65 223a 6661 6c73 657d  k","done":false}
+00000040: 7d04 0000 0000 0000 8e65 794a 7649 6a6f  }........eyJvIjo
+00000050: 6964 4739 6b62 334d 7559 3268 6862 6d64  idG9kb3MuY2hhbmd
+…</code></pre></figure>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Frames in the captured stream"><table>
+  <thead><tr><th scope="col">Header bytes</th><th scope="col">Type</th><th scope="col">Lane</th><th scope="col">Length</th><th scope="col">Payload</th></tr></thead>
+  <tbody>
+    <tr><td><code>00 00 0000 00000039</code></td><td>MSG</td><td>0</td><td>57</td><td><code>{"seq":0,"todo":{"id":1,"title":"buy milk","done":false}}</code></td></tr>
+    <tr><td><code>04 00 0000 0000008e</code></td><td>CHECKPOINT</td><td>0</td><td>142</td><td>the resume token <code>eyJvIjoidG9kb3MuY2hhbmdlcyIs…</code> (base64url JSON + <code>.</code> + HMAC)</td></tr>
+  </tbody>
+</table></div>
+<p>The stream stays open, waiting for the next change; HEARTBEAT frames would follow every 15 s of silence.</p>
+
+<h2 id="messages-and-binary-values">Messages and binary values</h2>
+<ul>
+  <li>Messages are JSON. Operations without bytes use the plain <code>JSON.stringify</code> fast path.</li>
+  <li>For operations whose schema contains <code>t.bytes()</code>, each <code>Uint8Array</code> becomes BLOB frames (64 KiB chunks, last one flagged) before the MSG on the same lane, which references them in order as <code>{"$blob": k}</code>. Look-alike data is escaped as <code>{"$lit": value}</code>; every blob is referenced exactly once.</li>
+  <li>Upload references in inputs: <code>{"$upload": "&lt;id&gt;"}</code>. Download references in outputs: <code>{"$download": "/$downloads/&lt;id&gt;", "size", "type", "sha256"?, "expires"}</code>. See <a href="binary-data.html">Binary data</a>.</li>
+  <li>Batch references: <code>{"$ref": [lane, ...path]}</code>, escaped with <code>$lit</code> as well.</li>
+</ul>
+
+<h2 id="resume-tokens">Resume tokens</h2>
+<p><code>base64url(JSON{op, 128-bit input hash, cursor, expiry}) + "." + HMAC-SHA256</code>, about 140 bytes. Clients send it back as <code>apue-resume: &lt;token&gt;</code>; in the SSE rendering it is the event <code>id:</code> and comes back as <code>Last-Event-ID</code>.</p>
+
+<h2 id="media-types">Media types</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Media types"><table>
+  <thead><tr><th scope="col">Media type</th><th scope="col">Used for</th></tr></thead>
+  <tbody>
+    <tr><td><code>application/json</code></td><td>Unary request and response bodies; batch requests</td></tr>
+    <tr><td><code>application/problem+json</code></td><td>Error responses (RFC 9457)</td></tr>
+    <tr><td><code>application/apue+json</code></td><td>Framed streams in both directions; batch responses; unary responses whose output contains bytes</td></tr>
+    <tr><td><code>text/event-stream</code></td><td>The SSE rendering of a response stream, on request</td></tr>
+    <tr><td><code>application/partial-upload</code></td><td>Appending to a resumable upload</td></tr>
+    <tr><td><code>application/linkset+json</code></td><td>The RFC 9727 API catalog</td></tr>
+    <tr><td><code>application/apue+cbor</code> <span class="tag tag-planned">not specified</span></td><td>CBOR was evaluated and closed with measurements</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="header-fields">Header fields</h2>
+<p>New fields are RFC 9651 Structured Fields with stable names and low-cardinality values, which compress well in HPACK and QPACK.</p>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Header fields"><table>
+  <thead><tr><th scope="col">Field</th><th scope="col">Direction</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>apue-timeout</code></td><td>request</td><td>Deadline in ms (SF integer); WebSocket: <code>?timeout=</code></td></tr>
+    <tr><td><code>Idempotency-Key</code></td><td>request</td><td>Client-generated key (SF string) for non-safe unary calls</td></tr>
+    <tr><td><code>apue-resume</code></td><td>request</td><td>Resume token of a resumable stream</td></tr>
+    <tr><td><code>apue-replayed: ?1</code></td><td>response</td><td>The response is a stored idempotent replay</td></tr>
+    <tr><td><code>Accept-Query</code></td><td>response</td><td><code>"application/json"</code> on reads: <code>QUERY</code> is accepted</td></tr>
+    <tr><td><code>Incremental: ?1</code></td><td>both</td><td>RFC 10036, on streamed responses and request streams</td></tr>
+    <tr><td><code>X-Accel-Buffering: no</code></td><td>response</td><td>Stops nginx from buffering streams</td></tr>
+    <tr><td><code>ETag</code>, <code>Cache-Control</code>, <code>Vary</code></td><td>response</td><td>See <a href="caching.html">Caching</a>; also <code>CDN-Cache-Control</code>, <code>Cache-Groups</code>, <code>Cache-Group-Invalidation</code></td></tr>
+    <tr><td><code>Deprecation</code>, <code>Sunset</code>, <code>Link</code></td><td>response</td><td>Deprecated operations</td></tr>
+    <tr><td><code>Upload-*</code>, <code>Range</code>, <code>If-Range</code>, <code>Repr-Digest</code></td><td>both</td><td>Uploads and downloads (<a href="binary-data.html">Binary data</a>)</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="sse-rendering">SSE rendering</h2>
+<p>With <code>Accept: text/event-stream</code>, a response stream is rendered as server-sent events with the same semantics — for curl, devtools and <code>EventSource</code>:</p>
+<ul>
+  <li><code>event: msg</code> / <code>event: end</code> / <code>event: checkpoint</code>, each with <code>data: &lt;json&gt;</code>;</li>
+  <li>checkpoints as <code>id: &lt;token&gt;</code>, so a reconnecting <code>EventSource</code> resumes with <code>Last-Event-ID</code>;</li>
+  <li>BLOBs as base64 (the only place apü uses base64).</li>
+</ul>
+<figure class="code"><figcaption>from docs/wire.md</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -N -H 'accept: text/event-stream' https://localhost:18443/todos.changes
+event: msg
+data: {"seq":0,"todo":{"id":1,"title":"buy milk","done":false}}
+
+id: eyJvIjoidG9kb3MuY2hhbmdlcyIsImgiOiJkQ05PbUtfblNZLTEydkh6YXNMWGlzIiwiYyI6IjAiLCJlIjoxNzkzMTU3MTYyfQ.eAZG95XzOEl3G_X9rO8ti6IU_-j-2CGfowiVdn8t1Sg</code></pre></figure>
+
+<h2 id="websocket-tier-t3">WebSocket tier (T3)</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="WebSocket tier"><table>
+  <thead><tr><th scope="col">Aspect</th><th scope="col">Rule</th></tr></thead>
+  <tbody>
+    <tr><td>URL and handshake</td><td><code>wss://&lt;host&gt;/&lt;op&gt;?timeout=&lt;ms&gt;</code>; RFC 8441 extended CONNECT over HTTP/2 (the server advertises <code>SETTINGS_ENABLE_CONNECT_PROTOCOL</code>) or HTTP/1.1 Upgrade</td></tr>
+    <tr><td>Subprotocols</td><td><code>apue.v1</code> required; optional <code>apue.auth.&lt;base64url&gt;</code> and <code>apue.dpop.&lt;JWS&gt;</code>; the server selects only <code>apue.v1</code></td></tr>
+    <tr><td>Binary messages</td><td>The unchanged apü frame stream; message boundaries are irrelevant, fragmentation allowed</td></tr>
+    <tr><td>Text messages</td><td>Flow-control credit: a decimal increment in 1..2³¹−1, no sign or leading zeros, unfragmented. Both windows start at 64 KiB.</td></tr>
+    <tr><td>Normal end</td><td>The client closes with 1000 after the END frame; after END the server waits up to 2 s, then closes with 1000 itself</td></tr>
+    <tr><td>Cancellation, shutdown</td><td>Client 4000 (before END); server 1001 on shutdown</td></tr>
+    <tr><td>Violations</td><td>Unmasked or invalid frames, invalid or overflowing credit, credit inside a fragmented binary message → 1002 (client: 4002); data beyond the window → 1008 (client: 4008). Browsers may only send 1000 and 3000–4999, hence the client codes.</td></tr>
+  </tbody>
+</table></div>
+<p>Unary calls never use the WebSocket tier: idempotency keys and resume tokens therefore only ever travel as HTTP headers.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/client.html" rel="prev"><span>Previous</span><b>Client reference</b></a><a class="next" href="../docs/measurements.html" rel="next"><span>Next</span><b>Measurements</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Errors — apü</title>
+<meta name="description" content="apü errors are real HTTP status codes with RFC 9457 problem details: the apü problem types, extension members, errors in streams (commit window, END frames) and per-lane errors in batches.">
+<link rel="canonical" href="https://apue.dev/docs/errors.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Errors — apü">
+<meta property="og:description" content="apü errors are real HTTP status codes with RFC 9457 problem details: the apü problem types, extension members, errors in streams (commit window, END frames) and per-lane errors in batches.">
+<meta property="og:url" content="https://apue.dev/docs/errors.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html" aria-current="page">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html" aria-current="page">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Errors</h1>
+<p class="page-intro">An apü error is an HTTP status code with an RFC 9457 problem details body — never a 200 with an error inside. Streams and batches, which can fail after their headers are sent, carry the same status and problem in-band.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#unary-calls">Unary calls</a></li><li><a href="#throwing-and-catching">Throwing and catching</a></li><li><a href="#problem-types">Problem types</a></li><li><a href="#errors-in-streams">Errors in streams</a></li><li><a href="#errors-in-batches">Errors in batches</a></li><li><a href="#in-the-manifest">In the manifest</a></li></ul></nav>
+
+<h2 id="unary-calls">Unary calls</h2>
+<p>A failed unary call answers with its real status and <code>Content-Type: application/problem+json</code>:</p>
+<figure class="code"><figcaption>from docs/wire.md</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i https://localhost:18443/nope.nothing
+HTTP/2 404
+content-type: application/problem+json
+cache-control: no-store
+
+{"type":"https://apue.dev/problems/unknown-operation","title":"Unknown Operation","status":404,"detail":"nope.nothing"}</code></pre></figure>
+<ul>
+  <li>Generic errors use the type <code>about:blank</code> with the HTTP status phrase as <code>title</code> — e.g. <code>405 Method Not Allowed</code> (with an <code>Allow</code> header), <code>408</code> when a request body doesn’t arrive within <code>bodyTimeoutMs</code>, <code>413</code> beyond the size limits, <code>415</code> for a wrong content type.</li>
+  <li>apü’s own protocol errors have type URIs under <code>https://apue.dev/problems/</code> (below).</li>
+  <li>Extension members: <code>retryable</code> (boolean) and <code>fields</code> (per-field validation errors, <code>[{ path, message }]</code>).</li>
+  <li>Unexpected handler errors become <code>500</code> without details; they are logged on the server.</li>
+</ul>
+
+<h2 id="throwing-and-catching">Throwing and catching</h2>
+<p>Handlers throw <code>ApueError(status, title, detail?, extensions?, headers?)</code>. Its extension members end up in the problem, its headers in the response. Clients throw the same class, carrying the decoded problem.</p>
+<figure class="code"><figcaption>server and client</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'../../src/protocol.ts'</span>;
+
+<span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
+  <span class="tok-s">'orders.cancel'</span>: ({ id }) =&gt; {
+    <span class="tok-k">const</span> order = orders.get(id);
+    <span class="tok-k">if</span> (!order) <span class="tok-k">throw</span> <span class="tok-k">new</span> ApueError(<span class="tok-n">404</span>, <span class="tok-s">'Not Found'</span>, <span class="tok-s">`order ${id}`</span>);
+    <span class="tok-k">if</span> (order.state === <span class="tok-s">'shipped'</span>) {
+      <span class="tok-c">// status, title, detail, extension members (here: a custom type)</span>
+      <span class="tok-k">throw</span> <span class="tok-k">new</span> ApueError(<span class="tok-n">409</span>, <span class="tok-s">'Conflict'</span>, <span class="tok-s">'order already shipped'</span>, {
+        <span class="tok-k">type</span>: <span class="tok-s">'https://example.com/problems/already-shipped'</span>,
+      });
+    }
+    <span class="tok-k">if</span> (order.state === <span class="tok-s">'locked'</span>) {
+      <span class="tok-c">// … and extra response headers</span>
+      <span class="tok-k">throw</span> <span class="tok-k">new</span> ApueError(<span class="tok-n">503</span>, <span class="tok-s">'Service Unavailable'</span>, <span class="tok-s">'try again shortly'</span>,
+        { retryable: <span class="tok-k">true</span> }, { <span class="tok-s">'retry-after'</span>: <span class="tok-s">'2'</span> });
+    }
+    <span class="tok-k">return</span> { ...order, state: <span class="tok-s">'cancelled'</span> };
+  },
+};
+
+<span class="tok-c">// Client side: every failure is an ApueError carrying the problem details.</span>
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, http2Transport(<span class="tok-s">'https://api.example'</span>));
+<span class="tok-k">try</span> {
+  <span class="tok-k">await</span> client.call(<span class="tok-s">'orders.cancel'</span>, { id: <span class="tok-s">'o-17'</span> });
+} <span class="tok-k">catch</span> (error) {
+  <span class="tok-k">if</span> (!(error instanceof ApueError)) <span class="tok-k">throw</span> error;
+  console.log(error.status, error.problem.type, error.problem.title, error.problem.detail);
+  <span class="tok-c">// validation errors list each field: [{ path, message }]</span>
+  <span class="tok-k">if</span> (error.status === <span class="tok-n">400</span>) console.log(error.problem.fields);
+}</code></pre></figure>
+<p>The generated Python client raises <code>ApueError</code> as well, with <code>status</code>, <code>type</code>, <code>title</code>, <code>detail</code>, <code>retryable</code> and the whole <code>problem</code>.</p>
+
+<h2 id="problem-types">Problem types</h2>
+<p>These URIs are identifiers in the <code>https://apue.dev/problems/</code> namespace. The draft does not yet publish a document at each URI; this table is their description.</p>
+<div class="table-wrap" role="region" tabindex="0" aria-label="apü problem types"><table>
+  <thead><tr><th scope="col">Type (after <code>/problems/</code>)</th><th scope="col">Status</th><th scope="col">When</th></tr></thead>
+  <tbody>
+    <tr id="validation-failed"><td><code>validation-failed</code></td><td>400</td><td>Input doesn’t match the schema (<code>fields</code> lists each problem); also an unknown, incomplete or expired upload reference</td></tr>
+    <tr id="unknown-operation"><td><code>unknown-operation</code></td><td>404</td><td>No operation with that name</td></tr>
+    <tr id="invalid-selection"><td><code>invalid-selection</code></td><td>400</td><td>A <code>?s=</code> path isn’t in the output schema, or more than 64 paths</td></tr>
+    <tr id="malformed-stream"><td><code>malformed-stream</code></td><td>400 (request) · 502 (client, response)</td><td>Frames that can’t be decoded: invalid JSON, a BLOB frame for an operation without bytes, a lane other than 0 in a request stream, an END without status</td></tr>
+    <tr id="truncated-stream"><td><code>truncated-stream</code></td><td>400 (request) · 502 (client, response)</td><td>A framed body ended without its END frame — e.g. a proxy cut the connection</td></tr>
+    <tr id="deadline-exceeded"><td><code>deadline-exceeded</code></td><td>504</td><td>The <code>apue-timeout</code> deadline passed; not retried by clients</td></tr>
+    <tr id="idempotency-key-in-progress"><td><code>idempotency-key-in-progress</code></td><td>409</td><td>A call with the same key is still running; <code>retryable: true</code></td></tr>
+    <tr id="idempotency-key-reused"><td><code>idempotency-key-reused</code></td><td>422</td><td>The key was used before with a different payload</td></tr>
+    <tr id="invalid-batch"><td><code>invalid-batch</code></td><td>400</td><td>A batch failed structural validation (all or nothing)</td></tr>
+    <tr id="unresolvable-reference"><td><code>unresolvable-reference</code></td><td>400</td><td>A <code>$ref</code> path doesn’t exist in the referenced output</td></tr>
+    <tr id="failed-dependency"><td><code>failed-dependency</code></td><td>424</td><td>A batch call whose dependency failed (transitively)</td></tr>
+    <tr id="invalid-resume-token"><td><code>invalid-resume-token</code></td><td>400</td><td>A resume token that is invalid, foreign, expired or for another input</td></tr>
+  </tbody>
+</table></div>
+<p>Other statuses you will see: <code>429</code>/<code>503</code> (retried by clients, honouring <code>Retry-After</code>), <code>503</code> with <code>retryable: true</code> when a server shuts down, <code>507</code> when a client’s upload quota is full (retrying won’t help, deleting will), and resumable-upload problems from the IANA registry such as <code>mismatching-upload-offset</code> (409) and <code>inconsistent-upload-length</code> (400).</p>
+
+<h2 id="errors-in-streams">Errors in streams</h2>
+<p>A streamed response wants its headers out fast, but then can no longer change its status. apü handles both cases:</p>
+<ul>
+  <li><strong>Early failure</strong> — before the first item and within the commit window (default 50 ms): the response is a real status with problem details, just like a unary call. Proxies and dashboards see it.</li>
+  <li><strong>Later failure</strong> — headers are already committed: the stream ends with an END frame <code>{"status": &lt;http status&gt;, "problem": {…}}</code>. Clients raise it as an <code>ApueError</code> after the items that came before it.</li>
+</ul>
+<p>Every lane must end with END. A body that stops without one is treated as truncated (<code>502</code> on the client); a resumable stream that already has a checkpoint is resumed instead.</p>
+
+<h2 id="errors-in-batches">Errors in batches</h2>
+<p>A batch answers <code>200</code> once it is <em>accepted</em>; every call (lane) then ends with its own END frame. A failed call rejects only its own <code>result</code>; calls that reference it end with <code>424</code> <code>failed-dependency</code>, transitively; independent lanes are unaffected. Structural problems — unknown operations, references to later calls, too many calls — reject the whole batch up front with <code>400</code> <code>invalid-batch</code>. See <a href="batches.html">Pipelined batches</a>.</p>
+
+<h2 id="in-the-manifest">In the manifest</h2>
+<p>The <a href="manifest.html">manifest</a> lists the protocol errors every operation can return, and per operation the extra ones (<code>408</code> for JSON bodies, malformed/truncated streams for request streams, <code>409</code>/<code>422</code> for keyed calls, invalid resume tokens). A drift test provokes every protocol error against every kind of operation and fails if the server returns one the manifest doesn’t list. Errors a handler throws are not derivable and not listed.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/streaming.html" rel="prev"><span>Previous</span><b>Streaming</b></a><a class="next" href="../docs/binary-data.html" rel="next"><span>Next</span><b>Binary data</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

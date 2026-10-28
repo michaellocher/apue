@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>apü — typed API operations on plain HTTP</title>
+<meta name="description" content="apü is a research draft for an API protocol next to REST, GraphQL and gRPC: typed operations mapped onto plain HTTP, so caches and CDNs keep working, with streaming in browsers, resumable streams and uploads, pipelined batches and RFC 9457 errors.">
+<link rel="canonical" href="https://apue.dev/">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/style.css">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="apü — typed API operations on plain HTTP">
+<meta property="og:description" content="apü is a research draft for an API protocol next to REST, GraphQL and gRPC: typed operations mapped onto plain HTTP, so caches and CDNs keep working, with streaming in browsers, resumable streams and uploads, pipelined batches and RFC 9457 errors.">
+<meta property="og:url" content="https://apue.dev/">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="docs/index.html">Docs</a></li><li><a href="docs/wire-format.html">Wire format</a></li><li><a href="docs/measurements.html">Measurements</a></li><li><a href="docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<main id="main" tabindex="-1">
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow"><span class="tag tag-planned">Research draft 01</span><span>A peer to REST, GraphQL and gRPC</span></p>
+      <h1 id="hero-title">Typed API operations on plain HTTP.</h1>
+      <p class="lede">apü maps typed operations onto ordinary HTTP — reads become cacheable <code>GET</code> requests, writes carry idempotency keys, errors are real status codes — and adds streaming in every direction, resumable streams and uploads, and pipelined batches that also work from browsers and through CDNs and proxies.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="docs/getting-started.html">Get started</a>
+        <a class="btn btn-ghost" href="docs/index.html">Read the docs</a>
+        <a class="btn btn-ghost" href="docs/spec.html">Spec &amp; research</a>
+      </div>
+      <p class="hero-note">A research project: a written draft spec plus a Node 26 reference implementation with 348 tests, run in Chrome, Firefox and WebKit and through nginx, Caddy, HAProxy and Envoy. Not a stable standard; no package is published yet.</p>
+    </div>
+    <figure class="frame-figure" aria-labelledby="frame-caption">
+      <div class="frame" role="img" aria-label="An apü frame header: 1 byte type, 1 byte flags, 2 bytes lane, 4 bytes length, then the payload">
+        <div><b>type</b><span>1 byte</span></div>
+        <div><b>flags</b><span>1 byte</span></div>
+        <div><b>lane</b><span>u16</span></div>
+        <div><b>length</b><span>u32 → payload</span></div>
+      </div>
+      <div class="frame-stream" aria-hidden="true">
+        <div><b>MSG</b><span>{"seq":0,"todo":{"id":1,"title":"buy milk","done":false}}</span></div>
+        <div><b>CHECKPOINT</b><span>eyJvIjoidG9kb3MuY2hhbmdlcyIs…</span></div>
+        <div><b>HEARTBEAT</b><span>(after 15 s without other frames)</span></div>
+        <div><b>END</b><span>{"status":200}</span></div>
+      </div>
+      <figcaption id="frame-caption">Every stream — over fetch, HTTP/2 or WebSocket — is the same sequence of 8-byte-header frames and ends with an in-band status. <a href="docs/wire-format.html">Wire format</a></figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="example-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">In one minute</span>
+      <h2 id="example-title">Define an operation, implement it, call it — typed end to end</h2>
+      <p>Schemas are TypeScript values. The same definition validates on both sides, types the handlers and the client, and produces a language-neutral manifest. TypeScript clients need no code generation.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <h3 id="1-the-contract">1 · The contract</h3>
+        <p>Each operation declares its <em>effect</em> (safe, idempotent, unsafe) and stream kind; that decides the HTTP method, caching and retries.</p>
+        <figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'../../src/api.ts'</span>;
+<span class="tok-k">import</span> { t } <span class="tok-k">from</span> <span class="tok-s">'../../src/schema.ts'</span>;
+
+<span class="tok-k">const</span> Todo = t.object({
+  id: t.number({ int: <span class="tok-k">true</span> }),
+  title: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }),
+  done: t.boolean(),
+});
+
+<span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
+  <span class="tok-s">'todos.get'</span>: op({
+    effect: <span class="tok-s">'safe'</span>,                    <span class="tok-c">// → GET, cacheable, ETag/304, retried</span>
+    input: t.object({ id: t.number({ int: <span class="tok-k">true</span> }) }),
+    output: Todo,
+  }),
+  <span class="tok-s">'todos.create'</span>: op({
+    effect: <span class="tok-s">'unsafe'</span>,                  <span class="tok-c">// → POST + Idempotency-Key, safe to retry</span>
+    input: t.object({ title: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }) }),
+    output: Todo,
+  }),
+  <span class="tok-s">'todos.changes'</span>: op({
+    effect: <span class="tok-s">'safe'</span>,
+    stream: <span class="tok-s">'server'</span>,                  <span class="tok-c">// many messages in one response</span>
+    resumable: <span class="tok-k">true</span>,                   <span class="tok-c">// clients resume after a lost connection</span>
+    input: t.void(),
+    output: t.object({ seq: t.number(), todo: Todo }),
+  }),
+});</code></pre></figure>
+      </div>
+      <div class="step">
+        <h3 id="2-the-server">2 · The server</h3>
+        <p>Handlers get validated input; output is validated and stripped to the schema before it leaves.</p>
+        <figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'../../src/server.ts'</span>;
+<span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'../../src/protocol.ts'</span>;
+<span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
+
+<span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
+  <span class="tok-s">'todos.get'</span>: ({ id }) =&gt; {
+    <span class="tok-k">const</span> todo = todos.get(id);
+    <span class="tok-c">// → 404 with an RFC 9457 problem body</span>
+    <span class="tok-k">if</span> (!todo) <span class="tok-k">throw</span> <span class="tok-k">new</span> ApueError(<span class="tok-n">404</span>, <span class="tok-s">'Not Found'</span>, <span class="tok-s">`todo ${id}`</span>);
+    <span class="tok-k">return</span> todo;
+  },
+  <span class="tok-s">'todos.create'</span>: ({ title }) =&gt; save({ id: nextId++, title, done: <span class="tok-k">false</span> }),
+  <span class="tok-s">'todos.changes'</span>: <span class="tok-k">async</span> <span class="tok-k">function</span>* (_input, ctx) {
+    <span class="tok-c">// Resuming replays everything after the client's last checkpoint.</span>
+    <span class="tok-k">let</span> seq = ctx.resumeFrom === <span class="tok-k">undefined</span> ? <span class="tok-n">0</span> : Number(ctx.resumeFrom) + <span class="tok-n">1</span>;
+    <span class="tok-k">for</span> (; seq &lt; log.length &amp;&amp; !ctx.signal.aborted; seq++) {
+      <span class="tok-k">yield</span> log[seq]!;
+      ctx.checkpoint(String(seq));
+    }
+  },
+};
+
+<span class="tok-k">const</span> server = createApueServer(api, handlers, { key, cert });
+<span class="tok-k">await</span> server.listen(<span class="tok-n">8443</span>);</code></pre></figure>
+      </div>
+      <div class="step">
+        <h3 id="3-the-client">3 · The client</h3>
+        <p>Inputs and outputs are typed from the same definition; invalid input never leaves the client.</p>
+        <figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient } <span class="tok-k">from</span> <span class="tok-s">'../../src/client.ts'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-http2.ts'</span>;
+<span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
+
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, http2Transport(<span class="tok-s">'https://localhost:8443'</span>, { ca }));
+
+<span class="tok-c">// POST /todos.create with a generated Idempotency-Key</span>
+<span class="tok-k">const</span> todo = <span class="tok-k">await</span> client.call(<span class="tok-s">'todos.create'</span>, { title: <span class="tok-s">'buy milk'</span> });
+
+<span class="tok-c">// GET /todos.get?i={"id":1} — cacheable, typed result</span>
+<span class="tok-k">const</span> same = <span class="tok-k">await</span> client.call(<span class="tok-s">'todos.get'</span>, { id: todo.id });
+console.log(same.title);
+
+<span class="tok-c">// A server stream; resumes after network loss, break cancels it</span>
+<span class="tok-k">for</span> <span class="tok-k">await</span> (<span class="tok-k">const</span> change <span class="tok-k">of</span> client.stream(<span class="tok-s">'todos.changes'</span>)) {
+  console.log(change.seq, change.todo.done);
+}
+
+<span class="tok-c">// @ts-expect-error — title must be a string: a compile error,</span>
+<span class="tok-c">// and at runtime validated before anything is sent</span>
+<span class="tok-k">await</span> client.call(<span class="tok-s">'todos.create'</span>, { title: <span class="tok-n">42</span> });</code></pre></figure>
+      </div>
+    </div>
+    <p class="small muted">These snippets are type-checked against the reference implementation. The imports point into a checkout of the repository, like <code>examples/todo</code>. See <a href="docs/getting-started.html">Getting started</a>.</p>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="problems-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Why</span>
+      <h2 id="problems-title">The problems it addresses</h2>
+      <p>apü started from a catalogue of what existing API styles get wrong (research note 01). Each row is a problem from that catalogue and apü’s answer, as specified in the draft.</p>
+    </div>
+    <ul class="problems">
+      <li><span class="problem">No single model for request/response, streaming and realtime; gRPC’s bidirectional streams don’t run in browsers.</span><span class="answer">One frame format on every transport — fetch, native HTTP/2 duplex and WebSocket — with <a href="docs/streaming.html">streaming tiers</a> chosen per environment.</span></li>
+      <li><span class="problem">Reads tunnelled through POST lose HTTP caching (GraphQL, gRPC).</span><span class="answer">Safe operations are <code>GET</code> with a canonical input in the URL, or <code>QUERY</code> (RFC 10008) for large inputs with a POST fallback; ETags and <code>Cache-Control</code>.</span></li>
+      <li><span class="problem">Errors hidden behind HTTP 200; no portable error and partial-failure model.</span><span class="answer">Real status codes and RFC 9457 problem details; streams fail early with a real status or later with an in-band END frame; batches fail per lane.</span></li>
+      <li><span class="problem">Dependent calls cost one round trip each.</span><span class="answer"><a href="docs/batches.html">Pipelined batches</a>: later calls reference earlier outputs with <code>$ref</code>, all in one request.</span></li>
+      <li><span class="problem">Over-fetching, query-cost attacks, per-field authorization.</span><span class="answer">No query language: field selection validated against the output schema (at most 64 paths), limits declared in the schema.</span></li>
+      <li><span class="problem">Idempotency, retries and long-running operations are reinvented everywhere.</span><span class="answer">The effect drives retry rules; <code>Idempotency-Key</code> on every non-safe call; deadlines; resumable streams; a long-running-operation pattern built from these.</span></li>
+      <li><span class="problem">Versioning and evolution pain.</span><span class="answer">Additive evolution, unknown input fields ignored, <code>Deprecation</code>/<code>Sunset</code> headers, a manifest per server.</span></li>
+      <li><span class="problem">Load balancers, proxies and debugging; large and resumable binaries.</span><span class="answer">Stateless servers (no sessions; resume tokens work on any replica), heartbeats, anti-buffering headers, JSON by default, an SSE view for curl; raw binary frames, resumable uploads and Range downloads.</span></li>
+    </ul>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="features-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">What you get</span>
+      <h2 id="features-title">Key features</h2>
+      <p>Everything below is implemented in the reference implementation and covered by its tests.</p>
+    </div>
+    <div class="grid">
+      <a class="card" href="docs/concepts.html">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/></svg></span>
+        <h3 id="operations-on-plain-http">Operations on plain HTTP</h3>
+        <p>Safe ops are <code>GET /op?i=…</code> (RFC 8785 canonical JSON), <code>QUERY</code> or <code>HEAD</code>; others are <code>POST</code>. Strong ETags, 304s, <code>Cache-Control</code> — so browser caches and CDNs work.</p>
+      </a>
+      <a class="card" href="docs/streaming.html">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h13M13 5l3 3-3 3M21 16H8M11 13l-3 3 3 3"/></svg></span>
+        <h3 id="streaming-tiers-browsers-included">Streaming tiers, browsers included</h3>
+        <p>Server, client and bidirectional streams. Response streams over fetch everywhere; full duplex over <code>node:http2</code>; request streams over fetch in Chromium and over WebSocket in every browser, with HTTP/2-style flow control.</p>
+      </a>
+      <a class="card" href="docs/streaming.html#resumable-streams">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></svg></span>
+        <h3 id="resumable-streams-and-uploads">Resumable streams and uploads</h3>
+        <p>Streams carry signed checkpoints; after a lost connection the client resumes on any replica, exactly once. Uploads follow the IETF resumable-upload draft.</p>
+      </a>
+      <a class="card" href="docs/binary-data.html">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></span>
+        <h3 id="binary-data-no-base64">Binary data, no base64</h3>
+        <p><code>t.bytes()</code> as raw BLOB frames, <code>t.file()</code> inputs streamed to handlers, <code>t.download()</code> outputs served under short-lived URLs with <code>Range</code>, <code>If-Range</code> and <code>Repr-Digest</code>.</p>
+      </a>
+      <a class="card" href="docs/batches.html">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h6v4H4zM14 14h6v4h-6zM10 8h4v8"/></svg></span>
+        <h3 id="pipelined-batches">Pipelined batches</h3>
+        <p>Dependent calls in one round trip with typed <code>ref()</code>s; results stream back out of order as each lane ends; failures stay per lane (424 for dependents).</p>
+      </a>
+      <a class="card" href="docs/errors.html">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M12 8v5M12 16h.01"/></svg></span>
+        <h3 id="rfc-9457-errors">RFC 9457 errors</h3>
+        <p>Real HTTP status codes with <code>application/problem+json</code>, a <code>retryable</code> flag and per-field validation errors — visible to proxies, dashboards and generic clients.</p>
+      </a>
+      <a class="card" href="docs/concepts.html#idempotency-keys">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="12" r="3"/><path d="M11 12h9M17 12v3M20 12v2"/></svg></span>
+        <h3 id="idempotency-keys">Idempotency keys</h3>
+        <p>Every non-safe unary call carries an <code>Idempotency-Key</code>. A retry with the same payload is replayed (<code>apue-replayed: ?1</code>), a different payload is a 422, a call still running a 409.</p>
+      </a>
+      <a class="card" href="docs/manifest.html">
+        <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h2M16 4h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-2M9 12h6"/></svg></span>
+        <h3 id="typed-clients-for-typescript-and-python">Typed clients for TypeScript and Python</h3>
+        <p>Every server publishes a manifest at <code>/.well-known/apue</code>. <code>apue-types</code> turns it into a typed TypeScript module or a standard-library-only Python client.</p>
+      </a>
+    </div>
+    <p class="small muted">Also: field selection (<code>?s=</code>), deadlines (<code>apue-timeout</code>), zstd/brotli/gzip compression flushed per frame burst, heartbeats, CORS, <code>CDN-Cache-Control</code> and cache groups, an RFC 9727 API catalog, bounded graceful shutdown.</p>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="wire-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">On the wire</span>
+      <h2 id="wire-title">It is just HTTP</h2>
+      <p>Real curl sessions against the example server (<code>examples/todo</code>, HTTP/2). Nothing here needs an apü client.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <h3 id="a-read-is-a-cacheable-get">A read is a cacheable GET</h3>
+<figure class="code"><figcaption>safe op → GET with canonical input</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i 'https://localhost:18443/todos.get?i=%7B%22id%22%3A1%7D'
+HTTP/2 200
+accept-query: "application/json"
+content-type: application/json
+cache-control: no-cache
+etag: "wknydwJzvZ1RXhXqTUxSmI"
+
+{"id":1,"title":"buy milk","done":false}</code></pre></figure>
+      </div>
+      <div class="step">
+        <h3 id="a-retried-write-is-replayed-not-re-executed">A retried write is replayed, not re-executed</h3>
+<figure class="code"><figcaption>unsafe op → POST + Idempotency-Key (second attempt)</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i -X POST -H 'content-type: application/json' \
+    -H 'idempotency-key: "demo-1"' -d '{"title":"buy milk"}' \
+    https://localhost:18443/todos.create
+HTTP/2 200
+content-type: application/json
+cache-control: no-store
+apue-replayed: ?1
+
+{"id":1,"title":"buy milk","done":false}</code></pre></figure>
+      </div>
+      <div class="step">
+        <h3 id="errors-are-status-codes-with-problem-details">Errors are status codes with problem details</h3>
+<figure class="code"><figcaption>validation error → 400 application/problem+json</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i -X POST -H 'content-type: application/json' \
+    -d '{"title":""}' https://localhost:18443/todos.create
+HTTP/2 400
+content-type: application/problem+json
+cache-control: no-store
+
+{"type":"https://apue.dev/problems/validation-failed",
+ "fields":[{"path":"title","message":"shorter than 1"}],
+ "title":"Validation Failed","status":400,
+ "detail":"input does not match the schema"}</code></pre></figure>
+      </div>
+    </div>
+    <p class="small muted">From <code>docs/wire.md</code> in the repository (TLS options omitted, the problem body wrapped for width). More on the <a href="docs/wire-format.html">wire format page</a>.</p>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="compare-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Compared</span>
+      <h2 id="compare-title">apü next to REST, GraphQL, gRPC and Connect</h2>
+      <p>Protocol properties only, as stated in the research notes (research/01–03, with their sources). “—” means the notes don’t cover it; it is not a claim that the feature is missing.</p>
+    </div>
+    <div class="table-wrap" role="region" tabindex="0" aria-label="Comparison of apü with REST, GraphQL, gRPC and Connect"><table class="compare">
+      <thead>
+        <tr><th scope="col">Property</th><th scope="col">apü</th><th scope="col">REST</th><th scope="col">GraphQL</th><th scope="col">gRPC</th><th scope="col">Connect</th></tr>
+      </thead>
+      <tbody>
+        <tr><th scope="row">Reads cacheable by HTTP caches and CDNs</th><td class="us">Yes: safe ops are <code>GET</code> (or <code>QUERY</code>), ETag/304</td><td><code>GET</code> on resources</td><td>GET only via persisted queries</td><td>No: POST only</td><td>Opt-in GET for <code>NO_SIDE_EFFECTS</code> methods</td></tr>
+        <tr><th scope="row">Errors visible to HTTP infrastructure</th><td class="us">Real status + RFC 9457; streams: early status, then in-band END</td><td>Status codes; no common error format</td><td>Often HTTP 200 with an <code>errors</code> array</td><td>Status in trailers (not readable from browser JS)</td><td>Streams end with an in-band end message</td></tr>
+        <tr><th scope="row">Response streaming from browsers</th><td class="us">fetch, every browser (verified: Chrome, Firefox, WebKit)</td><td>Separate SSE / WebSocket story</td><td>Subscriptions: two incompatible WebSocket protocols; <code>@defer</code>/<code>@stream</code> not standardized</td><td>Only via gRPC-Web (needs Envoy or a translating proxy)</td><td>Works with fetch (no trailers)</td></tr>
+        <tr><th scope="row">Request and bidi streams from browsers</th><td class="us">fetch upload streams (Chromium), WebSocket tier everywhere</td><td>—</td><td>—</td><td>No: gRPC-Web is unary and server streaming only</td><td>—</td></tr>
+        <tr><th scope="row">Dependent calls in one round trip</th><td class="us">Pipelined batches with <code>$ref</code></td><td>No: one round trip per call</td><td>Only for reads within one schema</td><td>No: one round trip per call</td><td>No: one round trip per call</td></tr>
+        <tr><th scope="row">Avoiding over-fetching</th><td class="us">Field selection validated against the schema; no query language</td><td>Fixed shapes; conventions such as JSON:API <code>fields[]</code>, OData <code>$select</code></td><td>Query language; query-cost DoS and per-field authZ issues</td><td>Fixed shapes; <code>FieldMask</code> convention</td><td>—</td></tr>
+        <tr><th scope="row">Safe retries of writes</th><td class="us"><code>Idempotency-Key</code> on every non-safe call, replay semantics</td><td colspan="4">Left to each API: the IETF <code>Idempotency-Key</code> draft never became an RFC</td></tr>
+        <tr><th scope="row">Encoding and framing</th><td class="us">JSON; 8-byte frame header (type, flags, lane, length)</td><td>—</td><td>JSON</td><td>Protobuf; 5-byte prefix, status in trailers</td><td>JSON or protobuf; 5-byte prefix, no trailers</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="numbers-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Measured</span>
+      <h2 id="numbers-title">Numbers, with their conditions</h2>
+      <p>From the repository’s benchmark and proxy reports (Node 26.12.1, TLS + HTTP/2, JSON, 2026-10-28). They describe this reference implementation on these machines — not a general verdict on any protocol.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="value">1.5×</span><span class="label">unary throughput vs gRPC (grpc-js)</span><span class="cond">32 concurrent calls on one connection: 29,634 vs 19,697 req/s. Same machine (M-series, 10 cores), separate processes, <code>@grpc/grpc-js</code> 1.14.6. Says nothing about gRPC in Go, C++ or Rust.</span></div>
+      <div class="stat"><span class="value">30×</span><span class="label">server-stream throughput vs gRPC (grpc-js)</span><span class="cond">200k small messages: 2,039,233 vs 67,258 msg/s — grpc-js’ per-message cost in Node, same setup as above.</span></div>
+      <div class="stat"><span class="value">3.0×</span><span class="label">faster dependent calls with a batch</span><span class="cond">3 dependent calls at 63 ms RTT, 100 Mbit/s (Docker, 1 CPU, netem): 203 ms sequential vs 67 ms as one pipelined batch.</span></div>
+      <div class="stat"><span class="value">2.7×</span><span class="label">stream throughput with zstd on a WAN link</span><span class="cond">Small messages at 63 ms RTT, 100 Mbit/s: 0.64M msg/s vs 0.24M for uncompressed NDJSON.</span></div>
+      <div class="stat"><span class="value">5–12×</span><span class="label">download speed from tuned HTTP/2 windows</span><span class="cond">4 MiB download at 63 ms RTT: 0.56 MiB/s with Node’s 64 KiB default window vs 2.9–7.0 MiB/s with apü’s 4 MiB / 32 MiB (varied between runs).</span></div>
+      <div class="stat"><span class="value">4.0 MiB</span><span class="label">server ahead of a stalled consumer on the WebSocket tier</span><span class="cond">WebSocket tier credit held end to end behind nginx, Caddy, HAProxy and Envoy; HTTP/2’s hop-by-hop windows let the server run 5.8–32 MiB ahead.</span></div>
+    </div>
+    <p class="small muted">The cost: against a hand-written <code>node:http2</code> handler that validates nothing, apü reaches 62 % of its unary throughput and 75 % of its stream throughput locally, and 95 % of its unary throughput at 63 ms RTT. Details, caveats and all scenarios: <a href="docs/measurements.html">Measurements</a>.</p>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="status-title">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="kicker">Status</span>
+      <h2 id="status-title">A research draft, honestly labelled</h2>
+      <p>Draft 01 of the spec was written alongside spikes S0–S27 on 2026-10-28; each spike’s goal, findings and measurements are logged in the spec. Every section says whether it is implemented or planned.</p>
+    </div>
+    <div class="status-grid">
+      <div class="card">
+        <h3 id="implemented-and-tested"><span class="tag tag-ok">Implemented</span> and tested</h3>
+        <p>The full HTTP mapping, framing, streaming tiers T0–T3, resumable streams and uploads, downloads, batches, idempotency, compression, CORS, callers (<code>principal</code> hook), the manifest and TypeScript and Python client generation — in a Node 26 implementation with native TypeScript and no build step, no runtime dependencies.</p>
+      </div>
+      <div class="card">
+        <h3 id="open-planned-or-not-covered"><span class="tag tag-planned">Open</span> planned or not covered</h3>
+        <p>WebTransport (tier T4) and HTTP/3 in Node — the official Node 26 build has no QUIC. Generators for Go, Kotlin/Java and Swift. A full DPoP profile (only groundwork exists). <code>$map</code> in batches, per-frame compression, GET-able URLs for <code>QUERY</code> results. Not covered yet: upload and download stores shared between replicas.</p>
+      </div>
+    </div>
+    <div class="actions">
+      <a class="btn btn-primary" href="docs/getting-started.html">Get started</a>
+      <a class="btn btn-ghost" href="docs/spec.html">What the spec covers</a>
+    </div>
+  </div>
+</section>
+
+</main>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="docs/getting-started.html">Getting started</a></li>
+        <li><a href="docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="docs/streaming.html">Streaming</a></li>
+        <li><a href="docs/errors.html">Errors</a></li>
+        <li><a href="docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="docs/server.html">Server reference</a></li>
+        <li><a href="docs/client.html">Client reference</a></li>
+        <li><a href="docs/wire-format.html">Wire format</a></li>
+        <li><a href="docs/measurements.html">Measurements</a></li>
+        <li><a href="docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

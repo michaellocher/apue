@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — apü</title>
+<meta name="description" content="Documentation for apü, an API protocol on plain HTTP: getting started, operations and HTTP mapping, streaming, errors, binary data, batches, auth, caching, codegen and references.">
+<link rel="canonical" href="https://apue.dev/docs/index.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Documentation — apü">
+<meta property="og:description" content="Documentation for apü, an API protocol on plain HTTP: getting started, operations and HTTP mapping, streaming, errors, binary data, batches, auth, caching, codegen and references.">
+<meta property="og:url" content="https://apue.dev/docs/index.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html" aria-current="page">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html" aria-current="page">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<h1>Documentation</h1>
+<p class="page-intro">apü is an API protocol in the family of REST, GraphQL and gRPC, defined purely in HTTP semantics (RFC 9110). An API is a set of named, typed <em>operations</em>; how each one travels over HTTP follows from what it declares.</p>
+
+<div class="callout planned">
+  <span class="callout-title">Research draft</span>
+  <p>These pages describe draft 01 of the spec and its Node 26 reference implementation as of 2026-10-28. Things marked <span class="tag tag-planned">planned</span> do not exist yet. The protocol may still change, and no package is published: you work from a checkout of the repository.</p>
+</div>
+
+<h2 id="start-here">Start here</h2>
+<div class="grid">
+  <a class="card" href="getting-started.html"><h3 id="getting-started">Getting started</h3><p>Requirements, the example app, and a first API with a server, a client and curl.</p></a>
+  <a class="card" href="concepts.html"><h3 id="operations-http-mapping">Operations &amp; HTTP mapping</h3><p>Effects, methods, canonical GET inputs, QUERY, idempotency keys, field selection, deadlines, schemas.</p></a>
+</div>
+
+<h2 id="guides">Guides</h2>
+<div class="grid">
+  <a class="card" href="streaming.html"><h3 id="streaming">Streaming</h3><p>Stream kinds, transport tiers T0–T3, heartbeats, resumable streams, flow control and consumer pacing.</p></a>
+  <a class="card" href="errors.html"><h3 id="errors">Errors</h3><p>RFC 9457 problem details, apü problem types, errors inside streams and batches.</p></a>
+  <a class="card" href="binary-data.html"><h3 id="binary-data">Binary data</h3><p><code>t.bytes()</code>, resumable uploads and <code>t.file()</code>, downloads with Range and <code>t.download()</code>.</p></a>
+  <a class="card" href="batches.html"><h3 id="pipelined-batches">Pipelined batches</h3><p>Dependent calls in one round trip with <code>$ref</code>, out-of-order lanes, per-lane failures.</p></a>
+  <a class="card" href="auth.html"><h3 id="callers-auth">Callers &amp; auth</h3><p>The <code>principal</code> hook, credentials on every tier, CORS and cross-site WebSocket hijacking.</p></a>
+  <a class="card" href="caching.html"><h3 id="caching-cdns-proxies">Caching, CDNs &amp; proxies</h3><p>ETags, <code>Cache-Control</code>, CDN headers, cache groups, and what real proxies do with apü traffic.</p></a>
+  <a class="card" href="manifest.html"><h3 id="manifest-codegen">Manifest &amp; codegen</h3><p>The manifest at <code>/.well-known/apue</code>, the API catalog, typed TypeScript and Python clients.</p></a>
+</div>
+
+<h2 id="reference">Reference</h2>
+<div class="grid">
+  <a class="card" href="server.html"><h3 id="server-reference">Server reference</h3><p><code>createApueServer</code>, every option with its default, handler context, shutdown.</p></a>
+  <a class="card" href="client.html"><h3 id="client-reference">Client reference</h3><p><code>ApueClient</code>, call options, transports, downloads, uploads, retries.</p></a>
+  <a class="card" href="wire-format.html"><h3 id="wire-format">Wire format</h3><p>Frame header, frame types, media types, headers, WebSocket messages, with real traffic.</p></a>
+</div>
+
+<h2 id="background">Background</h2>
+<div class="grid">
+  <a class="card" href="measurements.html"><h3 id="measurements">Measurements</h3><p>Benchmarks with their conditions, the gRPC comparison, behaviour through nginx, Caddy, HAProxy and Envoy.</p></a>
+  <a class="card" href="spec.html"><h3 id="spec-research">Spec &amp; research</h3><p>What the draft spec covers section by section, the research notes behind it, the spike log and open questions.</p></a>
+</div>
+
+<nav class="pager" aria-label="Previous and next page"><span></span><a class="next" href="../docs/getting-started.html" rel="next"><span>Next</span><b>Getting started</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

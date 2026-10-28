@@ -1,0 +1,89 @@
+<!--{"path":"docs/measurements.html","layout":"docs","title":"Measurements — apü","description":"Measured performance of the apü reference implementation with conditions: local and constrained Docker runs, an emulated WAN, a comparison with grpc-js, multiplexing, and caveats."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Background</p>
+<h1>Measurements</h1>
+<p class="page-intro">Numbers from the repository’s benchmark reports, with the conditions they were measured under. They describe the Node reference implementation on these machines, not protocols in general.</p>
+{{toc}}
+
+<h2>Setup</h2>
+<ul>
+  <li>Node 26.12.1, TLS + HTTP/2, JSON payloads, measured 2026-10-28.</li>
+  <li><code>node bench/run.ts</code>: server and client in separate processes on one machine (M-series, 10 cores, 16 GiB).</li>
+  <li><code>bench/docker.sh</code>: server in a CPU/RAM-limited container, client in a second container sharing its network namespace; optional <code>tc netem</code> latency and bandwidth limit. “WAN” = 25 ms delay each way, 100 Mbit/s; ping measured 63 ms RTT.</li>
+  <li><strong>Baselines</strong> are hand-written <code>node:http2</code> endpoints without validation, framing or features: a minimal JSON GET, NDJSON for streams (written without backpressure), a plain JSON response for bulk. They are a ceiling, not a competitor; the gap is the cost of schema validation and stripping, ETags, idempotency keys, framing, deadlines and cancellation.</li>
+  <li>“c=32” = 32 concurrent calls on one HTTP/2 connection.</li>
+</ul>
+
+<h2>Key results</h2>
+<table data-label="Key benchmark results">
+  <thead><tr><th scope="col">Scenario</th><th scope="col">Local (10 cores)</th><th scope="col">Docker 2 CPU / 1 GiB</th><th scope="col">Docker 1 CPU / 1 GiB</th><th scope="col">Docker 0.5 CPU / 256 MiB</th><th scope="col">Docker 1 CPU, WAN</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Unary GET c=32: apü / raw</th><td>29.2k / 46.8k req/s (62 %)</td><td>17.8k / 28.3k (63 %)</td><td>17.9k / 28.2k (64 %)</td><td>10.5k / 22.2k (47 %)</td><td>385 / 407 req/s (95 %)</td></tr>
+    <tr><th scope="row">Unary POST + Idempotency-Key c=32</th><td>20.9k req/s</td><td>13.0k</td><td>12.6k</td><td>6.0k</td><td>378</td></tr>
+    <tr><th scope="row">Stream, small messages: apü / NDJSON</th><td>1.96M / 2.61M msg/s (75 %)</td><td>1.22M / 1.83M (67 %)</td><td>0.94M / 1.94M (48 %)</td><td>0.45M / 0.89M (50 %)</td><td>0.24M / 0.24M (103 %)</td></tr>
+    <tr><th scope="row">Stream + zstd</th><td>1.69M msg/s</td><td>0.96M</td><td>0.85M</td><td>0.32M</td><td><strong>0.64M (2.7× NDJSON)</strong></td></tr>
+    <tr><th scope="row">1 MiB responses: apü / raw</th><td>334 / 399 MiB/s (84 %)</td><td>164 / 194 (85 %)</td><td>195 / 215 (91 %)</td><td>162 / 85 (noise, see caveats)</td><td>6.1 / 6.6</td></tr>
+    <tr><th scope="row">1 MiB JSON with zstd (118 KiB on the wire)</th><td>162 MiB/s</td><td>77</td><td>76</td><td>51</td><td><strong>11.3 MiB/s (1.8× identity)</strong></td></tr>
+    <tr><th scope="row">3 dependent calls: sequential / batch</th><td>0.67 / 0.31 ms</td><td>0.75 / 0.39 ms</td><td>0.75 / 0.39 ms</td><td>0.91 / 0.48 ms</td><td><strong>203 / 67 ms (3.0×)</strong></td></tr>
+    <tr><th scope="row">4 MiB download: 64 KiB window / tuned</th><td>103 / 373 MiB/s</td><td>88 / 209</td><td>68 / 210</td><td>23 / 146</td><td><strong>0.56 / 2.9–7.0 MiB/s (5–12×)</strong></td></tr>
+    <tr><th scope="row">Server memory under load</th><td>—</td><td>143 MiB</td><td>141 MiB</td><td>94 MiB</td><td>55 MiB</td></tr>
+  </tbody>
+</table>
+<p>A re-run after later changes (spikes S16–S19, on a quiet machine) reproduced the table: unary GET c=32 at 62 % of raw, streams at 72 %, bulk at 89 %; WAN batch 191 vs 65 ms (2.9×), zstd stream 2.7×, tuned window 11×.</p>
+
+<h2>Against gRPC</h2>
+<p><code>@grpc/grpc-js</code> 1.14.6, the official Node implementation. Same machine and shapes (the protobuf mirrors the benchmark API), TLS + HTTP/2 for both, servers and client in separate processes. apü validates and strips every output against its schema; gRPC does schema encoding instead.</p>
+<table data-label="apü vs grpc-js">
+  <thead><tr><th scope="col">Scenario</th><th scope="col" class="num">gRPC (grpc-js)</th><th scope="col" class="num">apü</th><th scope="col" class="num">apü / gRPC</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Unary c=1</th><td class="num">5,518 req/s (p50 0.17 ms)</td><td class="num">8,699 req/s (p50 0.11 ms)</td><td class="num">1.6×</td></tr>
+    <tr><th scope="row">Unary c=32</th><td class="num">19,697 req/s (p99 3.55 ms)</td><td class="num">29,634 req/s (p99 1.96 ms)</td><td class="num">1.5×</td></tr>
+    <tr><th scope="row">Server stream, 200k small messages</th><td class="num">67,258 msg/s</td><td class="num">2,039,233 msg/s</td><td class="num">30×</td></tr>
+  </tbody>
+</table>
+<p>The stream gap is grpc-js’ per-message cost, not the harness: with and without server backpressure, and with <code>for await</code> or <code>'data'</code> events on the client, grpc-js stayed at 56–59k msg/s. apü’s frame coalescing, batched decoding and single-allocation encoding make the difference. <strong>This says nothing about gRPC in Go, C++ or Rust.</strong></p>
+
+<h2>Time to first byte</h2>
+<p>20 rows produced 10 ms apart, loopback: a buffered unary response arrives after 219.6 ms (fetch) / 220.3 ms (http2); as an apü stream the first row arrives after 12.0 ms / 11.7 ms, the whole stream after about the same 220 ms.</p>
+
+<h2>Multiplexing small calls next to bulk transfers</h2>
+<p>Unary p50/p99 on one HTTP/2 connection while 8 MiB downloads run alongside (local; idle: 0.17 / 0.48 ms):</p>
+<table data-label="Multiplexing measurements">
+  <thead><tr><th scope="col">Client stream window</th><th scope="col">During 8 MiB JSON downloads</th><th scope="col">During 8 MiB binary (BLOB) downloads</th><th scope="col">Bulk throughput alongside (binary)</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">4 MiB (default)</th><td>2.44 / 14.65 ms</td><td>2.47 / 6.65 ms</td><td>761 MiB/s</td></tr>
+    <tr><th scope="row">1 MiB</th><td>0.80 / 12.32 ms</td><td>1.28 / 3.03 ms</td><td>708 MiB/s</td></tr>
+    <tr><th scope="row">256 KiB</th><td>0.36 / 11.48 ms</td><td>0.21 / 1.46 ms</td><td>899 MiB/s</td></tr>
+  </tbody>
+</table>
+<ul>
+  <li>A small window keeps small calls at idle latency next to bulk — on loopback. On a WAN the window must be at least the bandwidth-delay product (63 ms × 100 Mbit/s ≈ 790 KB) or throughput collapses (12× in the WAN profile). apü’s 4 MiB default favours WAN throughput; latency-sensitive LAN deployments can choose a smaller fixed window.</li>
+  <li>gRPC-style BDP window auto-tuning was implemented (<code>windowTuning: 'bdp'</code>) and measured no better than a fixed 4 MiB window (2 × 16 MiB downloads at 40 ms RTT: 20.8 vs 41.8 MiB/s), so it is opt-in.</li>
+  <li>The 11–15 ms p99 next to JSON downloads is <code>JSON.parse</code>/<code>stringify</code> of 8 MiB values, independent of the window: large data belongs in <code>t.bytes()</code> or in streams of smaller messages.</li>
+</ul>
+
+<h2>Uploads and the WebSocket tier</h2>
+<ul>
+  <li>64 MiB as a unary <code>t.bytes()</code> input (resumable upload, SHA-256 as data arrives): 474–503 MiB/s locally, vs 446–468 MiB/s as BLOB frames in a client stream.</li>
+  <li>512 MiB <code>t.file()</code> uploads to a file-backed store: 380–463 MiB/s at a server peak RSS of 255–267 MiB, constant from 128 MiB to 1 GiB.</li>
+  <li>WebSocket (T3) uploads, 64 MiB in 1 MiB blobs, locally: 285–296 MiB/s with flow control; a 100k-message client stream over WebSocket 972k msg/s (HTTP/2: 905k).</li>
+  <li>Uploads at 63 ms RTT through a latency proxy: 6.3 MiB/s with a 1 MiB WebSocket window, 22.7 MiB/s with 4 MiB (HTTP/2 with its 4 MiB window: 27.2).</li>
+</ul>
+
+<h2>Through proxies</h2>
+<p>With a consumer that stalls while the server produces 64 KiB items as fast as allowed: directly, HTTP/2 flow control stops the server at the client’s 4 MiB window. Through proxies each hop has its own window and buffers — the server got 5.8–7.0 MiB ahead through nginx and HAProxy, 9.5 MiB through Caddy and 32 MiB through Envoy. The WebSocket tier’s end-to-end credit stopped it at exactly 4.0 MiB behind every proxy that passes WebSockets. Full results on <a href="caching.html#through-real-proxies">Caching, CDNs &amp; proxies</a>.</p>
+
+<h2>Conclusions from the report</h2>
+<ol>
+  <li>On real networks the protocol design dominates, not CPU: at 63 ms RTT the unary overhead disappears (95 % of a raw handler), while batches (3.0×), compressed streams (2.7×) and tuned flow-control windows (5–12×) decide throughput and latency.</li>
+  <li>The HTTP/2 window defaults are a trap: Node 26.12.1 still advertises the RFC’s 64 KiB; apü sets 4 MiB per stream and 32 MiB per connection on both ends.</li>
+  <li>zstd is the right default: zstd-3 reaches about brotli-4’s ratio (118 vs 101 KiB for 1 MiB) at about 1.5–1.7× its speed. On loopback compression costs throughput; behind 100 Mbit/s it is a net win.</li>
+  <li>The remaining cost is CPU against a hand-written handler: 47–64 % of its throughput for tiny unary calls and 48–75 % for message streams — a handler that does no validation, no ETags, no idempotency and no backpressure.</li>
+</ol>
+
+<h2>Caveats</h2>
+<ul>
+  <li>Docker Desktop runs containers in a VM on the same Mac; “1 CPU” is a CFS quota, which causes tail latencies (p99 50–66 ms at 0.5 CPU). At 0.5 CPU, bulk numbers swing ±20 % between runs: that cell shows noise, not a difference.</li>
+  <li>WAN runs vary: the tuned-window download was 7.0 MiB/s in one run and 2.9 MiB/s in the final one.</li>
+  <li><code>netem</code> applies to both directions of the shared loopback interface.</li>
+  <li>Clients ran unconstrained; constrained clients would be slower.</li>
+</ul>

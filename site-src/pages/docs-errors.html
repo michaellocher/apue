@@ -1,0 +1,62 @@
+<!--{"path":"docs/errors.html","layout":"docs","title":"Errors — apü","description":"apü errors are real HTTP status codes with RFC 9457 problem details: the apü problem types, extension members, errors in streams (commit window, END frames) and per-lane errors in batches."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Errors</h1>
+<p class="page-intro">An apü error is an HTTP status code with an RFC 9457 problem details body — never a 200 with an error inside. Streams and batches, which can fail after their headers are sent, carry the same status and problem in-band.</p>
+{{toc}}
+
+<h2>Unary calls</h2>
+<p>A failed unary call answers with its real status and <code>Content-Type: application/problem+json</code>:</p>
+{{pre:console|from docs/wire.md}}
+$ curl -i https://localhost:18443/nope.nothing
+HTTP/2 404
+content-type: application/problem+json
+cache-control: no-store
+
+{"type":"https://apue.dev/problems/unknown-operation","title":"Unknown Operation","status":404,"detail":"nope.nothing"}
+{{/pre}}
+<ul>
+  <li>Generic errors use the type <code>about:blank</code> with the HTTP status phrase as <code>title</code> — e.g. <code>405 Method Not Allowed</code> (with an <code>Allow</code> header), <code>408</code> when a request body doesn’t arrive within <code>bodyTimeoutMs</code>, <code>413</code> beyond the size limits, <code>415</code> for a wrong content type.</li>
+  <li>apü’s own protocol errors have type URIs under <code>https://apue.dev/problems/</code> (below).</li>
+  <li>Extension members: <code>retryable</code> (boolean) and <code>fields</code> (per-field validation errors, <code>[{ path, message }]</code>).</li>
+  <li>Unexpected handler errors become <code>500</code> without details; they are logged on the server.</li>
+</ul>
+
+<h2>Throwing and catching</h2>
+<p>Handlers throw <code>ApueError(status, title, detail?, extensions?, headers?)</code>. Its extension members end up in the problem, its headers in the response. Clients throw the same class, carrying the decoded problem.</p>
+{{code:docs/errors.ts|server and client}}
+<p>The generated Python client raises <code>ApueError</code> as well, with <code>status</code>, <code>type</code>, <code>title</code>, <code>detail</code>, <code>retryable</code> and the whole <code>problem</code>.</p>
+
+<h2>Problem types</h2>
+<p>These URIs are identifiers in the <code>https://apue.dev/problems/</code> namespace. The draft does not yet publish a document at each URI; this table is their description.</p>
+<table data-label="apü problem types">
+  <thead><tr><th scope="col">Type (after <code>/problems/</code>)</th><th scope="col">Status</th><th scope="col">When</th></tr></thead>
+  <tbody>
+    <tr id="validation-failed"><td><code>validation-failed</code></td><td>400</td><td>Input doesn’t match the schema (<code>fields</code> lists each problem); also an unknown, incomplete or expired upload reference</td></tr>
+    <tr id="unknown-operation"><td><code>unknown-operation</code></td><td>404</td><td>No operation with that name</td></tr>
+    <tr id="invalid-selection"><td><code>invalid-selection</code></td><td>400</td><td>A <code>?s=</code> path isn’t in the output schema, or more than 64 paths</td></tr>
+    <tr id="malformed-stream"><td><code>malformed-stream</code></td><td>400 (request) · 502 (client, response)</td><td>Frames that can’t be decoded: invalid JSON, a BLOB frame for an operation without bytes, a lane other than 0 in a request stream, an END without status</td></tr>
+    <tr id="truncated-stream"><td><code>truncated-stream</code></td><td>400 (request) · 502 (client, response)</td><td>A framed body ended without its END frame — e.g. a proxy cut the connection</td></tr>
+    <tr id="deadline-exceeded"><td><code>deadline-exceeded</code></td><td>504</td><td>The <code>apue-timeout</code> deadline passed; not retried by clients</td></tr>
+    <tr id="idempotency-key-in-progress"><td><code>idempotency-key-in-progress</code></td><td>409</td><td>A call with the same key is still running; <code>retryable: true</code></td></tr>
+    <tr id="idempotency-key-reused"><td><code>idempotency-key-reused</code></td><td>422</td><td>The key was used before with a different payload</td></tr>
+    <tr id="invalid-batch"><td><code>invalid-batch</code></td><td>400</td><td>A batch failed structural validation (all or nothing)</td></tr>
+    <tr id="unresolvable-reference"><td><code>unresolvable-reference</code></td><td>400</td><td>A <code>$ref</code> path doesn’t exist in the referenced output</td></tr>
+    <tr id="failed-dependency"><td><code>failed-dependency</code></td><td>424</td><td>A batch call whose dependency failed (transitively)</td></tr>
+    <tr id="invalid-resume-token"><td><code>invalid-resume-token</code></td><td>400</td><td>A resume token that is invalid, foreign, expired or for another input</td></tr>
+  </tbody>
+</table>
+<p>Other statuses you will see: <code>429</code>/<code>503</code> (retried by clients, honouring <code>Retry-After</code>), <code>503</code> with <code>retryable: true</code> when a server shuts down, <code>507</code> when a client’s upload quota is full (retrying won’t help, deleting will), and resumable-upload problems from the IANA registry such as <code>mismatching-upload-offset</code> (409) and <code>inconsistent-upload-length</code> (400).</p>
+
+<h2>Errors in streams</h2>
+<p>A streamed response wants its headers out fast, but then can no longer change its status. apü handles both cases:</p>
+<ul>
+  <li><strong>Early failure</strong> — before the first item and within the commit window (default 50 ms): the response is a real status with problem details, just like a unary call. Proxies and dashboards see it.</li>
+  <li><strong>Later failure</strong> — headers are already committed: the stream ends with an END frame <code>{"status": &lt;http status&gt;, "problem": {…}}</code>. Clients raise it as an <code>ApueError</code> after the items that came before it.</li>
+</ul>
+<p>Every lane must end with END. A body that stops without one is treated as truncated (<code>502</code> on the client); a resumable stream that already has a checkpoint is resumed instead.</p>
+
+<h2>Errors in batches</h2>
+<p>A batch answers <code>200</code> once it is <em>accepted</em>; every call (lane) then ends with its own END frame. A failed call rejects only its own <code>result</code>; calls that reference it end with <code>424</code> <code>failed-dependency</code>, transitively; independent lanes are unaffected. Structural problems — unknown operations, references to later calls, too many calls — reject the whole batch up front with <code>400</code> <code>invalid-batch</code>. See <a href="batches.html">Pipelined batches</a>.</p>
+
+<h2>In the manifest</h2>
+<p>The <a href="manifest.html">manifest</a> lists the protocol errors every operation can return, and per operation the extra ones (<code>408</code> for JSON bodies, malformed/truncated streams for request streams, <code>409</code>/<code>422</code> for keyed calls, invalid resume tokens). A drift test provokes every protocol error against every kind of operation and fails if the server returns one the manifest doesn’t list. Errors a handler throws are not derivable and not listed.</p>

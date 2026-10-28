@@ -1,0 +1,80 @@
+<!--{"path":"docs/spec.html","layout":"docs","title":"Spec & research — apü","description":"What the apü draft spec (draft 01) covers section by section and which parts are implemented or planned, the research notes behind the decisions, the spike log S0–S27, and the open questions."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Background</p>
+<h1>Spec &amp; research</h1>
+<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01, 2026-10-28) in the apü repository, next to eleven research notes and a log of every spike. The repository is private research for now; this page summarises what is in it and where to look.</p>
+{{toc}}
+
+<h2>Goals and non-goals</h2>
+<p><strong>Goals</strong>: one call model for unary, server-, client- and bidirectional streaming with one frame format on every transport; high throughput and short time to first byte, compression, multiplexing; defined purely in RFC 9110 semantics so HTTP/1.1, HTTP/2 and HTTP/3 all work; usable from every browser via <code>fetch()</code> and through ordinary CDNs, proxies and load balancers; fix the top problems of existing styles; TypeScript-first schemas with a language-neutral manifest.</p>
+<p><strong>Non-goals</strong>: a query language; server-side sessions or sticky connections; relying on trailers, server push, 1xx responses, custom HTTP/2 frames or settings, h2c in browsers, or GET with a body.</p>
+
+<h2>The draft, section by section</h2>
+<table data-label="Spec sections and status">
+  <thead><tr><th scope="col">§</th><th scope="col">Section</th><th scope="col">Status</th><th scope="col">In these docs</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Goals and non-goals</td><td>—</td><td>above</td></tr>
+    <tr><td>2</td><td>Problems addressed (ten, from research note 01)</td><td><span class="tag tag-ok">implemented</span> except tier T4</td><td><a href="../index.html#problems-title">Home</a></td></tr>
+    <tr><td>3</td><td>Transport rules: HTTP/1.1, 2, 3; in-band final status; stream headers; heartbeats; resource limits</td><td><span class="tag tag-ok">implemented</span></td><td><a href="streaming.html">Streaming</a></td></tr>
+    <tr><td>4</td><td>Operations</td><td><span class="tag tag-ok">implemented</span></td><td><a href="concepts.html">Operations</a></td></tr>
+    <tr><td>5</td><td>HTTP mapping, field selection, deadlines, callers, idempotency keys, retries, CORS</td><td><span class="tag tag-ok">implemented</span>; CBOR not specified</td><td><a href="concepts.html">Operations</a>, <a href="auth.html">Callers</a></td></tr>
+    <tr><td>6</td><td>Framing, binary values, resumable uploads, file inputs, download outputs, SSE rendering</td><td><span class="tag tag-ok">implemented</span>; per-frame compression <span class="tag tag-planned">planned</span></td><td><a href="wire-format.html">Wire format</a>, <a href="binary-data.html">Binary data</a></td></tr>
+    <tr><td>7</td><td>Errors</td><td><span class="tag tag-ok">implemented</span></td><td><a href="errors.html">Errors</a></td></tr>
+    <tr><td>8</td><td>Streaming tiers, T3 flow control, consumer pacing, resume, long-running operations</td><td><span class="tag tag-ok">implemented</span> T0–T3; T4 <span class="tag tag-planned">planned</span></td><td><a href="streaming.html">Streaming</a></td></tr>
+    <tr><td>9</td><td>Caching, CDN headers, cache groups</td><td><span class="tag tag-ok">implemented</span>; QUERY <code>Location</code> <span class="tag tag-planned">planned</span></td><td><a href="caching.html">Caching</a></td></tr>
+    <tr><td>10</td><td>Pipelined batches</td><td><span class="tag tag-ok">implemented</span>; <code>$map</code> <span class="tag tag-planned">later</span></td><td><a href="batches.html">Batches</a></td></tr>
+    <tr><td>11</td><td>Schemas, manifest, derived docs, API catalog, codegen (TypeScript, Python), evolution</td><td><span class="tag tag-ok">implemented</span></td><td><a href="manifest.html">Manifest</a></td></tr>
+    <tr><td>12</td><td>Data plane and performance guidance</td><td>guidance, measured</td><td><a href="measurements.html">Measurements</a></td></tr>
+    <tr><td>13</td><td>Open questions</td><td>see below</td><td>below</td></tr>
+    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S27 done</td><td>below</td></tr>
+  </tbody>
+</table>
+
+<h2>Open questions</h2>
+<p>Resolved during the drafting: idempotent operations use <code>POST</code> + key, not <code>PUT</code>; <code>QUERY</code> through CDNs (rejected by CloudFront and Akamai → POST fallback); browser duplex via the WebSocket tier; compression per stream with per-burst flush; projection syntax as dotted paths; CBOR closed with measurements; resumable uploads implemented; message-level CREDIT frames not specified (pacing by patterns); callers and auth via the <code>principal</code> hook; long-running operations as a pattern.</p>
+<p>Still open in draft 01:</p>
+<ul>
+  <li><strong>WebTransport (T4) and HTTP/3 in Node.</strong> The official Node 26.12.1 build is compiled without QUIC (<code>node_use_quic: false</code>); <code>node:quic</code> needs a custom build. HTTP/3 today means an HTTP/3-terminating proxy or CDN in front.</li>
+  <li><strong>Generators for more languages.</strong> TypeScript and Python exist; Go, Kotlin/Java and Swift are open.</li>
+  <li><strong>A full DPoP profile</strong> — deferred until a DPoP authorization server is in play; the groundwork exists.</li>
+  <li><strong>Problem type namespace</strong>: <code>https://apue.dev/problems/</code> is kept; the URIs are identifiers and don’t resolve to documents yet.</li>
+</ul>
+
+<h2>Research notes</h2>
+<p>Each decision in the draft traces back to one of these notes (directory <code>research/</code>), most with primary sources and a legend of what was verified, measured or inferred.</p>
+<table data-label="Research notes">
+  <thead><tr><th scope="col">Note</th><th scope="col">Topic</th></tr></thead>
+  <tbody>
+    <tr><td><code>01-existing-api-problems.md</code></td><td>A catalogue of what REST, GraphQL, gRPC, Connect, JSON-RPC and others get wrong — round trips, caching, errors, evolution, codegen, browsers, infrastructure, security, operational patterns, agents — and a ranked top ten.</td></tr>
+    <tr><td><code>02-http2-and-modern-http.md</code></td><td>HTTP/2 capabilities and limits, browser support for streaming, CDN and load-balancer behaviour, design dos and don’ts, a performance addendum on flow control.</td></tr>
+    <tr><td><code>03-data-plane-performance.md</code></td><td>Serialization in V8, compression, framing (gRPC, Connect, SSE, NDJSON), time to first byte, throughput.</td></tr>
+    <tr><td><code>04-nodejs26-spike-platform.md</code></td><td>Node 26 as the spike platform: native TypeScript (type stripping), the <code>node:http2</code> server, clients, TLS for local HTTP/2 — each item tested or sourced from the docs.</td></tr>
+    <tr><td><code>05-normative-details.md</code></td><td>Verbatim checks against RFCs, drafts and vendor docs: <code>QUERY</code> (RFC 10008) and its support in intermediaries, the idempotency-key draft, <code>Deprecation</code>/<code>Sunset</code>, problem details (RFC 9457), <code>Incremental</code> (RFC 10036), CORS preflight cache caps.</td></tr>
+    <tr><td><code>06-resumable-uploads.md</code></td><td>The IETF resumable-upload draft and how Node and fetch handle it.</td></tr>
+    <tr><td><code>07-manifest-docs.md</code>, <code>08-generated-docs.md</code></td><td>Richer documentation in the manifest, generated from the types only.</td></tr>
+    <tr><td><code>09-file-inputs.md</code></td><td>The <code>t.file()</code> spike and a file-backed upload store.</td></tr>
+    <tr><td><code>10-callers-and-auth.md</code></td><td>Credentials across tiers, cross-site WebSocket hijacking, the <code>principal</code> decision.</td></tr>
+    <tr><td><code>11-remaining-items.md</code></td><td>Consumer pacing vs CREDIT frames, DPoP, very large downloads, CBOR — with measurements and decisions.</td></tr>
+  </tbody>
+</table>
+<p>Also in <code>docs/</code>: <code>wire.md</code> (real curl sessions), <code>benchmarks.md</code>, <code>intermediaries.md</code> (proxy measurements) and <code>status.md</code> (what exists, bugs found, decisions taken).</p>
+
+<h2>Spike log</h2>
+<p>Every spike in §15 records what was built, what the tests found and what was measured. In short:</p>
+<table data-label="Spike log">
+  <thead><tr><th scope="col">Spike</th><th scope="col">What</th></tr></thead>
+  <tbody>
+    <tr><td>S0–S1</td><td>Skeleton; frame codec, HTTP/2 server streaming, Node client, TTFB</td></tr>
+    <tr><td>S2</td><td>Schemas, operation registry, HTTP mapping (GET/QUERY/POST), canonical JSON, problem details, ETags, idempotency</td></tr>
+    <tr><td>S3</td><td>Pipelined batches with <code>$ref</code>, out-of-order lanes, 424</td></tr>
+    <tr><td>S4</td><td>Benchmarks (local, constrained Docker, WAN emulation), profiling, compression</td></tr>
+    <tr><td>S5–S6</td><td>CORS and real-browser tests; fuzzing; the WebSocket tier T3</td></tr>
+    <tr><td>S7–S9</td><td>Resumable streams; nginx as a real intermediary; field selection, resource limits, the example app, the API catalog</td></tr>
+    <tr><td>S10–S12</td><td>Binary values as BLOB frames; codegen and the gRPC comparison; Caddy, HAProxy and Envoy (and a crash Envoy found)</td></tr>
+    <tr><td>S13–S15</td><td>Chaos and leak tests, flow-control experiments; WebKit and long-running operations; CDN cache headers</td></tr>
+    <tr><td>S16–S17</td><td>Code reviews with fixes; flow control for the WebSocket tier (<code>apue.v1</code>)</td></tr>
+    <tr><td>S18–S20</td><td>Resumable uploads; derived documentation in the manifest; <code>t.file()</code> and a file-backed store</td></tr>
+    <tr><td>S21–S23</td><td>Callers: principal hook, credentials over WebSocket, no ambient credentials cross-origin; bounded shutdown; in-band credential errors</td></tr>
+    <tr><td>S24–S27</td><td>Uploads that survive a restart; consumer pacing and DPoP groundwork; downloads and CBOR closed; Python clients</td></tr>
+  </tbody>
+</table>
+<p>The suite stood at 348 tests after S27, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in <code>docs/status.md</code>.</p>

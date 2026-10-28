@@ -1,0 +1,65 @@
+<!--{"path":"docs/binary-data.html","layout":"docs","title":"Binary data — apü","description":"Binary data in apü without base64: t.bytes() as BLOB frames, resumable uploads per the IETF draft, t.file() inputs streamed to handlers, and t.download() outputs served with Range, If-Range and Repr-Digest."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Binary data</h1>
+<p class="page-intro">JSON can’t carry bytes without base64, a URL can’t carry them at all, and a large transfer should survive a lost connection. apü has three schema types for binary values, from small to very large.</p>
+{{toc}}
+
+<h2>Which type to use</h2>
+<table data-label="Binary schema types">
+  <thead><tr><th scope="col">Type</th><th scope="col">Direction</th><th scope="col">On the wire</th><th scope="col">Handler sees</th><th scope="col">Size</th></tr></thead>
+  <tbody>
+    <tr><td><code>t.bytes({ max? })</code></td><td>in and out</td><td>Outputs and stream messages: BLOB frames. Unary inputs: an upload reference.</td><td><code>Uint8Array</code></td><td>small to medium: clients accept up to 64 MiB per message</td></tr>
+    <tr><td><code>t.file({ max? })</code></td><td>unary inputs only</td><td>An upload reference, uploaded resumably</td><td><code>{ size, sha256, stream() }</code></td><td>large; with a file-backed store, server memory doesn’t grow with it</td></tr>
+    <tr><td><code>t.download({ type? })</code></td><td>outputs only</td><td>A reference to a short-lived download URL</td><td>returns <code>{ size, open(range?) }</code></td><td>large; resumable with <code>Range</code></td></tr>
+  </tbody>
+</table>
+{{code:docs/binary.ts|server}}
+{{code:docs/binary-client.ts|client}}
+
+<h2>BLOB frames</h2>
+<p>For operations whose schema contains bytes, every <code>Uint8Array</code> in a message is sent as BLOB frames — 64 KiB chunks, the last one flagged — <em>before</em> the MSG frame on the same lane. The MSG references them in order as <code>{"$blob": k}</code>. JSON that merely looks like such a reference (an object whose sole member is <code>$blob</code> or <code>$lit</code>) is escaped as <code>{"$lit": value}</code>. Every blob must be referenced exactly once. Measured wire overhead: under 1 % for 1 MiB files.</p>
+<ul>
+  <li>Unary operations whose output contains bytes are answered framed (MSG + BLOB + END) and are not cacheable.</li>
+  <li>Operations without bytes keep the plain <code>JSON.stringify</code> fast path and reject BLOB frames.</li>
+  <li>The blobs of one request message count against <code>maxBodyBytes</code> (<code>413</code>); request streams use lane 0 only.</li>
+  <li>A <code>t.bytes()</code> output is held in memory — about three times on the server while answering — so very large outputs belong in <code>t.download()</code>.</li>
+</ul>
+
+<h2>Resumable uploads</h2>
+<p>Bytes in unary inputs are uploaded first, then referenced. <code>POST /$uploads</code> follows <strong>draft-ietf-httpbis-resumable-upload-14</strong> (interop version 10) — an IETF draft, not yet an RFC. Its final response is a reference <code>{"upload": id, "size": n}</code>; operation inputs then carry <code>{"$upload": id}</code> exactly where the schema says <code>t.bytes()</code> or <code>t.file()</code>. The server resolves the reference before validation, scoped to the caller; an unknown, incomplete or expired one is a <code>400</code> naming the field.</p>
+<p>Uploads are <strong>off by default</strong> (they are storage any client can fill) and required by operations with bytes in a unary input: the server refuses to start without the <code>uploads</code> option for such an API.</p>
+<h3>Protocol, as implemented</h3>
+<ul>
+  <li>Creation with <code>Upload-Complete</code> / <code>Upload-Length</code>; <code>104 Upload Resumption Supported</code> with <code>Location</code> and <code>Upload-Limit</code> only for interop version 10 and only on HTTP/2 (Node’s HTTP/1.1 API can’t send generic 1xx responses).</li>
+  <li>Offset retrieval with <code>HEAD</code> (<code>Upload-Offset</code>), appending with <code>PATCH</code> and <code>application/partial-upload</code> (<code>409</code> <code>mismatching-upload-offset</code> on a wrong offset), <code>DELETE</code> to cancel, <code>OPTIONS</code> discovery, <code>Upload-Limit: max-size, max-age</code>.</li>
+  <li>Content is stored as it arrives, so an interrupted request keeps what came through; a newer append supersedes one still in flight.</li>
+  <li>Limits per upload (<code>413</code>; an announced length that can never fit is refused at creation) and per client (bytes and number of uploads, announced lengths reserved at creation; <code>507</code>). A client is its <a href="auth.html">principal</a>, else its address.</li>
+  <li>The identity of a referenced upload for idempotency and resume tokens is the content’s SHA-256, computed as data arrives — the same bytes uploaded again are the same input.</li>
+  <li>Uploads go over plain HTTP only, never over WebSocket. Upload ids are 128 random bits.</li>
+</ul>
+<h3>The client</h3>
+<p>The client uploads automatically for <code>t.bytes()</code>/<code>t.file()</code> in unary inputs and batches — each distinct buffer once, concurrently — using the draft’s empty “careful” creation (fetch never exposes 104), one <code>PATCH</code>, and after a loss, 5xx or 409 a <code>HEAD</code> plus only the rest. Uploads made for a call are deleted once the call has settled; if one upload of a call fails, the others are stopped and deleted. <code>client.upload()</code> returns a reference that stays yours until <code>deleteUpload()</code> or expiry. A <code>Blob</code> is sent and resumed with <code>slice(offset)</code>, never read into memory. Verified cross-origin in Chrome, Firefox and WebKit.</p>
+
+<h2>File inputs and the file-backed store</h2>
+<p><code>t.file()</code> uses the same upload reference as <code>t.bytes()</code>, but the handler gets <code>{ size, sha256, stream() }</code> instead of a buffer. With <code>uploads.directory</code> the server keeps upload content in files, so its memory no longer depends on upload size:</p>
+<ul>
+  <li>Measured with 512 MiB through a separate server process: 380–463 MiB/s with a server peak RSS of 255–267 MiB, constant from 128 MiB to 1 GiB uploads — versus the whole upload in memory without a directory.</li>
+  <li>A call opens its file inputs when it starts, so they stay readable for that call even if the upload is deleted or expires meanwhile; descriptors are open only while a request writes or a call reads.</li>
+  <li><code>uploads.persistent</code> keeps uploads across restarts in <code>&lt;directory&gt;/apue-uploads</code> (one process per directory, guarded by a lock file). On startup each file is cut back to its last recorded length — content is never corrupt; clients resend what was never acknowledged.</li>
+</ul>
+<p>Not covered: several replicas sharing uploads (a resumed request must reach the instance holding the upload) and several hosts on one network directory.</p>
+
+<h2>Downloads</h2>
+<p>A <code>t.download()</code> handler returns a source — <code>{ size, type?, filename?, sha256?, open(range?) }</code> — or uses the helpers <code>download.fromFile(path)</code> (size and modification time are taken at once; a file changed later fails the request rather than serving mixed content) and <code>download.fromBytes(bytes)</code> (copies and hashes). The server registers it under an unguessable URL <code>/$downloads/&lt;128-bit id&gt;</code> for <code>downloads.ttlMs</code> (default 15 minutes) and puts a reference in the output:</p>
+{{pre:text|shape of the reference}}
+{"$download": "/$downloads/<id>", "size": <bytes>, "type": "<media type>", "sha256": "<hex, if known>", "expires": "<RFC 3339, UTC>"}
+{{/pre}}
+<p>That URL is plain HTTP, usable by links, media elements and download managers:</p>
+<ul>
+  <li><code>GET</code> and <code>HEAD</code>; one <code>Range</code> (<code>206</code> with <code>Content-Range</code>, <code>416</code> with <code>bytes */size</code>; several ranges or invalid syntax are ignored → <code>200</code>); <code>If-Range</code> against a strong ETag; <code>If-None-Match</code> → <code>304</code>.</li>
+  <li><code>Repr-Digest</code> (RFC 9530) when the digest is known; <code>Content-Disposition</code> (RFC 6266, <code>filename*</code>) for a filename.</li>
+  <li><code>Cache-Control: private, max-age=&lt;remaining&gt;, immutable</code> — the URL is a capability, like a presigned URL, because a link can’t carry <code>Authorization</code>. CORS exposes the range headers.</li>
+  <li>Bodies stream from <code>open(range)</code> with backpressure. The first chunk is read before the headers (a failing source is a <code>500</code>); a failure later resets the stream — never a short <code>200</code>.</li>
+</ul>
+<p>Clients turn references into <code>Download</code> objects with <code>url</code>, <code>size</code>, <code>type</code>, <code>sha256</code>, <code>expires</code> and <code>stream()</code> (resumes with <code>Range</code> + <code>If-Range</code> within the retry budget; a changed representation is an error; verifies the SHA-256 in Node), <code>bytes()</code> (verified with WebCrypto everywhere) and <code>blob()</code>.</p>
+<p>Not covered: replicas (the registry is per process, like uploads); an idempotent replay returns the stored reference, whose URL may have expired.</p>

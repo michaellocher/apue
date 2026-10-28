@@ -1,0 +1,79 @@
+<!--{"path":"docs/streaming.html","layout":"docs","title":"Streaming — apü","description":"apü streams: server, client and bidirectional streams with one frame format, transport tiers T0–T3 for Node and browsers, heartbeats, resumable streams with checkpoints, flow control and consumer pacing."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Streaming</h1>
+<p class="page-intro">One call model covers unary, server-streaming, client-streaming and bidirectional calls, with one frame format on every transport. What changes between Node and the browsers is only which transport carries it.</p>
+{{toc}}
+
+<h2>Stream kinds</h2>
+<p>An operation’s <code>stream</code> decides the handler’s shape: for <code>client</code> and <code>bidi</code> the input is an <code>AsyncIterable</code> of messages; for <code>server</code> and <code>bidi</code> the handler returns an <code>AsyncIterable</code> (an async generator is the easy way).</p>
+{{code:docs/streaming-api.ts|server side}}
+{{code:docs/streaming-client.ts|client side}}
+<p>Streamed bodies are frames with an 8-byte header (<code>application/apue+json</code>, see the <a href="wire-format.html">wire format</a>). A response stream ends with an <strong>END</strong> frame carrying the final status; a body that ends without one is <em>truncated</em> and treated as an error — that is how proxy cut-offs are detected.</p>
+
+<h2>Transport tiers</h2>
+<table data-label="Streaming tiers">
+  <thead><tr><th scope="col">Tier</th><th scope="col">Client → server</th><th scope="col">Server → client</th><th scope="col">Where</th></tr></thead>
+  <tbody>
+    <tr><td>T0</td><td>unary body</td><td>framed response stream</td><td>everywhere (baseline): fetch</td></tr>
+    <tr><td>T1</td><td>framed request stream, full duplex</td><td>framed response stream</td><td>Node, server to server (<code>node:http2</code>)</td></tr>
+    <tr><td>T2</td><td>framed request stream, half duplex</td><td>after the upload completes</td><td>fetch upload streaming (<code>duplex: 'half'</code>): Chromium; also Playwright’s WebKit build</td></tr>
+    <tr><td>T3</td><td>WebSocket (RFC 6455 / RFC 8441) carrying the same frames</td><td>same</td><td>all browsers</td></tr>
+    <tr><td>T4 <span class="tag tag-planned">planned</span></td><td>WebTransport bidi stream carrying the same frames</td><td>same</td><td>not implemented: Node has no WebTransport server</td></tr>
+  </tbody>
+</table>
+<p>Client selection: Node uses T1 (<code>http2Transport</code>). Browsers use <code>autoTransport()</code>: fetch (T0) for everything, T2 for request streams where fetch can stream uploads, otherwise T3. Verified in real browsers (headless Chrome, Firefox, and Playwright’s WebKit 27.2): T0 everywhere including HTTP/2, <code>QUERY</code>, preflighted custom headers, zstd and cancellation; T2 in Chrome and that WebKit build, not in Firefox (feature-detected); T3 in all three, over RFC 8441 in Firefox and WebKit. Release Safari itself was not automated.</p>
+<p>HTTP/1.1 works for everything except full-duplex request streams: request streams over HTTP/1.1 chunked bodies were tested, but browsers stream fetch request bodies only over HTTP/2 and HTTP/3. HTTP/3 should work unchanged behind an HTTP/3-terminating proxy or CDN, since nothing depends on HTTP/2 framing — untested, because Node 26 has no QUIC of its own.</p>
+
+<h2>Heartbeats, commit window, headers</h2>
+<ul>
+  <li><strong>Headers immediately.</strong> Streamed responses send <code>Incremental: ?1</code> (RFC 10036), <code>Cache-Control: no-store</code> and <code>X-Accel-Buffering: no</code> and commit their headers at once — measured: first item after 12.0 ms vs 219.6 ms for the same data as one buffered response (20 rows × 10 ms, loopback).</li>
+  <li><strong>Commit window.</strong> If a stream fails before its first item and within the commit window (default 50 ms, <code>commitAfterMs</code>), the response is a real HTTP status with problem details, visible to proxies and dashboards. Later failures go into the END frame.</li>
+  <li><strong>Heartbeats.</strong> After 15 s without another frame the server sends a HEARTBEAT frame, because intermediaries time out idle responses after 15–125 s.</li>
+  <li><strong>Compression</strong> (zstd, brotli, gzip by <code>Accept-Encoding</code>) is per stream and flushed after every burst of frames, so it doesn’t delay the first byte.</li>
+  <li><strong>SSE view.</strong> With <code>Accept: text/event-stream</code> the same stream is rendered as server-sent events — <code>event: msg|end|checkpoint</code>, <code>data:</code> JSON, checkpoints as <code>id:</code> — for curl and devtools.</li>
+</ul>
+
+<h2>Resumable streams</h2>
+<p>Operations declared <code>resumable: true</code> (server streams; safe or idempotent) survive a lost connection without sticky sessions or server-side stream state:</p>
+<ol>
+  <li>The handler calls <code>ctx.checkpoint(cursor)</code> after the items the cursor covers. The server sends a CHECKPOINT frame with a self-contained token: <code>base64url(JSON{op, 128-bit input hash, cursor, expiry}).HMAC-SHA256</code>, about 140 bytes.</li>
+  <li>After a transport loss the client re-sends the call with <code>apue-resume: &lt;token&gt;</code> (SSE clients: <code>Last-Event-ID</code>). Any replica holding the shared secret (<code>resume.secret</code>) verifies it and passes the cursor to the handler as <code>ctx.resumeFrom</code>.</li>
+  <li>The handler replays from that cursor; the client counts messages since the last checkpoint and skips that many, so the consumer sees every item <strong>exactly once</strong> (tested for 30 cut positions × 2 losses).</li>
+</ol>
+<p>The contract for the handler: from a cursor, yield the same items in the same order as the original stream did after that checkpoint. Invalid, foreign or expired tokens, and tokens for another input, are <code>400</code> <code>invalid-resume-token</code> before the stream starts. With a <code>principal</code> hook, tokens are bound to the caller. Tokens live 15 minutes by default (<code>resume.ttlMs</code>).</p>
+<p>Never resumed: an END frame with an error, malformed frames, a loss before the first checkpoint, an exhausted budget (<code>resumes</code>, default 3). Batch lanes and WebSocket calls are not resumable.</p>
+
+<h2>The WebSocket tier (T3)</h2>
+<p>Browsers can’t stream request bodies everywhere, so request streams use one WebSocket per call to <code>wss://…/{op}</code> with the subprotocol <code>apue.v1</code>. Binary messages carry the <em>unchanged</em> apü frame stream in both directions; message boundaries don’t matter. The handshake uses HTTP/2 extended CONNECT (RFC 8441) when available, else HTTP/1.1 Upgrade. Calls without a request stream never use T3 — a WebSocket would cost a handshake and HTTP caching.</p>
+<ul>
+  <li>Browsers can’t set WebSocket headers: the deadline travels as <code>?timeout=ms</code> and credentials as an extra subprotocol (<a href="auth.html#credentials-over-websocket">Callers &amp; auth</a>). Errors, including 404 and 415, arrive in-band as END frames.</li>
+  <li>The client closes with 1000 once it has the END frame; a close before END is a cancellation (4000). After END the server waits up to 2 s for that close before closing itself — closing right after the last data made WebKit over RFC 8441 drop messages.</li>
+  <li><strong>Flow control.</strong> The browser WebSocket API can’t pause receiving: without flow control a stalled consumer let the server push 250 MiB into page memory in 3 s. So each side grants the other an HTTP/2-style <em>byte window</em>: both start at 64 KiB, binary payload bytes use it up, and a text message with a decimal increment (e.g. <code>"65536"</code>) extends it. Receivers re-grant what their consumer has taken once it reaches half the window. Defaults: client <code>receiveWindow</code> 4 MiB, server <code>webSocketWindow</code> = <code>streamWindow</code>, 4 MiB. Measured: a stalled consumer stops the server after exactly 4 MiB, also behind nginx, Caddy, HAProxy and Envoy.</li>
+</ul>
+<p>Chrome reuses an existing HTTP/2 connection for a WebSocket only if the session key matches; a cross-origin fetch without credentials has a different key, so Chrome falls back to HTTP/1.1 for the WebSocket. <code>fetchTransport(url, { credentials: 'include' })</code> with CORS credentials let Chrome use RFC 8441 over the shared connection. Same-origin deployments get this by default.</p>
+
+<h2>Backpressure and consumer pacing</h2>
+<p>Byte-level backpressure bounds <em>memory</em> on every tier: HTTP/2 windows, T3 credit, and at most 256 KiB buffered per stream on the server before the producer waits. It does not bound how many items a server computes ahead of a slow consumer: a 4 MiB window holds about 85,000 items of 50 bytes, buffering proxies add 6–32 MiB, browsers 6–15 MiB on fetch.</p>
+<p>A wire-level demand frame (RSocket <code>REQUEST_N</code> style) was considered and rejected: browser server streams use fetch, which has no request stream to carry demand, and demand frames queued behind unread request data would reintroduce a bidi deadlock. Frame type 0x05 stays reserved. Use patterns instead, which work through any intermediary:</p>
+<ol>
+  <li><strong>First N</strong> — a <code>limit</code> or cursor in the input (cacheable).</li>
+  <li><strong>N now, more later</strong> — a resumable stream, cancelled after N and resumed later with its checkpoint token, on any replica.</li>
+  <li><strong>Interactive pacing</strong> — a bidi operation where the client sends <code>{"more": n}</code> and the handler yields that many (tiers T1 and T3), like <code>feed.paced</code> above.</li>
+</ol>
+
+<h2>Pattern: long-running operations</h2>
+<p>No extra protocol is needed; the pattern is built from implemented features:</p>
+{{pre:ts}}
+'reports.start': op({ effect: 'unsafe', input: ReportRequest, output: t.object({ jobId: t.string() }) }),   // POST + Idempotency-Key
+'reports.watch': op({ effect: 'safe', stream: 'server', resumable: true,
+                      input: t.object({ jobId: t.string() }), output: JobEvent }),                       // progress, then the result
+'reports.get':   op({ effect: 'safe', input: t.object({ jobId: t.string() }), output: JobState }),        // GET, ETag/304 for pollers
+{{/pre}}
+<ul>
+  <li>Starting is idempotent through the key: a lost response is simply retried and never starts a second job.</li>
+  <li>Watching is a resumable stream: the handler checkpoints after each event (cursor = event sequence number), so a client that loses its connection resumes on any replica without missing or repeating events. The stream ends with the result or an in-band error.</li>
+  <li>Polling clients use the cacheable <code>reports.get</code>; <code>If-None-Match</code> makes unchanged polls cheap. Cancelling is an ordinary idempotent operation.</li>
+</ul>
+
+<h2>Graceful shutdown</h2>
+<p><code>server.close()</code> lets calls in flight finish for <code>shutdownGraceMs</code> (default 10 s), then ends the rest with a retryable <code>503</code> — as the response, or as an END frame for streams already running — so clients retry or resume elsewhere; remaining connections are dropped. Before this bound existed, <code>close()</code> never returned while a client consumed an endless server stream. Idle HTTP/2 sessions are closed with GOAWAY after <code>idleTimeoutMs</code> (120 s) and destroyed if still idle one period later.</p>

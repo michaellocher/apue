@@ -1,0 +1,94 @@
+<!--{"path":"docs/server.html","layout":"docs","title":"Server reference — apü","description":"Reference for the apü Node server: createApueServer, handler types and the call context, every server option with its default, uploads, downloads, resume, CORS, listen and graceful close."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
+<h1>Server reference</h1>
+<p class="page-intro">The reference server runs on <code>node:http2</code> (Node ≥ 26.11): HTTP/2 over TLS with HTTP/1.1 fallback, WebSockets over RFC 8441 and HTTP/1.1 Upgrade. Source: <code>src/server.ts</code>.</p>
+{{toc}}
+
+<h2>createApueServer</h2>
+{{pre:ts}}
+createApueServer<A extends Api>(api: A, handlers: Handlers<A>, options: ApueServerOptions): ApueServer
+
+interface ApueServer {
+  readonly server: http2.Http2SecureServer;              // the underlying Node server
+  listen(port?: number, host?: string): Promise<number>; // defaults: port 0 (any free port), host 127.0.0.1
+  close(): Promise<void>;                                 // graceful, bounded by shutdownGraceMs
+}
+{{/pre}}
+<p>A missing handler, an invalid option or an API that needs uploads without the <code>uploads</code> option throws at creation. Note the default host: <code>listen()</code> binds to loopback unless you pass one.</p>
+{{code:docs/server-options.ts|server.ts}}
+
+<h2>Handlers and the call context</h2>
+<p><code>Handlers&lt;typeof api&gt;</code> maps every operation to a handler <code>(input, ctx) =&gt; output</code>:</p>
+<table data-label="Handler shapes">
+  <thead><tr><th scope="col">stream</th><th scope="col">input</th><th scope="col">returns</th></tr></thead>
+  <tbody>
+    <tr><td><code>none</code></td><td>the validated input</td><td>the output, or a promise of it</td></tr>
+    <tr><td><code>server</code></td><td>the validated input</td><td>an <code>AsyncIterable</code> of outputs (or a promise of one)</td></tr>
+    <tr><td><code>client</code></td><td><code>AsyncIterable</code> of inputs</td><td>the output, or a promise of it</td></tr>
+    <tr><td><code>bidi</code></td><td><code>AsyncIterable</code> of inputs</td><td>an <code>AsyncIterable</code> of outputs</td></tr>
+  </tbody>
+</table>
+<table data-label="CallContext">
+  <thead><tr><th scope="col"><code>ctx</code> member</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>op</code></td><td>The operation name</td></tr>
+    <tr><td><code>signal</code></td><td>Aborted when the client goes away, the deadline (<code>apue-timeout</code>) passes or the server shuts down</td></tr>
+    <tr><td><code>headers</code>, <code>httpVersion</code>, <code>method</code></td><td>The request’s headers, HTTP version and method</td></tr>
+    <tr><td><code>principal</code></td><td>The caller from the <code>principal</code> hook (undefined: anonymous or no hook)</td></tr>
+    <tr><td><code>resumeFrom</code></td><td>Resumable streams: the cursor of the last checkpoint the client received</td></tr>
+    <tr><td><code>checkpoint(cursor)</code></td><td>Resumable streams: everything yielded so far is covered by <code>cursor</code>; sends a signed CHECKPOINT frame</td></tr>
+  </tbody>
+</table>
+<p>Throw <code>ApueError</code> (from <code>src/protocol.ts</code>) for an error response; anything else becomes a <code>500</code> without details.</p>
+
+<h2>Options</h2>
+<table data-label="Server options">
+  <thead><tr><th scope="col">Option</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>key</code>, <code>cert</code></td><td>required</td><td>TLS key and certificate</td></tr>
+    <tr><td><code>principal</code></td><td>none</td><td><code>(request) =&gt; string | undefined</code> (may be async): who is calling. See <a href="auth.html">Callers &amp; auth</a></td></tr>
+    <tr><td><code>cors</code></td><td>none (same-origin)</td><td><code>{ origins: string[] | '*', credentials?, maxAge? }</code>; <code>maxAge</code> default 7200 s; credentials need an explicit list</td></tr>
+    <tr><td><code>uploads</code></td><td>off</td><td>Resumable uploads at <code>/$uploads</code>; required by APIs with bytes or files in unary inputs (below)</td></tr>
+    <tr><td><code>downloads</code></td><td>on for APIs with <code>t.download()</code></td><td><code>{ ttlMs = 15 min, maxEntries = 10,000 }</code></td></tr>
+    <tr><td><code>resume</code></td><td>random secret per process</td><td><code>{ secret, ttlMs = 15 min }</code>: share <code>secret</code> (≥ 16 bytes) between replicas so any instance can resume a stream</td></tr>
+    <tr><td><code>idempotency</code></td><td>in-memory store (24 h, 10,000 entries)</td><td>An <code>IdempotencyStore</code> (<code>begin</code>, <code>complete</code>, <code>release</code>), or <code>false</code> to disable</td></tr>
+    <tr><td><code>compression</code></td><td>zstd, br, gzip from 1 KiB</td><td><code>false</code>, or <code>{ codings?, minBytes? }</code></td></tr>
+    <tr><td><code>fallback</code></td><td>none</td><td><code>(exchange) =&gt; boolean</code>: serve non-operation paths (the web app, health checks); return true when handled</td></tr>
+    <tr><td><code>validateOutput</code></td><td><code>true</code></td><td>Validate and strip handler output (no accidental data leaks)</td></tr>
+    <tr><td><code>maxBodyBytes</code></td><td>1 MiB</td><td>Largest request body or request-stream message (<code>413</code>)</td></tr>
+    <tr><td><code>maxJsonDepth</code></td><td>64</td><td>Maximum nesting of incoming JSON (<code>400</code> before parsing)</td></tr>
+    <tr><td><code>maxBatchCalls</code></td><td>64</td><td>Calls per pipelined batch</td></tr>
+    <tr><td><code>bodyTimeoutMs</code></td><td>30 s</td><td>A unary request body must arrive within this time (<code>408</code>)</td></tr>
+    <tr><td><code>heartbeatMs</code></td><td>15 s</td><td>Idle time before a HEARTBEAT frame</td></tr>
+    <tr><td><code>commitAfterMs</code></td><td>50 ms</td><td>How long a stream may wait for its first item before headers are committed (the commit window)</td></tr>
+    <tr><td><code>coalesceBytes</code></td><td>16 KiB</td><td>Frames are coalesced into one write until this many bytes are pending (0: off)</td></tr>
+    <tr><td><code>maxBufferedBytes</code></td><td>256 KiB</td><td>Response bytes buffered per stream before the producer waits</td></tr>
+    <tr><td><code>streamWindow</code></td><td>4 MiB</td><td>HTTP/2 per-stream receive window</td></tr>
+    <tr><td><code>connectionWindow</code></td><td>32 MiB</td><td>HTTP/2 per-connection receive window (Node’s own default is 64 KiB)</td></tr>
+    <tr><td><code>webSocketWindow</code></td><td><code>streamWindow</code></td><td>Receive window granted to each WebSocket (T3) client, between 64 KiB and 2³¹−1</td></tr>
+    <tr><td><code>maxConcurrentStreams</code></td><td>256</td><td><code>SETTINGS_MAX_CONCURRENT_STREAMS</code> (Node’s default is unlimited)</td></tr>
+    <tr><td><code>idleTimeoutMs</code></td><td>120 s</td><td>Idle HTTP/2 sessions get GOAWAY, and are destroyed if still idle one period later (0: off)</td></tr>
+    <tr><td><code>shutdownGraceMs</code></td><td>10 s</td><td><code>close()</code> lets calls finish this long, then ends the rest with a retryable <code>503</code> (<code>Infinity</code>: wait for all)</td></tr>
+  </tbody>
+</table>
+
+<h3>Upload options</h3>
+<table data-label="Upload options">
+  <thead><tr><th scope="col"><code>uploads.</code></th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>maxBytes</code></td><td>64 MiB</td><td>Largest upload (<code>Upload-Limit: max-size</code>)</td></tr>
+    <tr><td><code>storeBytes</code></td><td>256 MiB</td><td>All uploads together; beyond it new data is refused with <code>503</code></td></tr>
+    <tr><td><code>ttlMs</code></td><td>1 h</td><td>Lifetime of an upload from its creation (<code>max-age</code>)</td></tr>
+    <tr><td><code>scopeBytes</code></td><td><code>storeBytes / 4</code></td><td>Bytes one client may hold, received or announced (<code>507</code> beyond)</td></tr>
+    <tr><td><code>scopeUploads</code></td><td>100</td><td>Uploads one client may hold</td></tr>
+    <tr><td><code>directory</code></td><td>none (memory)</td><td>Keep content in files; a per-process subdirectory, removed on <code>close()</code></td></tr>
+    <tr><td><code>persistent</code></td><td><code>false</code></td><td>With <code>directory</code>: uploads survive restarts (one process per directory, lock file)</td></tr>
+  </tbody>
+</table>
+<p>Limits are validated as positive integers at startup. A “client” is its principal, or its address without a <code>principal</code> hook.</p>
+
+<h2>Serving the app: <code>fallback</code> and <code>Exchange</code></h2>
+<p>Paths that are not operations or reserved paths go to <code>fallback(exchange)</code>. The <code>Exchange</code> gives you <code>method</code>, <code>url</code>, <code>headers</code>, <code>remoteAddress</code> and <code>send(status, headers, body?)</code>, among others; the todo example uses it to serve its HTML page and the type-stripped <code>src/*.ts</code> modules, so page and API share one origin and need no CORS.</p>
+
+<h2>Shutdown</h2>
+<p><code>close()</code> waits for calls in flight at most <code>shutdownGraceMs</code>, then aborts the rest with a retryable <code>503</code> — as the response, or as an END frame for running streams — gives that one second to flush and drops the remaining connections. WebSocket calls close with 1001. It returns as soon as the last call is done; file-backed uploads in a per-process directory are removed.</p>

@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operations &amp; HTTP mapping — apü</title>
+<meta name="description" content="How apü operations declare effects and stream kinds, and how that maps onto GET, QUERY, HEAD and POST, idempotency keys, retries, field selection, deadlines and schema types.">
+<link rel="canonical" href="https://apue.dev/docs/concepts.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Operations &amp; HTTP mapping — apü">
+<meta property="og:description" content="How apü operations declare effects and stream kinds, and how that maps onto GET, QUERY, HEAD and POST, idempotency keys, retries, field selection, deadlines and schema types.">
+<meta property="og:url" content="https://apue.dev/docs/concepts.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html" aria-current="page">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html" aria-current="page">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Operations &amp; HTTP mapping</h1>
+<p class="page-intro">An apü API is a set of operations. Each one declares what it does to server state; apü derives the HTTP method, cacheability and retry rules from that — so the right thing happens on the wire without per-endpoint decisions.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#operations">Operations</a></li><li><a href="#effects-and-http-methods">Effects and HTTP methods</a></li><li><a href="#idempotency-keys">Idempotency keys</a></li><li><a href="#retries">Retries</a></li><li><a href="#validation-and-output-stripping">Validation and output stripping</a></li><li><a href="#field-selection">Field selection</a></li><li><a href="#deadlines-and-cancellation">Deadlines and cancellation</a></li><li><a href="#evolution-and-deprecation">Evolution and deprecation</a></li><li><a href="#reserved-paths">Reserved paths</a></li><li><a href="#schema-types">Schema types</a></li></ul></nav>
+
+<h2 id="operations">Operations</h2>
+<p>An operation is identified by a dotted name such as <code>users.get</code> (letters, digits, <code>_</code> and <code>-</code>, each segment starting with a letter) and is served at <code>{base}/{op}</code>: the name in the path is easy to route and compresses well in HPACK.</p>
+<figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'../../src/api.ts'</span>;
+<span class="tok-k">import</span> { t, <span class="tok-k">type</span> Infer } <span class="tok-k">from</span> <span class="tok-s">'../../src/schema.ts'</span>;
+
+<span class="tok-k">export</span> <span class="tok-k">const</span> User = t.object({
+  id: t.string(),
+  name: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">100</span> }),
+  email: t.optional(t.string({ pattern: /^[^@\s]+@[^@\s]+$/ })),
+  address: t.nullable(t.object({
+    city: t.string(),
+    country: t.string({ min: <span class="tok-n">2</span>, max: <span class="tok-n">2</span> }),
+  })),
+  roles: t.array(t.enum([<span class="tok-s">'admin'</span>, <span class="tok-s">'member'</span>]), { max: <span class="tok-n">8</span> }),
+});
+<span class="tok-k">export</span> <span class="tok-k">type</span> User = Infer&lt;<span class="tok-k">typeof</span> User&gt;; <span class="tok-c">// { id: string; name: string; email?: string; … }</span>
+
+<span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
+  <span class="tok-s">'users.get'</span>: op({
+    effect: <span class="tok-s">'safe'</span>,                    <span class="tok-c">// GET (or QUERY), cacheable, retried</span>
+    description: <span class="tok-s">'One user by id.'</span>,
+    input: t.object({ id: t.string() }),
+    output: User,
+    cache: { maxAge: <span class="tok-n">60</span>, staleWhileRevalidate: <span class="tok-n">300</span> },
+  }),
+  <span class="tok-s">'users.rename'</span>: op({
+    effect: <span class="tok-s">'idempotent'</span>,              <span class="tok-c">// POST + Idempotency-Key, retried</span>
+    input: t.object({ id: t.string(), name: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">100</span> }) }),
+    output: User,
+  }),
+  <span class="tok-s">'users.invite'</span>: op({
+    effect: <span class="tok-s">'unsafe'</span>,                  <span class="tok-c">// POST + Idempotency-Key: retries are safe thanks to the key</span>
+    input: t.object({ email: t.string() }),
+    output: t.object({ id: t.string() }),
+  }),
+  <span class="tok-s">'users.search'</span>: op({
+    effect: <span class="tok-s">'safe'</span>,
+    input: t.object({ name: t.string() }),
+    output: t.array(User, { max: <span class="tok-n">50</span> }), <span class="tok-c">// limits are part of the contract</span>
+    deprecated: {
+      since: <span class="tok-k">new</span> Date(<span class="tok-s">'2026-10-01T00:00:00Z'</span>),
+      sunset: <span class="tok-k">new</span> Date(<span class="tok-s">'2027-04-01T00:00:00Z'</span>),
+      link: <span class="tok-s">'https://example.com/migrate'</span>,
+    },
+  }),
+});</code></pre></figure>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Operation properties"><table>
+  <thead><tr><th scope="col">Property</th><th scope="col">Values</th><th scope="col">What it controls</th></tr></thead>
+  <tbody>
+    <tr><td><code>effect</code></td><td><code>safe</code> · <code>idempotent</code> · <code>unsafe</code></td><td>HTTP method, cacheability, retry and 0-RTT eligibility</td></tr>
+    <tr><td><code>stream</code></td><td><code>none</code> (default) · <code>server</code> · <code>client</code> · <code>bidi</code></td><td>Body framing and transport tier (<a href="streaming.html">Streaming</a>)</td></tr>
+    <tr><td><code>input</code>, <code>output</code></td><td>schemas (<code>t.*</code>)</td><td>Validation on both sides, output stripping, the manifest. For streams: the schema of each message.</td></tr>
+    <tr><td><code>cache</code></td><td><code>maxAge</code>, <code>staleWhileRevalidate</code>, <code>private</code>, <code>cdnMaxAge</code>, <code>groups</code></td><td><code>Cache-Control</code> and CDN headers for safe operations (<a href="caching.html">Caching</a>)</td></tr>
+    <tr><td><code>invalidates</code></td><td>cache group names</td><td><code>Cache-Group-Invalidation</code> on successful non-safe calls</td></tr>
+    <tr><td><code>resumable</code></td><td>boolean</td><td>Server streams with checkpoints (<a href="streaming.html#resumable-streams">Resumable streams</a>)</td></tr>
+    <tr><td><code>deprecated</code></td><td><code>since</code>, <code>sunset</code>, <code>link</code></td><td><code>Deprecation</code> (RFC 9745), <code>Sunset</code> (RFC 8594) and <code>Link</code> headers</td></tr>
+    <tr><td><code>description</code></td><td>text</td><td>The manifest</td></tr>
+  </tbody>
+</table></div>
+<p><code>op()</code> rejects definitions that can’t work, at startup rather than in production:</p>
+<ul>
+  <li>only server streams can be <code>resumable</code>, and only if <code>safe</code> or <code>idempotent</code> (resuming re-sends the request);</li>
+  <li>only safe operations may declare <code>cache</code>; only non-safe ones <code>invalidates</code>; <code>cdnMaxAge</code> not together with <code>private</code>; at most 32 cache groups of 1–32 printable ASCII characters;</li>
+  <li><code>t.file()</code> only in unary inputs, <code>t.download()</code> only in outputs and never with a cache <code>maxAge</code>/<code>cdnMaxAge</code> (download URLs expire);</li>
+  <li>a <code>sunset</code> earlier than <code>since</code>.</li>
+</ul>
+
+<h2 id="effects-and-http-methods">Effects and HTTP methods</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Effect to HTTP method mapping"><table>
+  <thead><tr><th scope="col">effect</th><th scope="col">stream</th><th scope="col">Request</th></tr></thead>
+  <tbody>
+    <tr><td><code>safe</code></td><td><code>none</code>, <code>server</code></td><td><code>GET {base}/{op}?i={canonical input}</code> if the path is at most 2 KiB, else <code>QUERY {base}/{op}</code> with the JSON as body. <code>HEAD</code> wherever <code>GET</code> works.</td></tr>
+    <tr><td><code>idempotent</code></td><td><code>none</code></td><td><code>POST</code> + <code>Idempotency-Key</code>; retries allowed</td></tr>
+    <tr><td><code>unsafe</code></td><td><code>none</code></td><td><code>POST</code> + <code>Idempotency-Key</code>; retries allowed because of the key</td></tr>
+    <tr><td>any</td><td><code>client</code>, <code>bidi</code></td><td><code>POST</code> with a request stream; never retried (a stream can’t be replayed)</td></tr>
+  </tbody>
+</table></div>
+<p>The server enforces the mapping: any other method gets <code>405</code> with an <code>Allow</code> header. Idempotent operations use <code>POST</code> with a key rather than <code>PUT</code>, because <code>PUT</code> means “replace the target resource”.</p>
+
+<h3 id="canonical-get-inputs">Canonical GET inputs</h3>
+<p>The <code>i</code> parameter is the input as <strong>RFC 8785 (JCS) canonical JSON</strong>, percent-encoded: object keys sorted, numbers and strings serialised deterministically. The same input therefore always produces the same URL — and the same cache key in every browser cache and CDN.</p>
+
+<h3 id="query-and-the-post-fallback">QUERY and the POST fallback</h3>
+<p>When the URL would be longer than 2 KiB, the client sends <code>QUERY</code> (RFC 10008), a safe method with a body; responses advertise it with <code>Accept-Query: "application/json"</code>. Some intermediaries reject it — CloudFront with 403, Akamai with 501, Envoy before 1.40 — so on 400, 403, 405 or 501 the client repeats the request as <code>POST</code>, and remembers that only if <code>POST</code> then fares better. nginx, Envoy ≥ 1.40, HAProxy and Fastly forward <code>QUERY</code>; no CDN caches it today.</p>
+
+<h2 id="idempotency-keys">Idempotency keys</h2>
+<p>Every non-safe unary call carries <code>Idempotency-Key</code>, a client-generated UUID sent as a Structured Field string (<code>idempotency-key: "…"</code>). The server follows the IETF idempotency-key draft:</p>
+<ul>
+  <li><strong>Scope</strong> = operation + caller (the <a href="auth.html">principal</a>, else a hash of <code>Authorization</code>) + key; <strong>fingerprint</strong> = SHA-256 of the canonical input.</li>
+  <li>Same key and payload → the stored response is replayed with <code>apue-replayed: ?1</code> (an apü extension; the draft defines no such header).</li>
+  <li>Same key, different payload → <code>422</code> <code>idempotency-key-reused</code>.</li>
+  <li>Original still running → <code>409</code> <code>idempotency-key-in-progress</code> with <code>retryable: true</code>.</li>
+  <li>Handler 4xx responses are stored; 5xx and client aborts release the key, so a retry executes again.</li>
+</ul>
+<p>The default store is in memory (24 h, 10,000 entries). Several replicas need a shared store implementing the same <code>IdempotencyStore</code> contract; <code>idempotency: false</code> turns the feature off.</p>
+
+<h2 id="retries">Retries</h2>
+<p>The client retries (default 2 retries, full-jitter exponential backoff) on transport errors, <code>503</code> and <code>429</code> (honouring <code>Retry-After</code> as seconds or an HTTP date, capped at the maximum backoff) and <code>409</code> with <code>retryable: true</code> — but only for safe operations or keyed requests. A <code>504</code> deadline is not retried.</p>
+
+<h2 id="validation-and-output-stripping">Validation and output stripping</h2>
+<ul>
+  <li>Input is validated on the client — invalid input is never sent — and again on the server (<code>400</code> with per-field <code>fields</code>).</li>
+  <li>Unknown input fields are dropped, not rejected, so newer clients can talk to older servers.</li>
+  <li>Output is validated and stripped to the schema before it is sent: fields the schema doesn’t list never leak. Invalid output is a <code>500</code>.</li>
+  <li>Incoming JSON is limited to 64 levels of nesting (<code>maxJsonDepth</code>), bodies to 1 MiB by default (<code>maxBodyBytes</code>, <code>413</code> beyond).</li>
+</ul>
+
+<h2 id="field-selection">Field selection</h2>
+<p><code>?s=a,b.c</code> asks for only some output fields — on any method; for <code>GET</code> it is part of the cache key. Paths are validated against the output schema before the handler runs (unknown paths: <code>400</code> <code>invalid-selection</code>), at most 64, through objects, arrays, optional and nullable fields; selecting a parent includes its children. Selection is applied after output validation, so only schema fields can be selected, and the ETag covers the projected body. There is no query language and there are no joins: the cost of a call stays bounded by the schema.</p>
+<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// GET /users.get?i=%7B%22id%22%3A%2242%22%7D — same input, same URL, same cache entry</span>
+<span class="tok-k">const</span> user = <span class="tok-k">await</span> client.call(<span class="tok-s">'users.get'</span>, { id: <span class="tok-s">'42'</span> });
+
+<span class="tok-c">// Only some fields (?s=address.city,name); paths are checked at compile time</span>
+<span class="tok-k">const</span> partial = <span class="tok-k">await</span> client.pick(<span class="tok-s">'users.get'</span>, { id: <span class="tok-s">'42'</span> }, [<span class="tok-s">'name'</span>, <span class="tok-s">'address.city'</span>]);
+console.log(user.roles, partial.address?.city);
+
+<span class="tok-c">// POST with a generated Idempotency-Key; a retry after a lost response reuses it</span>
+<span class="tok-k">await</span> client.call(<span class="tok-s">'users.invite'</span>, { email: <span class="tok-s">'ada@example.com'</span> });
+
+<span class="tok-c">// Your own key (e.g. stored with a form submission), a deadline, cancellation</span>
+<span class="tok-k">const</span> controller = <span class="tok-k">new</span> AbortController();
+<span class="tok-k">await</span> client.call(<span class="tok-s">'users.rename'</span>, { id: <span class="tok-s">'42'</span>, name: <span class="tok-s">'Ada'</span> }, {
+  idempotencyKey: <span class="tok-s">'rename-42-7f3a'</span>,
+  timeoutMs: <span class="tok-n">2_000</span>,           <span class="tok-c">// apue-timeout: 2000 → 504 when exceeded</span>
+  signal: controller.signal,  <span class="tok-c">// abort() resets the stream; the handler's ctx.signal fires</span>
+});</code></pre></figure>
+<p>The typed <code>pick()</code> checks paths at compile time (up to four levels) and returns a <code>DeepPartial</code> of the output.</p>
+
+<h2 id="deadlines-and-cancellation">Deadlines and cancellation</h2>
+<p>A call’s deadline travels as <code>apue-timeout: &lt;ms&gt;</code> (over WebSocket: <code>?timeout=</code>). When it passes, the server aborts the handler’s <code>ctx.signal</code> and answers <code>504</code> <code>deadline-exceeded</code> — also when a producer ignores the signal. Client cancellation (an <code>AbortSignal</code>, or <code>break</code> out of a stream loop) resets the HTTP/2 stream and aborts the handler.</p>
+
+<h2 id="evolution-and-deprecation">Evolution and deprecation</h2>
+<p>Within a major version only additive changes are allowed. An operation is retired by marking it <code>deprecated</code>: responses then carry <code>Deprecation</code> (RFC 9745), <code>Sunset</code> (RFC 8594) when a date is set, and <code>Link: &lt;…&gt;; rel="deprecation"</code> for a migration guide.</p>
+
+<h2 id="reserved-paths">Reserved paths</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Reserved paths"><table>
+  <thead><tr><th scope="col">Path</th><th scope="col">Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>/.well-known/apue</code></td><td>The <a href="manifest.html">manifest</a></td></tr>
+    <tr><td><code>/.well-known/api-catalog</code></td><td>RFC 9727 API catalog</td></tr>
+    <tr><td><code>/$batch</code></td><td><a href="batches.html">Pipelined batches</a></td></tr>
+    <tr><td><code>/$uploads</code></td><td><a href="binary-data.html#resumable-uploads">Resumable uploads</a> (when enabled)</td></tr>
+    <tr><td><code>/$downloads/…</code></td><td><a href="binary-data.html#downloads">Download resources</a></td></tr>
+  </tbody>
+</table></div>
+<p>Operation names start with a letter, so they can’t collide with these. Every other path can be served by the application through the server’s <code>fallback</code> hook — for example the web app itself, which then needs no CORS.</p>
+
+<h2 id="schema-types">Schema types</h2>
+<p>Schemas come from a small builder with static type inference (<code>Infer&lt;typeof S&gt;</code>), written in erasable TypeScript only. Each schema validates, infers its TypeScript type and exports JSON Schema for the manifest.</p>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Schema types"><table>
+  <thead><tr><th scope="col">Builder</th><th scope="col">TypeScript type</th><th scope="col">Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>t.string({ min?, max?, pattern? })</code></td><td><code>string</code></td><td>Length bounds; a <code>RegExp</code> pattern (flags travel as <code>x-apue-flags</code>; <code>g</code> and <code>y</code> are refused)</td></tr>
+    <tr><td><code>t.number({ int?, min?, max? })</code></td><td><code>number</code></td><td>Finite numbers; <code>int</code> → JSON Schema <code>integer</code></td></tr>
+    <tr><td><code>t.boolean()</code></td><td><code>boolean</code></td><td></td></tr>
+    <tr><td><code>t.enum(['a', 'b'])</code></td><td><code>'a' | 'b'</code></td><td>String unions</td></tr>
+    <tr><td><code>t.array(item, { max? })</code></td><td><code>T[]</code></td><td><code>max</code> bounds the cost of a call</td></tr>
+    <tr><td><code>t.object({ … })</code></td><td>object</td><td>Unknown keys are dropped</td></tr>
+    <tr><td><code>t.optional(s)</code></td><td><code>T | undefined</code></td><td>The field may be absent</td></tr>
+    <tr><td><code>t.nullable(s)</code></td><td><code>T | null</code></td><td></td></tr>
+    <tr><td><code>t.bytes({ max? })</code></td><td><code>Uint8Array</code></td><td>Raw BLOB frames, no base64 (<a href="binary-data.html">Binary data</a>)</td></tr>
+    <tr><td><code>t.file({ max? })</code></td><td><code>FileValue</code></td><td>Large inputs, streamed to the handler</td></tr>
+    <tr><td><code>t.download({ type? })</code></td><td><code>DownloadSource</code> / client: <code>Download</code></td><td>Large outputs, served with Range</td></tr>
+    <tr><td><code>t.unknown()</code></td><td><code>unknown</code></td><td>Anything</td></tr>
+    <tr><td><code>t.void()</code></td><td><code>void</code></td><td>No payload</td></tr>
+  </tbody>
+</table></div>
+<p>JSON is the encoding (bigint and decimal values as strings). A CBOR encoding was evaluated with measurements and closed: codec and validation are about 11 % of server CPU in a unary call, generic CBOR was no faster than JSON and often larger after compression (research note 11).</p>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/getting-started.html" rel="prev"><span>Previous</span><b>Getting started</b></a><a class="next" href="../docs/streaming.html" rel="next"><span>Next</span><b>Streaming</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

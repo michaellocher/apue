@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started — apü</title>
+<meta name="description" content="Run the apü example app, then write a first API: a contract, a server, a typed client, and the same calls with curl.">
+<link rel="canonical" href="https://apue.dev/docs/getting-started.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Getting started — apü">
+<meta property="og:description" content="Run the apü example app, then write a first API: a contract, a server, a typed client, and the same calls with curl.">
+<meta property="og:url" content="https://apue.dev/docs/getting-started.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html" aria-current="page">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html" aria-current="page">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Start</p>
+<h1>Getting started</h1>
+<p class="page-intro">Run the example app, then build a small API of your own: one cacheable read and one server stream, called from a typed client and from curl.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#requirements">Requirements</a></li><li><a href="#run-the-example">Run the example</a></li><li><a href="#develop-and-test">Develop and test</a></li><li><a href="#a-first-api">A first API</a></li><li><a href="#the-same-calls-with-curl">The same calls with curl</a></li><li><a href="#next-steps">Next steps</a></li></ul></nav>
+
+<h2 id="requirements">Requirements</h2>
+<ul>
+  <li><strong>Node ≥ 26.11</strong>. The implementation is TypeScript run natively by Node (type stripping) — there is no build step.</li>
+  <li><strong>openssl</strong>: apü servers speak TLS (HTTP/2 with HTTP/1.1 fallback), and the tests and example generate a throwaway self-signed certificate.</li>
+  <li>Optional: Chrome or Firefox (and <code>npx playwright-core install webkit</code> for WebKit) for the real-browser tests; Docker for the constrained benchmarks and the proxy probes.</li>
+</ul>
+<div class="callout">
+  <span class="callout-title">No package yet</span>
+  <p>apü is not published to npm. Everything runs from a checkout of the (currently private) research repository; your code imports the modules under <code>src/</code> directly, the way <code>examples/todo</code> does.</p>
+</div>
+
+<h2 id="run-the-example">Run the example</h2>
+<p>The todo example serves a web page and its API from one origin. The browser imports <code>src/*.ts</code>, type-stripped by the example server — no bundler.</p>
+<figure class="code"><figcaption>repository root</figcaption><pre tabindex="0"><code class="language-sh">node examples/todo/server.ts    <span class="tok-c"> # https://localhost:8443 — open it in a browser (self-signed cert)</span>
+node examples/todo/cli.ts       <span class="tok-c"> # typed calls, a pipelined batch, a resumable change stream</span></code></pre></figure>
+<p>The first start writes a certificate to <code>certs/</code> (git-ignored); bring your own with mkcert if your browser should trust it. <code>npm run certs</code> creates one with openssl as well.</p>
+
+<h2 id="develop-and-test">Develop and test</h2>
+<figure class="code"><pre tabindex="0"><code class="language-sh">npm install         <span class="tok-c"> # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)</span>
+npm test            <span class="tok-c"> # node --test, incl. headless Chrome, Firefox, WebKit (skipped if absent)</span>
+npm run typecheck   <span class="tok-c"> # tsc (noEmit, erasableSyntaxOnly)</span>
+node bench/run.ts   <span class="tok-c"> # benchmarks vs raw node:http2 baselines (separate processes)</span>
+bench/docker.sh     <span class="tok-c"> # same on CPU/RAM-limited containers, incl. emulated WAN (netem)</span>
+bench/proxy/run.sh  <span class="tok-c"> # behaviour through real nginx, Caddy, HAProxy and Envoy (Docker)</span></code></pre></figure>
+<p>At draft 01 the suite has 348 tests and runs in about 20 seconds.</p>
+
+<h2 id="a-first-api">A first API</h2>
+<p>Create <code>examples/hello/</code> in your checkout, so that the imports below resolve to <code>src/</code> like the todo example’s do.</p>
+
+<h3 id="1-the-contract">1. The contract</h3>
+<p>An operation has a dotted name, an <code>effect</code>, an optional <code>stream</code> kind, and schemas for input and output. The file is plain TypeScript, shared by server and clients.</p>
+<figure class="code"><figcaption>examples/hello/api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// examples/hello/api.ts — the contract, shared by server and clients</span>
+<span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'../../src/api.ts'</span>;
+<span class="tok-k">import</span> { t } <span class="tok-k">from</span> <span class="tok-s">'../../src/schema.ts'</span>;
+
+<span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
+  <span class="tok-s">'greetings.get'</span>: op({
+    effect: <span class="tok-s">'safe'</span>,                       <span class="tok-c">// a read: GET, cacheable, retried</span>
+    input: t.object({ name: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">100</span> }) }),
+    output: t.object({ text: t.string() }),
+    cache: { maxAge: <span class="tok-n">60</span> },                <span class="tok-c">// Cache-Control: max-age=60</span>
+  }),
+  <span class="tok-s">'greetings.count'</span>: op({
+    effect: <span class="tok-s">'safe'</span>,
+    stream: <span class="tok-s">'server'</span>,                     <span class="tok-c">// many messages in one response</span>
+    input: t.object({ to: t.number({ int: <span class="tok-k">true</span>, min: <span class="tok-n">1</span>, max: <span class="tok-n">10</span> }) }),
+    output: t.object({ n: t.number() }),
+  }),
+});</code></pre></figure>
+
+<h3 id="2-the-server">2. The server</h3>
+<p><code>Handlers&lt;typeof api&gt;</code> types every handler from the contract: unary handlers return a value (or a promise), streaming handlers return an async iterable. <code>ctx.signal</code> fires when the client goes away or the deadline passes.</p>
+<figure class="code"><figcaption>examples/hello/server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// examples/hello/server.ts — run from the repository root</span>
+<span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
+<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'../../src/server.ts'</span>;
+<span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
+
+<span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
+  <span class="tok-s">'greetings.get'</span>: ({ name }) =&gt; ({ text: <span class="tok-s">`Hello, ${name}!`</span> }),
+  <span class="tok-s">'greetings.count'</span>: <span class="tok-k">async</span> <span class="tok-k">function</span>* ({ to }, ctx) {
+    <span class="tok-k">for</span> (<span class="tok-k">let</span> n = <span class="tok-n">1</span>; n &lt;= to &amp;&amp; !ctx.signal.aborted; n++) {
+      <span class="tok-k">yield</span> { n };
+      <span class="tok-k">await</span> <span class="tok-k">new</span> Promise((resolve) =&gt; setTimeout(resolve, <span class="tok-n">200</span>));
+    }
+  },
+};
+
+<span class="tok-k">const</span> server = createApueServer(api, handlers, {
+  key: readFileSync(<span class="tok-s">'certs/key.pem'</span>),
+  cert: readFileSync(<span class="tok-s">'certs/cert.pem'</span>),
+});
+<span class="tok-k">const</span> port = <span class="tok-k">await</span> server.listen(Number(process.env.PORT ?? <span class="tok-n">8443</span>), <span class="tok-s">'127.0.0.1'</span>);
+console.log(<span class="tok-s">`listening on https://localhost:${port}`</span>);</code></pre></figure>
+
+<h3 id="3-a-typed-client">3. A typed client</h3>
+<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving.</p>
+<figure class="code"><figcaption>examples/hello/client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// examples/hello/client.ts — node examples/hello/client.ts</span>
+<span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
+<span class="tok-k">import</span> { ApueClient } <span class="tok-k">from</span> <span class="tok-s">'../../src/client.ts'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-http2.ts'</span>;
+<span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
+
+<span class="tok-k">const</span> url = process.env.URL ?? <span class="tok-s">'https://localhost:8443'</span>;
+<span class="tok-k">const</span> ca = readFileSync(<span class="tok-s">'certs/cert.pem'</span>);
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, http2Transport(url, { ca }));
+
+<span class="tok-k">const</span> { text } = <span class="tok-k">await</span> client.call(<span class="tok-s">'greetings.get'</span>, { name: <span class="tok-s">'Ada'</span> });
+console.log(text);
+
+<span class="tok-k">for</span> <span class="tok-k">await</span> (<span class="tok-k">const</span> { n } <span class="tok-k">of</span> client.stream(<span class="tok-s">'greetings.count'</span>, { to: <span class="tok-n">3</span> })) console.log(n);
+
+<span class="tok-k">await</span> client.close();</code></pre></figure>
+<figure class="code"><figcaption>run it</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> node examples/hello/server.ts &amp;
+listening on https://localhost:8443
+<span class="tok-p">$</span> node examples/hello/client.ts
+Hello, Ada!
+1
+2
+3</code></pre></figure>
+
+<h2 id="the-same-calls-with-curl">The same calls with curl</h2>
+<p>A safe operation is a <code>GET</code> whose input is canonical JSON (RFC 8785) in <code>?i=</code>. The response is cacheable for the 60 seconds the contract declares and carries a strong ETag:</p>
+<figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i --cacert certs/cert.pem 'https://localhost:8443/greetings.get?i=%7B%22name%22%3A%22Ada%22%7D'
+HTTP/2 200
+accept-query: "application/json"
+content-type: application/json
+cache-control: public, max-age=60
+etag: "6Rw7uGkU5twQHJtUgjQCBL"
+content-length: 22
+
+{"text":"Hello, Ada!"}</code></pre></figure>
+<p>Invalid input is a 400 with RFC 9457 problem details naming the field:</p>
+<figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -i --cacert certs/cert.pem 'https://localhost:8443/greetings.get?i=%7B%22name%22%3A%22%22%7D'
+HTTP/2 400
+content-type: application/problem+json
+cache-control: no-store
+
+{"type":"https://apue.dev/problems/validation-failed","fields":[{"path":"name","message":"shorter than 1"}],"title":"Validation Failed","status":400,"detail":"input does not match the schema"}</code></pre></figure>
+<p>Streams are binary frames by default (<code>application/apue+json</code>). For curl and devtools, ask for <code>text/event-stream</code> and get the same stream rendered as server-sent events:</p>
+<figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl --cacert certs/cert.pem -H 'accept: text/event-stream' 'https://localhost:8443/greetings.count?i=%7B%22to%22%3A3%7D'
+event: msg
+data: {"n":1}
+
+event: msg
+data: {"n":2}
+
+event: msg
+data: {"n":3}
+
+event: end
+data: {"status":200}</code></pre></figure>
+<p class="source">These outputs are from running the files above against the reference implementation (some response headers omitted).</p>
+
+<h2 id="next-steps">Next steps</h2>
+<ul>
+  <li><a href="concepts.html">Operations &amp; HTTP mapping</a> — effects, methods, idempotency keys, field selection, schema types.</li>
+  <li><a href="streaming.html">Streaming</a> — client and bidi streams, browsers, resumable streams.</li>
+  <li><a href="client.html">Client reference</a> — browser transports and call options.</li>
+  <li><a href="manifest.html">Manifest &amp; codegen</a> — clients for code that can’t import your TypeScript, including Python.</li>
+</ul>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/index.html" rel="prev"><span>Previous</span><b>Overview</b></a><a class="next" href="../docs/concepts.html" rel="next"><span>Next</span><b>Operations &amp; HTTP mapping</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

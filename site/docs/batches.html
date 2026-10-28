@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pipelined batches — apü</title>
+<meta name="description" content="apü pipelined batches: dependent calls in one round trip with $ref references, results streamed out of order per lane, per-lane failures with 424, per-call idempotency keys.">
+<link rel="canonical" href="https://apue.dev/docs/batches.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Pipelined batches — apü">
+<meta property="og:description" content="apü pipelined batches: dependent calls in one round trip with $ref references, results streamed out of order per lane, per-lane failures with 424, per-call idempotency keys.">
+<meta property="og:url" content="https://apue.dev/docs/batches.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html" aria-current="page">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html" aria-current="page">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Pipelined batches</h1>
+<p class="page-intro">Dependent calls normally cost one round trip each. A batch sends them together; a later call can reference an earlier call’s output, and the server resolves the reference itself — promise pipelining over plain HTTP.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#from-the-client">From the client</a></li><li><a href="#on-the-wire">On the wire</a></li><li><a href="#what-it-saves">What it saves</a></li><li><a href="#limits-and-plans">Limits and plans</a></li></ul></nav>
+
+<h2 id="from-the-client">From the client</h2>
+<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">const</span> batch = client.batch();
+<span class="tok-k">const</span> todo = batch.call(<span class="tok-s">'todos.create'</span>, { title: <span class="tok-s">'ship apü'</span> });
+<span class="tok-c">// todo.ref('id') is typed as number and resolved on the server</span>
+<span class="tok-k">const</span> done = batch.call(<span class="tok-s">'todos.complete'</span>, { id: todo.ref(<span class="tok-s">'id'</span>) });
+
+<span class="tok-c">// One request; resolves when every lane has ended</span>
+<span class="tok-k">await</span> batch.send({ timeoutMs: <span class="tok-n">5_000</span> });
+
+<span class="tok-k">try</span> {
+  console.log(<span class="tok-k">await</span> todo.result, <span class="tok-s">'→'</span>, <span class="tok-k">await</span> done.result); <span class="tok-c">// each lane settles on its own</span>
+} <span class="tok-k">catch</span> (error) {
+  <span class="tok-c">// A failed lane rejects only its own result;</span>
+  <span class="tok-c">// its dependents end with 424 failed-dependency.</span>
+  <span class="tok-k">if</span> (error instanceof ApueError) console.log(error.status, error.problem.type);
+}</code></pre></figure>
+<p><code>ref()</code> is typed along the output type (up to three path segments, through optional fields), so <code>todo.ref('id')</code> can stand wherever a <code>number</code> is expected. <code>batch.stream(op, input)</code> adds a server-streaming lane whose items you iterate. <code>send()</code> resolves when every lane has ended and rejects only if the batch as a whole fails.</p>
+<p>Batching is for <strong>dependencies</strong>. Independent calls should just be separate requests: HTTP/2 multiplexes them on one connection.</p>
+
+<h2 id="on-the-wire">On the wire</h2>
+<p><code>POST {base}/$batch</code> — or <code>QUERY</code>, if every call is safe (else <code>422</code>) — with a JSON body. (Not <code>/</code>: that path stays free for serving the app itself.)</p>
+<figure class="code"><pre tabindex="0"><code class="language-json">{ <span class="tok-s">"calls"</span>: [
+  { <span class="tok-s">"op"</span>: <span class="tok-s">"users.get"</span>,     <span class="tok-s">"in"</span>: { <span class="tok-s">"id"</span>: <span class="tok-s">"42"</span> } },
+  { <span class="tok-s">"op"</span>: <span class="tok-s">"orders.list"</span>,   <span class="tok-s">"in"</span>: { <span class="tok-s">"userId"</span>: { <span class="tok-s">"$ref"</span>: [0, <span class="tok-s">"id"</span>] } } },
+  { <span class="tok-s">"op"</span>: <span class="tok-s">"orders.create"</span>, <span class="tok-s">"in"</span>: { <span class="tok-s">"item"</span>: <span class="tok-s">"x"</span> }, <span class="tok-s">"key"</span>: <span class="tok-s">"1f0c…"</span> }
+] }</code></pre></figure>
+<ul>
+  <li><strong>References</strong>: an object whose only member is <code>"$ref": [lane, ...path]</code> is replaced by the output of an earlier call (path segments are member names or array indices; own properties only; <code>__proto__</code>, <code>constructor</code> and <code>prototype</code> are rejected). Data that would look like a reference is escaped as <code>{"$lit": value}</code>.</li>
+  <li><strong>Structural validation first</strong>, all or nothing (<code>400</code> <code>invalid-batch</code>): 1 to 64 calls (<code>maxBatchCalls</code>), known operations, no request-stream operations, references only to <em>earlier</em> unary calls — so the graph is acyclic — and valid keys.</li>
+  <li><strong>Execution</strong>: each call starts once its dependencies have finished; independent calls run concurrently. Inputs are validated after references are resolved (<code>400</code> <code>validation-failed</code>; a missing path: <code>400</code> <code>unresolvable-reference</code>).</li>
+  <li><strong>Response</strong>: always a framed stream with headers committed at once. Each lane delivers <code>MSG… END</code> as soon as it completes, in any order, so the first result arrives as soon as the fastest call is done. Server-streaming operations may be batched; their lane carries many MSG frames.</li>
+  <li><strong>Failures are per lane</strong>: a failed call ends its lane with its problem; dependents end with <code>424</code> <code>failed-dependency</code>, transitively; independent lanes are unaffected. A lane without END when the body ends is truncated (<code>502</code> on the client).</li>
+  <li><strong>Idempotency</strong>: non-safe calls carry a per-call <code>key</code>, scoped like <code>Idempotency-Key</code> — resending the same batch replays the keyed calls, so a batch is retry-safe as a whole.</li>
+  <li><code>apue-timeout</code> applies to the whole batch; cancelling the request aborts every running call. Batch lanes are not resumable.</li>
+</ul>
+
+<h3 id="a-real-batch-response">A real batch response</h3>
+<p>Create a todo and complete it in one round trip (from <code>docs/wire.md</code>). Lane 0 is the create, lane 1 the complete that referenced lane 0’s <code>id</code>:</p>
+<figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl -s -X POST -H 'content-type: application/json' \
+    -d '{"calls":[{"op":"todos.create","in":{"title":"ship"},"key":"b1"},{"op":"todos.complete","in":{"id":{"$ref":[0,"id"]}},"key":"b2"}]}' \
+    'https://localhost:18443/$batch' | xxd
+00000000: 0000 0000 0000 0024 7b22 6964 223a 322c  .......${"id":2,
+00000010: 2274 6974 6c65 223a 2273 6869 7022 2c22  "title":"ship","
+00000020: 646f 6e65 223a 6661 6c73 657d 0100 0000  done":false}....
+00000030: 0000 000e 7b22 7374 6174 7573 223a 3230  ....{"status":20
+00000040: 307d 0000 0001 0000 0023 7b22 6964 223a  0}.......#{"id":
+00000050: 322c 2274 6974 6c65 223a 2273 6869 7022  2,"title":"ship"
+00000060: 2c22 646f 6e65 223a 7472 7565 7d01 0000  ,"done":true}...
+00000070: 0100 0000 0e7b 2273 7461 7475 7322 3a32  .....{"status":2
+00000080: 3030 7d                                  00}</code></pre></figure>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Frames in the batch response"><table>
+  <thead><tr><th scope="col">Header bytes</th><th scope="col">Type</th><th scope="col">Lane</th><th scope="col">Length</th><th scope="col">Payload</th></tr></thead>
+  <tbody>
+    <tr><td><code>00 00 0000 00000024</code></td><td>MSG</td><td>0</td><td>36</td><td><code>{"id":2,"title":"ship","done":false}</code></td></tr>
+    <tr><td><code>01 00 0000 0000000e</code></td><td>END</td><td>0</td><td>14</td><td><code>{"status":200}</code></td></tr>
+    <tr><td><code>00 00 0001 00000023</code></td><td>MSG</td><td>1</td><td>35</td><td><code>{"id":2,"title":"ship","done":true}</code></td></tr>
+    <tr><td><code>01 00 0001 0000000e</code></td><td>END</td><td>1</td><td>14</td><td><code>{"status":200}</code></td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="what-it-saves">What it saves</h2>
+<p>Measured for three dependent calls (Node 26.12.1, TLS + HTTP/2): locally 0.67 ms sequential vs 0.31 ms as a batch; in a 1-CPU Docker container behind an emulated WAN link (63 ms RTT, 100 Mbit/s) <strong>203 ms vs 67 ms (3.0×)</strong>. On real networks the round trips dominate. Details on the <a href="measurements.html">Measurements</a> page.</p>
+
+<h2 id="limits-and-plans">Limits and plans</h2>
+<ul>
+  <li>Request-stream operations (client, bidi) can’t be batched.</li>
+  <li>The generated Python client does not support batches.</li>
+  <li><span class="tag tag-planned">planned</span> <code>$map</code> over arrays (in the style of Cap’n Web).</li>
+</ul>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/binary-data.html" rel="prev"><span>Previous</span><b>Binary data</b></a><a class="next" href="../docs/auth.html" rel="next"><span>Next</span><b>Callers &amp; auth</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

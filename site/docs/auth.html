@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Callers &amp; auth — apü</title>
+<meta name="description" content="How apü identifies callers: the principal hook, credentials on every tier including WebSocket, CORS, protection against cross-site WebSocket hijacking and CSRF, and the DPoP groundwork.">
+<link rel="canonical" href="https://apue.dev/docs/auth.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Callers &amp; auth — apü">
+<meta property="og:description" content="How apü identifies callers: the principal hook, credentials on every tier including WebSocket, CORS, protection against cross-site WebSocket hijacking and CSRF, and the DPoP groundwork.">
+<meta property="og:url" content="https://apue.dev/docs/auth.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html" aria-current="page">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html" aria-current="page">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Callers &amp; auth</h1>
+<p class="page-intro">apü defines no authentication scheme. Credentials are the standard <code>Authorization</code> header or cookies, checked by your application. What apü adds is a single place to name the caller — and the plumbing that makes credentials arrive the same way on every transport.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#the-principal-hook">The principal hook</a></li><li><a href="#credentials-from-clients">Credentials from clients</a></li><li><a href="#credentials-over-websocket">Credentials over WebSocket</a></li><li><a href="#cross-site-websocket-hijacking">Cross-site WebSocket hijacking</a></li><li><a href="#cors">CORS</a></li><li><a href="#dpop">DPoP</a></li></ul></nav>
+
+<h2 id="the-principal-hook">The principal hook</h2>
+<p>The server option <code>principal(request)</code> (may be async) returns a stable identity for the caller — a user or account id, <em>not</em> the credential, which changes on every token refresh — or <code>undefined</code> for anonymous callers. An <code>ApueError</code> it throws, such as a <code>401</code> with <code>WWW-Authenticate</code>, is the response.</p>
+<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'../../src/protocol.ts'</span>;
+
+<span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
+  <span class="tok-s">'me.get'</span>: (_input, ctx) =&gt; ({ user: ctx.principal ?? <span class="tok-s">'anonymous'</span> }),
+};
+
+<span class="tok-k">const</span> server = createApueServer(api, handlers, {
+  key,
+  cert,
+  <span class="tok-c">// Who is calling: a stable id (not the token, which changes on every</span>
+  <span class="tok-c">// refresh), or undefined for anonymous callers.</span>
+  principal: <span class="tok-k">async</span> ({ headers, method, url }) =&gt; {
+    <span class="tok-k">const</span> header = headers.authorization;
+    <span class="tok-k">if</span> (header === <span class="tok-k">undefined</span>) <span class="tok-k">return</span> <span class="tok-k">undefined</span>; <span class="tok-c">// anonymous</span>
+    <span class="tok-k">const</span> claims = <span class="tok-k">await</span> verifyToken(String(header).replace(/^Bearer /, <span class="tok-s">''</span>));
+    <span class="tok-k">if</span> (!claims) {
+      <span class="tok-k">const</span> challenge = { <span class="tok-s">'www-authenticate'</span>: <span class="tok-s">'Bearer'</span> };
+      <span class="tok-k">throw</span> <span class="tok-k">new</span> ApueError(<span class="tok-n">401</span>, <span class="tok-s">'Unauthorized'</span>, <span class="tok-s">'invalid token'</span>, {}, challenge);
+    }
+    console.log(method, url); <span class="tok-c">// e.g. to check a DPoP proof's htm/htu</span>
+    <span class="tok-k">return</span> claims.sub;
+  },
+  <span class="tok-c">// Cross-origin browsers (same-origin needs none of this and saves the preflights):</span>
+  cors: { origins: [<span class="tok-s">'https://app.example.com'</span>], credentials: <span class="tok-k">true</span>, maxAge: <span class="tok-n">7200</span> },
+});</code></pre></figure>
+<ul>
+  <li>It runs once per operation, batch or upload request — not for the manifest, preflights or <code>fallback</code> — and before method checks, so an unauthenticated call gets its <code>401</code> first.</li>
+  <li>The request it sees has <code>headers</code>, <code>remoteAddress</code>, <code>method</code> and <code>url</code>. A WebSocket call reports <code>POST</code>, its logical method, so a proof signed for <code>POST /op</code> verifies on every tier.</li>
+  <li>The principal <strong>scopes</strong> idempotency keys, uploads (visibility and quota) and resume tokens. Handlers get it as <code>ctx.principal</code>.</li>
+</ul>
+<p><strong>Without the hook</strong> these scopes are the raw <code>Authorization</code> header — a refreshed token is a new scope, so a retry after a refresh executes again — resume tokens are bound to operation and input only, and upload quotas count per address (an unverified header must not buy a fresh quota; behind a proxy that address is the proxy’s, for everyone).</p>
+
+<h2 id="credentials-from-clients">Credentials from clients</h2>
+<p><code>ApueClient</code> takes <code>authorization</code> — a string, or a function asked before every request — and sends it on every tier: calls, batches, uploads and WebSocket handshakes. The optional <code>headers({ method, path })</code> hook adds per-request headers.</p>
+<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-ws.ts'</span>;
+
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, autoTransport(<span class="tok-s">'https://api.example.com'</span>), {
+  <span class="tok-c">// Asked before every request (calls, batches, uploads, WebSocket handshakes),</span>
+  <span class="tok-c">// so a refreshed token is used from the next request on.</span>
+  authorization: () =&gt; tokens.current(),
+  <span class="tok-c">// Optional per-request headers, e.g. a fresh DPoP proof</span>
+  <span class="tok-c">// (over WebSocket only `dpop` travels).</span>
+  headers: <span class="tok-k">async</span> ({ method, path }) =&gt; ({ dpop: <span class="tok-k">await</span> dpopProof(method, path) }),
+});
+console.log(<span class="tok-k">await</span> client.call(<span class="tok-s">'me.get'</span>));</code></pre></figure>
+
+<h2 id="credentials-over-websocket">Credentials over WebSocket</h2>
+<p>Browsers can’t set headers on a WebSocket handshake, only subprotocols. So on tier T3 the client offers <code>apue.v1</code> plus <code>apue.auth.&lt;base64url of the Authorization value, without padding&gt;</code> (the pattern Kubernetes uses). The server:</p>
+<ul>
+  <li>selects only <code>apue.v1</code> — it never echoes the token;</li>
+  <li>hands the value to the call as <code>authorization</code>, and removes the carrying subprotocol from the headers handlers (and their logs) see;</li>
+  <li>accepts a <code>DPoP</code> proof the same way as <code>apue.dpop.&lt;compact JWS&gt;</code>, unencoded, delivered as <code>dpop</code>;</li>
+  <li>answers unusable credentials — more than one, malformed (not canonical base64url of a valid field value), or next to an <code>Authorization</code> header — <em>in-band</em>: the handshake succeeds, nothing runs, and the client gets a <code>400</code> END frame with the reason. A refused handshake reaches a browser only as a bare failed connection.</li>
+</ul>
+<p>Proxies may log <code>Sec-WebSocket-Protocol</code> like any header, just as they may log <code>Authorization</code>; tokens should be short-lived.</p>
+
+<h2 id="cross-site-websocket-hijacking">Cross-site WebSocket hijacking</h2>
+<p>A WebSocket handshake is not subject to CORS, and browsers send cookies (and cached HTTP credentials) with every handshake. apü therefore:</p>
+<ul>
+  <li>checks <code>Origin</code> against the CORS list (or same-origin) before upgrading;</li>
+  <li>lets a cross-origin handshake keep <code>Cookie</code> and <code>Authorization</code> only if CORS allows credentials (an explicit origin list with <code>credentials: true</code>) — exactly the rule fetch follows. With <code>origins: '*'</code> ambient credentials are removed; credentials the page offers explicitly (the subprotocol) still work.</li>
+</ul>
+<p>Probed in Chrome, Firefox and WebKit: a cross-site WebSocket handshake gets exactly the cookies a cross-site fetch gets — so the rule matters in every browser.</p>
+
+<h2 id="cors">CORS</h2>
+<p>The recommended deployment is same-origin: no preflights at all (the server’s <code>fallback</code> can serve the app). For cross-origin browsers, the <code>cors</code> option:</p>
+<ul>
+  <li>echoes allowed origins in <code>Access-Control-Allow-Origin</code> with <code>Vary: origin</code>, exposes <code>etag</code>, <code>apue-replayed</code>, <code>deprecation</code>, <code>sunset</code>, <code>link</code>, <code>retry-after</code>, <code>accept-query</code> and <code>content-encoding</code> (plus the upload, download and auth headers where they apply), and sends <code>Timing-Allow-Origin</code>;</li>
+  <li>answers preflights with <code>204</code>, methods <code>GET, HEAD, POST, QUERY</code>, only the apü request headers that were asked for, and <code>Access-Control-Max-Age: 7200</code> by default (browsers cap it: Chromium 7200 s, Firefox 86400 s, WebKit 600 s); disallowed origins get <code>403</code>;</li>
+  <li>requires an explicit origin list for <code>credentials: true</code> (the server refuses to start otherwise).</li>
+</ul>
+<p>apü does <strong>not</strong> accept CORS-“simple” content types for non-safe operations. A simple request skips the preflight, which is how cross-site request forgery happens (cf. Apollo’s advisory GHSA-2p3c-p3qw-69r4) — apü pays for the preflight instead.</p>
+
+<h2 id="dpop">DPoP</h2>
+<p><span class="tag tag-planned">deferred</span> A full DPoP (RFC 9449) profile — verifier, nonces, replay cache — is not part of apü. The groundwork lets an application add it without a protocol change: the principal hook gets <code>method</code> and <code>url</code> to check a proof’s <code>htm</code>/<code>htu</code>, the client’s <code>headers</code> hook adds a fresh proof per request, <code>apue.dpop.</code> carries it on T3, and CORS allows <code>DPoP</code> and exposes <code>WWW-Authenticate</code> and <code>DPoP-Nonce</code>.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/batches.html" rel="prev"><span>Previous</span><b>Pipelined batches</b></a><a class="next" href="../docs/caching.html" rel="next"><span>Next</span><b>Caching, CDNs &amp; proxies</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://apue.dev/</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/auth.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/batches.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/binary-data.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/caching.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/client.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/concepts.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/errors.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/getting-started.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/index.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/manifest.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/measurements.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/server.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/spec.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/streaming.html</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/docs/wire-format.html</loc><lastmod>2026-10-28</lastmod></url>
+</urlset>

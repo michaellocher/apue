@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Server reference — apü</title>
+<meta name="description" content="Reference for the apü Node server: createApueServer, handler types and the call context, every server option with its default, uploads, downloads, resume, CORS, listen and graceful close.">
+<link rel="canonical" href="https://apue.dev/docs/server.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Server reference — apü">
+<meta property="og:description" content="Reference for the apü Node server: createApueServer, handler types and the call context, every server option with its default, uploads, downloads, resume, CORS, listen and graceful close.">
+<meta property="og:url" content="https://apue.dev/docs/server.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html" aria-current="page">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html" aria-current="page">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
+<h1>Server reference</h1>
+<p class="page-intro">The reference server runs on <code>node:http2</code> (Node ≥ 26.11): HTTP/2 over TLS with HTTP/1.1 fallback, WebSockets over RFC 8441 and HTTP/1.1 Upgrade. Source: <code>src/server.ts</code>.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#createapueserver">createApueServer</a></li><li><a href="#handlers-and-the-call-context">Handlers and the call context</a></li><li><a href="#options">Options</a></li><li><a href="#serving-the-app-fallback-and-exchange">Serving the app: fallback and Exchange</a></li><li><a href="#shutdown">Shutdown</a></li></ul></nav>
+
+<h2 id="createapueserver">createApueServer</h2>
+<figure class="code"><pre tabindex="0"><code class="language-ts">createApueServer&lt;A <span class="tok-k">extends</span> Api&gt;(api: A, handlers: Handlers&lt;A&gt;, options: ApueServerOptions): ApueServer
+
+<span class="tok-k">interface</span> ApueServer {
+  readonly server: http2.Http2SecureServer;              <span class="tok-c">// the underlying Node server</span>
+  listen(port?: number, host?: string): Promise&lt;number&gt;; <span class="tok-c">// defaults: port 0 (any free port), host 127.0.0.1</span>
+  close(): Promise&lt;<span class="tok-k">void</span>&gt;;                                 <span class="tok-c">// graceful, bounded by shutdownGraceMs</span>
+}</code></pre></figure>
+<p>A missing handler, an invalid option or an API that needs uploads without the <code>uploads</code> option throws at creation. Note the default host: <code>listen()</code> binds to loopback unless you pass one.</p>
+<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">const</span> server = createApueServer(api, handlers, {
+  <span class="tok-c">// TLS is required (HTTP/2 with HTTP/1.1 fallback)</span>
+  key: readFileSync(<span class="tok-s">'certs/key.pem'</span>),
+  cert: readFileSync(<span class="tok-s">'certs/cert.pem'</span>),
+  maxBodyBytes: <span class="tok-n">1024</span> * <span class="tok-n">1024</span>,   <span class="tok-c">// 413 above this (default 1 MiB)</span>
+  shutdownGraceMs: <span class="tok-n">10_000</span>,     <span class="tok-c">// close(): calls in flight get this long, then 503</span>
+  resume: { secret: process.env.APUE_RESUME_SECRET! }, <span class="tok-c">// the same on every replica</span>
+  compression: { codings: [<span class="tok-s">'zstd'</span>, <span class="tok-s">'br'</span>, <span class="tok-s">'gzip'</span>], minBytes: <span class="tok-n">1024</span> },
+  <span class="tok-c">// Serve the web app from the same origin: no CORS, no preflights.</span>
+  fallback: (exchange: Exchange) =&gt; {
+    <span class="tok-k">if</span> (exchange.url !== <span class="tok-s">'/'</span>) <span class="tok-k">return</span> <span class="tok-k">false</span>;
+    exchange.send(<span class="tok-n">200</span>, { <span class="tok-s">'content-type'</span>: <span class="tok-s">'text/html; charset=utf-8'</span> }, page);
+    <span class="tok-k">return</span> <span class="tok-k">true</span>;
+  },
+});
+<span class="tok-k">const</span> port = <span class="tok-k">await</span> server.listen(<span class="tok-n">8443</span>, <span class="tok-s">'0.0.0.0'</span>);
+process.on(<span class="tok-s">'SIGTERM'</span>, () =&gt; <span class="tok-k">void</span> server.close());</code></pre></figure>
+
+<h2 id="handlers-and-the-call-context">Handlers and the call context</h2>
+<p><code>Handlers&lt;typeof api&gt;</code> maps every operation to a handler <code>(input, ctx) =&gt; output</code>:</p>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Handler shapes"><table>
+  <thead><tr><th scope="col">stream</th><th scope="col">input</th><th scope="col">returns</th></tr></thead>
+  <tbody>
+    <tr><td><code>none</code></td><td>the validated input</td><td>the output, or a promise of it</td></tr>
+    <tr><td><code>server</code></td><td>the validated input</td><td>an <code>AsyncIterable</code> of outputs (or a promise of one)</td></tr>
+    <tr><td><code>client</code></td><td><code>AsyncIterable</code> of inputs</td><td>the output, or a promise of it</td></tr>
+    <tr><td><code>bidi</code></td><td><code>AsyncIterable</code> of inputs</td><td>an <code>AsyncIterable</code> of outputs</td></tr>
+  </tbody>
+</table></div>
+<div class="table-wrap" role="region" tabindex="0" aria-label="CallContext"><table>
+  <thead><tr><th scope="col"><code>ctx</code> member</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>op</code></td><td>The operation name</td></tr>
+    <tr><td><code>signal</code></td><td>Aborted when the client goes away, the deadline (<code>apue-timeout</code>) passes or the server shuts down</td></tr>
+    <tr><td><code>headers</code>, <code>httpVersion</code>, <code>method</code></td><td>The request’s headers, HTTP version and method</td></tr>
+    <tr><td><code>principal</code></td><td>The caller from the <code>principal</code> hook (undefined: anonymous or no hook)</td></tr>
+    <tr><td><code>resumeFrom</code></td><td>Resumable streams: the cursor of the last checkpoint the client received</td></tr>
+    <tr><td><code>checkpoint(cursor)</code></td><td>Resumable streams: everything yielded so far is covered by <code>cursor</code>; sends a signed CHECKPOINT frame</td></tr>
+  </tbody>
+</table></div>
+<p>Throw <code>ApueError</code> (from <code>src/protocol.ts</code>) for an error response; anything else becomes a <code>500</code> without details.</p>
+
+<h2 id="options">Options</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Server options"><table>
+  <thead><tr><th scope="col">Option</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>key</code>, <code>cert</code></td><td>required</td><td>TLS key and certificate</td></tr>
+    <tr><td><code>principal</code></td><td>none</td><td><code>(request) =&gt; string | undefined</code> (may be async): who is calling. See <a href="auth.html">Callers &amp; auth</a></td></tr>
+    <tr><td><code>cors</code></td><td>none (same-origin)</td><td><code>{ origins: string[] | '*', credentials?, maxAge? }</code>; <code>maxAge</code> default 7200 s; credentials need an explicit list</td></tr>
+    <tr><td><code>uploads</code></td><td>off</td><td>Resumable uploads at <code>/$uploads</code>; required by APIs with bytes or files in unary inputs (below)</td></tr>
+    <tr><td><code>downloads</code></td><td>on for APIs with <code>t.download()</code></td><td><code>{ ttlMs = 15 min, maxEntries = 10,000 }</code></td></tr>
+    <tr><td><code>resume</code></td><td>random secret per process</td><td><code>{ secret, ttlMs = 15 min }</code>: share <code>secret</code> (≥ 16 bytes) between replicas so any instance can resume a stream</td></tr>
+    <tr><td><code>idempotency</code></td><td>in-memory store (24 h, 10,000 entries)</td><td>An <code>IdempotencyStore</code> (<code>begin</code>, <code>complete</code>, <code>release</code>), or <code>false</code> to disable</td></tr>
+    <tr><td><code>compression</code></td><td>zstd, br, gzip from 1 KiB</td><td><code>false</code>, or <code>{ codings?, minBytes? }</code></td></tr>
+    <tr><td><code>fallback</code></td><td>none</td><td><code>(exchange) =&gt; boolean</code>: serve non-operation paths (the web app, health checks); return true when handled</td></tr>
+    <tr><td><code>validateOutput</code></td><td><code>true</code></td><td>Validate and strip handler output (no accidental data leaks)</td></tr>
+    <tr><td><code>maxBodyBytes</code></td><td>1 MiB</td><td>Largest request body or request-stream message (<code>413</code>)</td></tr>
+    <tr><td><code>maxJsonDepth</code></td><td>64</td><td>Maximum nesting of incoming JSON (<code>400</code> before parsing)</td></tr>
+    <tr><td><code>maxBatchCalls</code></td><td>64</td><td>Calls per pipelined batch</td></tr>
+    <tr><td><code>bodyTimeoutMs</code></td><td>30 s</td><td>A unary request body must arrive within this time (<code>408</code>)</td></tr>
+    <tr><td><code>heartbeatMs</code></td><td>15 s</td><td>Idle time before a HEARTBEAT frame</td></tr>
+    <tr><td><code>commitAfterMs</code></td><td>50 ms</td><td>How long a stream may wait for its first item before headers are committed (the commit window)</td></tr>
+    <tr><td><code>coalesceBytes</code></td><td>16 KiB</td><td>Frames are coalesced into one write until this many bytes are pending (0: off)</td></tr>
+    <tr><td><code>maxBufferedBytes</code></td><td>256 KiB</td><td>Response bytes buffered per stream before the producer waits</td></tr>
+    <tr><td><code>streamWindow</code></td><td>4 MiB</td><td>HTTP/2 per-stream receive window</td></tr>
+    <tr><td><code>connectionWindow</code></td><td>32 MiB</td><td>HTTP/2 per-connection receive window (Node’s own default is 64 KiB)</td></tr>
+    <tr><td><code>webSocketWindow</code></td><td><code>streamWindow</code></td><td>Receive window granted to each WebSocket (T3) client, between 64 KiB and 2³¹−1</td></tr>
+    <tr><td><code>maxConcurrentStreams</code></td><td>256</td><td><code>SETTINGS_MAX_CONCURRENT_STREAMS</code> (Node’s default is unlimited)</td></tr>
+    <tr><td><code>idleTimeoutMs</code></td><td>120 s</td><td>Idle HTTP/2 sessions get GOAWAY, and are destroyed if still idle one period later (0: off)</td></tr>
+    <tr><td><code>shutdownGraceMs</code></td><td>10 s</td><td><code>close()</code> lets calls finish this long, then ends the rest with a retryable <code>503</code> (<code>Infinity</code>: wait for all)</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="upload-options">Upload options</h3>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Upload options"><table>
+  <thead><tr><th scope="col"><code>uploads.</code></th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>maxBytes</code></td><td>64 MiB</td><td>Largest upload (<code>Upload-Limit: max-size</code>)</td></tr>
+    <tr><td><code>storeBytes</code></td><td>256 MiB</td><td>All uploads together; beyond it new data is refused with <code>503</code></td></tr>
+    <tr><td><code>ttlMs</code></td><td>1 h</td><td>Lifetime of an upload from its creation (<code>max-age</code>)</td></tr>
+    <tr><td><code>scopeBytes</code></td><td><code>storeBytes / 4</code></td><td>Bytes one client may hold, received or announced (<code>507</code> beyond)</td></tr>
+    <tr><td><code>scopeUploads</code></td><td>100</td><td>Uploads one client may hold</td></tr>
+    <tr><td><code>directory</code></td><td>none (memory)</td><td>Keep content in files; a per-process subdirectory, removed on <code>close()</code></td></tr>
+    <tr><td><code>persistent</code></td><td><code>false</code></td><td>With <code>directory</code>: uploads survive restarts (one process per directory, lock file)</td></tr>
+  </tbody>
+</table></div>
+<p>Limits are validated as positive integers at startup. A “client” is its principal, or its address without a <code>principal</code> hook.</p>
+
+<h2 id="serving-the-app-fallback-and-exchange">Serving the app: <code>fallback</code> and <code>Exchange</code></h2>
+<p>Paths that are not operations or reserved paths go to <code>fallback(exchange)</code>. The <code>Exchange</code> gives you <code>method</code>, <code>url</code>, <code>headers</code>, <code>remoteAddress</code> and <code>send(status, headers, body?)</code>, among others; the todo example uses it to serve its HTML page and the type-stripped <code>src/*.ts</code> modules, so page and API share one origin and need no CORS.</p>
+
+<h2 id="shutdown">Shutdown</h2>
+<p><code>close()</code> waits for calls in flight at most <code>shutdownGraceMs</code>, then aborts the rest with a retryable <code>503</code> — as the response, or as an END frame for running streams — gives that one second to flush and drops the remaining connections. WebSocket calls close with 1001. It returns as soon as the last call is done; file-backed uploads in a per-process directory are removed.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/manifest.html" rel="prev"><span>Previous</span><b>Manifest &amp; codegen</b></a><a class="next" href="../docs/client.html" rel="next"><span>Next</span><b>Client reference</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

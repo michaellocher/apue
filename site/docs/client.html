@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Client reference — apü</title>
+<meta name="description" content="Reference for the apü TypeScript client: ApueClient methods and options, call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), downloads and uploads.">
+<link rel="canonical" href="https://apue.dev/docs/client.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1016" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Client reference — apü">
+<meta property="og:description" content="Reference for the apü TypeScript client: ApueClient methods and options, call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), downloads and uploads.">
+<meta property="og:url" content="https://apue.dev/docs/client.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span><span class="draft-tag">research draft</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html" aria-current="page">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html" aria-current="page">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
+<h1>Client reference</h1>
+<p class="page-intro"><code>ApueClient</code> is typed from the API definition — no code generation — and runs in Node and in browsers (web-platform APIs only; transports are pluggable). Source: <code>src/client.ts</code>, <code>src/transport-http2.ts</code>, <code>src/transport-ws.ts</code>.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#apueclient">ApueClient</a></li><li><a href="#options">Options</a></li><li><a href="#transports">Transports</a></li><li><a href="#in-the-browser">In the browser</a></li><li><a href="#downloads">Downloads</a></li><li><a href="#errors">Errors</a></li></ul></nav>
+
+<h2 id="apueclient">ApueClient</h2>
+<figure class="code"><pre tabindex="0"><code class="language-ts"><span class="tok-k">new</span> ApueClient(api, transport, options?: ClientOptions)</code></pre></figure>
+<div class="table-wrap" role="region" tabindex="0" aria-label="ApueClient methods"><table>
+  <thead><tr><th scope="col">Method</th><th scope="col">For</th><th scope="col">Returns</th></tr></thead>
+  <tbody>
+    <tr><td><code>call(op, input?, options?)</code></td><td>unary operations</td><td><code>Promise&lt;Output&gt;</code></td></tr>
+    <tr><td><code>pick(op, input, paths, options?)</code></td><td>unary, only some fields (<code>?s=</code>); paths checked at compile time</td><td><code>Promise&lt;DeepPartial&lt;Output&gt;&gt;</code></td></tr>
+    <tr><td><code>stream(op, input?, options?)</code></td><td>server streams; <code>break</code> cancels on the server</td><td><code>AsyncGenerator&lt;Output&gt;</code></td></tr>
+    <tr><td><code>duplex(op, inputs, options?)</code></td><td>client and bidi streams; <code>inputs</code> is an <code>AsyncIterable</code></td><td><code>AsyncGenerator&lt;Output&gt;</code></td></tr>
+    <tr><td><code>batch()</code></td><td><a href="batches.html">pipelined batches</a>: <code>.call()</code>, <code>.stream()</code>, <code>.send()</code></td><td><code>Batch</code></td></tr>
+    <tr><td><code>upload(bytes | blob, { signal?, resumes? })</code></td><td>a resumable upload you reuse in several calls</td><td><code>Promise&lt;UploadRef&gt;</code></td></tr>
+    <tr><td><code>deleteUpload(ref)</code></td><td>remove such an upload (it expires anyway)</td><td><code>Promise&lt;void&gt;</code></td></tr>
+    <tr><td><code>close()</code></td><td>wait for upload clean-up, then close the transport</td><td><code>Promise&lt;void&gt;</code></td></tr>
+  </tbody>
+</table></div>
+<p>Where an input schema has <code>t.bytes()</code>, the input type also accepts an <code>UploadRef</code>; where it has <code>t.file()</code>, a <code>Blob</code>, <code>Uint8Array</code> or <code>UploadRef</code>. Where an output has <code>t.download()</code>, you get a <code>Download</code>.</p>
+
+<h2 id="options">Options</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="ClientOptions"><table>
+  <thead><tr><th scope="col"><code>ClientOptions</code></th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>retries</code></td><td>2</td><td>Retries for retry-eligible calls (safe, or keyed)</td></tr>
+    <tr><td><code>backoffMs</code></td><td>100</td><td>Base backoff: attempt n waits a random time in [0, base·2ⁿ] (full jitter)</td></tr>
+    <tr><td><code>maxBackoffMs</code></td><td>2000</td><td>Cap for backoff and for honoured <code>Retry-After</code> values</td></tr>
+    <tr><td><code>authorization</code></td><td>none</td><td>An <code>Authorization</code> value, or a function asked before every request; over WebSocket sent as an <code>apue.auth.</code> subprotocol</td></tr>
+    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> per request, e.g. a fresh <code>DPoP</code> proof; over WebSocket only <code>dpop</code> travels</td></tr>
+  </tbody>
+</table></div>
+<div class="table-wrap" role="region" tabindex="0" aria-label="CallOptions"><table>
+  <thead><tr><th scope="col"><code>CallOptions</code></th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>signal</code></td><td>Cancels the call; the client rethrows the signal’s reason</td></tr>
+    <tr><td><code>timeoutMs</code></td><td>Deadline, sent as <code>apue-timeout</code>; the server answers <code>504</code> after it</td></tr>
+    <tr><td><code>idempotencyKey</code></td><td>Your own key instead of the generated UUID (non-safe unary calls)</td></tr>
+    <tr><td><code>retries</code></td><td>This call’s retry budget</td></tr>
+    <tr><td><code>resumes</code></td><td>Resumable streams: how often to resume after a lost connection (default 3)</td></tr>
+    <tr><td><code>select</code></td><td>Field paths (<code>?s=</code>); prefer the typed <code>pick()</code></td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="transports">Transports</h2>
+<figure class="code"><figcaption>transports</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'../../src/client.ts'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-http2.ts'</span>;
+<span class="tok-k">import</span> { autoTransport, webSocketTransport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-ws.ts'</span>;
+
+<span class="tok-c">// Node, server to server: node:http2, full duplex (tier T1), zstd/br/gzip, 4 MiB windows.</span>
+<span class="tok-k">const</span> ca = readFileSync(<span class="tok-s">'ca.pem'</span>);
+<span class="tok-k">const</span> node = <span class="tok-k">new</span> ApueClient(api, http2Transport(<span class="tok-s">'https://api.internal'</span>, { ca }));
+
+<span class="tok-c">// Browsers: fetch for everything; request streams over fetch where the browser can</span>
+<span class="tok-c">// stream uploads (Chromium), else over WebSocket (tier T3).</span>
+<span class="tok-k">const</span> browser = <span class="tok-k">new</span> ApueClient(api, autoTransport(location.origin));
+
+<span class="tok-c">// Explicit choices</span>
+<span class="tok-k">const</span> base = <span class="tok-s">'https://api.example.com'</span>;
+<span class="tok-k">const</span> plain = <span class="tok-k">new</span> ApueClient(api, fetchTransport(base, { credentials: <span class="tok-s">'include'</span> }));
+<span class="tok-k">const</span> sockets = <span class="tok-k">new</span> ApueClient(api, webSocketTransport(base, { receiveWindow: <span class="tok-n">4</span> * <span class="tok-n">1024</span> * <span class="tok-n">1024</span> }));
+
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, http2Transport(<span class="tok-s">'https://api.internal'</span>), {
+  retries: <span class="tok-n">2</span>,          <span class="tok-c">// retry budget for retry-eligible calls (default 2)</span>
+  backoffMs: <span class="tok-n">100</span>,      <span class="tok-c">// full jitter: attempt n waits random [0, 100·2ⁿ] ms …</span>
+  maxBackoffMs: <span class="tok-n">2_000</span>, <span class="tok-c">// … capped at 2 s</span>
+});
+<span class="tok-k">await</span> client.close();  <span class="tok-c">// waits for upload clean-up, then closes the transport</span></code></pre></figure>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Transports"><table>
+  <thead><tr><th scope="col">Factory</th><th scope="col">Where</th><th scope="col">Options</th></tr></thead>
+  <tbody>
+    <tr><td><code>http2Transport(origin, options?)</code></td><td>Node: one multiplexed <code>node:http2</code> session per origin, full duplex (T1)</td><td><code>ca</code>; <code>streamWindow</code> (4 MiB), <code>connectionWindow</code> (32 MiB); <code>acceptEncoding</code> (<code>'zstd, br, gzip'</code>, responses decompressed); <code>windowTuning</code>: <code>'fixed'</code> (default) or <code>'bdp'</code> (experimental, measured no better)</td></tr>
+    <tr><td><code>fetchTransport(baseUrl, options?)</code></td><td>Anywhere with fetch: T0, and T2 request streams where fetch can stream uploads</td><td><code>fetch</code> (your implementation); <code>credentials</code> (e.g. <code>'include'</code>, so Chrome shares the HTTP/2 connection with WebSockets)</td></tr>
+    <tr><td><code>webSocketTransport(baseUrl, options?)</code></td><td>Request streams over WebSocket (T3); every other call over fetch</td><td><code>receiveWindow</code> (4 MiB: the client’s memory bound per call), <code>WebSocketImpl</code>, <code>http</code> (transport for non-stream calls)</td></tr>
+    <tr><td><code>autoTransport(baseUrl)</code></td><td>Browsers: fetch for everything; request streams via fetch if supported, else WebSocket</td><td>—</td></tr>
+  </tbody>
+</table></div>
+<p>A transport is a small interface — <code>request({ method, path, headers, body, signal })</code> returning status, headers and a body iterable, plus optional <code>close()</code> and <code>baseUrl</code> — so you can supply your own.</p>
+
+<h2 id="in-the-browser">In the browser</h2>
+<p>There is no bundle yet. The todo example’s server type-strips <code>src/*.ts</code> on request, and its page imports them directly:</p>
+<figure class="code"><figcaption>examples/todo/index.html (excerpt)</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'/src/client.ts'</span>;
+<span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'/src/transport-ws.ts'</span>;
+<span class="tok-k">import</span> { todoApi } <span class="tok-k">from</span> <span class="tok-s">'/examples/todo/api.ts'</span>;
+
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(todoApi, fetchTransport(location.origin));
+<span class="tok-k">const</span> uploads = <span class="tok-k">new</span> ApueClient(todoApi, autoTransport(location.origin));
+
+<span class="tok-k">await</span> client.call(<span class="tok-s">'todos.create'</span>, { title }); <span class="tok-c">// validated before sending, retried safely (Idempotency-Key)</span>
+<span class="tok-k">const</span> [count] = <span class="tok-k">await</span> Array.fromAsync(uploads.duplex(<span class="tok-s">'todos.import'</span>, titles()));</code></pre></figure>
+
+<h2 id="downloads">Downloads</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Download object"><table>
+  <thead><tr><th scope="col"><code>Download</code></th><th scope="col">Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>url</code>, <code>path</code></td><td>The download resource; <code>url</code> is absolute when the transport knows its base URL. Usable as a plain link until it expires.</td></tr>
+    <tr><td><code>size</code>, <code>type</code>, <code>sha256</code>, <code>expires</code></td><td>Content length, media type, SHA-256 (hex, if the server knows it), expiry (<code>Date</code>)</td></tr>
+    <tr><td><code>stream({ signal? })</code></td><td>The content as it arrives; resumes with <code>Range</code> + <code>If-Range</code> within the retry budget; verifies the SHA-256 in Node</td></tr>
+    <tr><td><code>bytes({ signal? })</code>, <code>blob({ signal? })</code></td><td>The whole content; <code>bytes()</code> verifies the SHA-256 with WebCrypto everywhere</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="errors">Errors</h2>
+<p>Every failure is thrown as an <code>ApueError</code> with <code>status</code> and <code>problem</code> (RFC 9457 fields plus extensions). Client-side validation failures are <code>400</code> <code>validation-failed</code> without a request being sent; an unknown operation name is <code>404</code>; undecodable or truncated responses are <code>502</code>. A cancelled call rejects with your signal’s reason. See <a href="errors.html">Errors</a>.</p>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/server.html" rel="prev"><span>Previous</span><b>Server reference</b></a><a class="next" href="../docs/wire-format.html" rel="next"><span>Next</span><b>Wire format</b></a></nav>
+</main>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect class="logo-bg" width="32" height="32" rx="8"/><circle class="logo-fg" cx="11" cy="8.6" r="2.3" stroke="none"/><circle class="logo-fg" cx="21" cy="8.6" r="2.3" stroke="none"/><path class="logo-fg" d="M10 13.6v6a6 6 0 0 0 12 0v-6" fill="none" stroke-width="3.2" stroke-linecap="round" style="fill:none"/></svg><span>apü</span></a>
+      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

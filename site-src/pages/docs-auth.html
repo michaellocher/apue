@@ -1,0 +1,49 @@
+<!--{"path":"docs/auth.html","layout":"docs","title":"Callers & auth — apü","description":"How apü identifies callers: the principal hook, credentials on every tier including WebSocket, CORS, protection against cross-site WebSocket hijacking and CSRF, and the DPoP groundwork."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Callers &amp; auth</h1>
+<p class="page-intro">apü defines no authentication scheme. Credentials are the standard <code>Authorization</code> header or cookies, checked by your application. What apü adds is a single place to name the caller — and the plumbing that makes credentials arrive the same way on every transport.</p>
+{{toc}}
+
+<h2>The principal hook</h2>
+<p>The server option <code>principal(request)</code> (may be async) returns a stable identity for the caller — a user or account id, <em>not</em> the credential, which changes on every token refresh — or <code>undefined</code> for anonymous callers. An <code>ApueError</code> it throws, such as a <code>401</code> with <code>WWW-Authenticate</code>, is the response.</p>
+{{code:docs/auth-server.ts|server.ts}}
+<ul>
+  <li>It runs once per operation, batch or upload request — not for the manifest, preflights or <code>fallback</code> — and before method checks, so an unauthenticated call gets its <code>401</code> first.</li>
+  <li>The request it sees has <code>headers</code>, <code>remoteAddress</code>, <code>method</code> and <code>url</code>. A WebSocket call reports <code>POST</code>, its logical method, so a proof signed for <code>POST /op</code> verifies on every tier.</li>
+  <li>The principal <strong>scopes</strong> idempotency keys, uploads (visibility and quota) and resume tokens. Handlers get it as <code>ctx.principal</code>.</li>
+</ul>
+<p><strong>Without the hook</strong> these scopes are the raw <code>Authorization</code> header — a refreshed token is a new scope, so a retry after a refresh executes again — resume tokens are bound to operation and input only, and upload quotas count per address (an unverified header must not buy a fresh quota; behind a proxy that address is the proxy’s, for everyone).</p>
+
+<h2>Credentials from clients</h2>
+<p><code>ApueClient</code> takes <code>authorization</code> — a string, or a function asked before every request — and sends it on every tier: calls, batches, uploads and WebSocket handshakes. The optional <code>headers({ method, path })</code> hook adds per-request headers.</p>
+{{code:docs/auth-client.ts|client.ts}}
+
+<h2>Credentials over WebSocket</h2>
+<p>Browsers can’t set headers on a WebSocket handshake, only subprotocols. So on tier T3 the client offers <code>apue.v1</code> plus <code>apue.auth.&lt;base64url of the Authorization value, without padding&gt;</code> (the pattern Kubernetes uses). The server:</p>
+<ul>
+  <li>selects only <code>apue.v1</code> — it never echoes the token;</li>
+  <li>hands the value to the call as <code>authorization</code>, and removes the carrying subprotocol from the headers handlers (and their logs) see;</li>
+  <li>accepts a <code>DPoP</code> proof the same way as <code>apue.dpop.&lt;compact JWS&gt;</code>, unencoded, delivered as <code>dpop</code>;</li>
+  <li>answers unusable credentials — more than one, malformed (not canonical base64url of a valid field value), or next to an <code>Authorization</code> header — <em>in-band</em>: the handshake succeeds, nothing runs, and the client gets a <code>400</code> END frame with the reason. A refused handshake reaches a browser only as a bare failed connection.</li>
+</ul>
+<p>Proxies may log <code>Sec-WebSocket-Protocol</code> like any header, just as they may log <code>Authorization</code>; tokens should be short-lived.</p>
+
+<h2>Cross-site WebSocket hijacking</h2>
+<p>A WebSocket handshake is not subject to CORS, and browsers send cookies (and cached HTTP credentials) with every handshake. apü therefore:</p>
+<ul>
+  <li>checks <code>Origin</code> against the CORS list (or same-origin) before upgrading;</li>
+  <li>lets a cross-origin handshake keep <code>Cookie</code> and <code>Authorization</code> only if CORS allows credentials (an explicit origin list with <code>credentials: true</code>) — exactly the rule fetch follows. With <code>origins: '*'</code> ambient credentials are removed; credentials the page offers explicitly (the subprotocol) still work.</li>
+</ul>
+<p>Probed in Chrome, Firefox and WebKit: a cross-site WebSocket handshake gets exactly the cookies a cross-site fetch gets — so the rule matters in every browser.</p>
+
+<h2>CORS</h2>
+<p>The recommended deployment is same-origin: no preflights at all (the server’s <code>fallback</code> can serve the app). For cross-origin browsers, the <code>cors</code> option:</p>
+<ul>
+  <li>echoes allowed origins in <code>Access-Control-Allow-Origin</code> with <code>Vary: origin</code>, exposes <code>etag</code>, <code>apue-replayed</code>, <code>deprecation</code>, <code>sunset</code>, <code>link</code>, <code>retry-after</code>, <code>accept-query</code> and <code>content-encoding</code> (plus the upload, download and auth headers where they apply), and sends <code>Timing-Allow-Origin</code>;</li>
+  <li>answers preflights with <code>204</code>, methods <code>GET, HEAD, POST, QUERY</code>, only the apü request headers that were asked for, and <code>Access-Control-Max-Age: 7200</code> by default (browsers cap it: Chromium 7200 s, Firefox 86400 s, WebKit 600 s); disallowed origins get <code>403</code>;</li>
+  <li>requires an explicit origin list for <code>credentials: true</code> (the server refuses to start otherwise).</li>
+</ul>
+<p>apü does <strong>not</strong> accept CORS-“simple” content types for non-safe operations. A simple request skips the preflight, which is how cross-site request forgery happens (cf. Apollo’s advisory GHSA-2p3c-p3qw-69r4) — apü pays for the preflight instead.</p>
+
+<h2>DPoP</h2>
+<p><span class="tag tag-planned">deferred</span> A full DPoP (RFC 9449) profile — verifier, nonces, replay cache — is not part of apü. The groundwork lets an application add it without a protocol change: the principal hook gets <code>method</code> and <code>url</code> to check a proof’s <code>htm</code>/<code>htu</code>, the client’s <code>headers</code> hook adds a fresh proof per request, <code>apue.dpop.</code> carries it on T3, and CORS allows <code>DPoP</code> and exposes <code>WWW-Authenticate</code> and <code>DPoP-Nonce</code>.</p>

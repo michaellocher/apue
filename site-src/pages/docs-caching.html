@@ -1,0 +1,61 @@
+<!--{"path":"docs/caching.html","layout":"docs","title":"Caching, CDNs & proxies — apü","description":"apü caching: strong ETags and 304s, Cache-Control from the operation, CDN-Cache-Control and RFC 9875 cache groups, QUERY through CDNs, and measured behaviour through nginx, Caddy, HAProxy and Envoy."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Caching, CDNs &amp; proxies</h1>
+<p class="page-intro">Because safe operations are ordinary <code>GET</code>s with deterministic URLs, every HTTP cache between client and server can do its job. This page covers the headers apü sets, and what was observed through real proxies.</p>
+{{toc}}
+
+<h2>Cache headers from the operation</h2>
+{{code:docs/caching.ts|api.ts}}
+<ul>
+  <li><strong>ETag</strong>: safe responses carry a strong ETag, the SHA-256 of the representation (per content coding and per field selection). <code>If-None-Match</code> → <code>304</code> (weak comparison).</li>
+  <li><strong>Cache-Control</strong> comes from the operation’s <code>cache</code> declaration: <code>max-age</code>, <code>stale-while-revalidate</code>, <code>private</code>. Without one, safe responses are <code>no-cache</code> — stored, but revalidated with the ETag every time. Non-safe operations and streams are <code>no-store</code>.</li>
+  <li><strong>Vary</strong> for <code>accept</code>, <code>accept-encoding</code> and <code>origin</code> as applicable. <code>HEAD</code> works wherever <code>GET</code> does.</li>
+  <li><strong>CDN-Cache-Control</strong> (RFC 9213): <code>cache.cdnMaxAge</code> sets <code>CDN-Cache-Control: max-age=N</code>; CDNs use it instead of <code>Cache-Control</code>, browsers keep <code>max-age</code>.</li>
+  <li><strong>Cache groups</strong> (RFC 9875): <code>cache.groups</code> sends <code>Cache-Groups</code>; <code>invalidates</code> on a non-safe operation sends <code>Cache-Group-Invalidation</code> on successful responses, so caches that support it can drop the group. At most 32 groups of 1–32 printable ASCII characters, checked by <code>op()</code>.</li>
+</ul>
+<p>A real response from the <a href="getting-started.html">getting-started</a> API, whose read declares <code>cache: { maxAge: 60 }</code>:</p>
+{{pre:http}}
+HTTP/2 200
+accept-query: "application/json"
+content-type: application/json
+cache-control: public, max-age=60
+etag: "6Rw7uGkU5twQHJtUgjQCBL"
+{{/pre}}
+
+<h2>QUERY and CDNs</h2>
+<p>Reads whose input doesn’t fit a 2 KiB URL use <code>QUERY</code> (RFC 10008). It is cacheable by definition, but <strong>no CDN caches it today</strong>: CloudFront answers <code>403</code>, Akamai <code>501</code>; nginx, Envoy ≥ 1.40, HAProxy and Fastly forward it. The client falls back to <code>POST</code> when <code>QUERY</code> is rejected. <span class="tag tag-planned">planned</span> <code>QUERY</code> responses with <code>Location</code> / <code>Content-Location</code> pointing to a GET-able URL.</p>
+
+<h2>Through real proxies</h2>
+<p>Measured with a Node client → proxy (TLS, HTTP/2 to the client) → apü server, all in Docker: nginx 1.31.8, Caddy 2.11.7, HAProxy 3.4.7, Envoy 1.40.2.</p>
+<table data-label="Behaviour through proxies">
+  <thead><tr><th scope="col">Check</th><th scope="col">nginx defaults</th><th scope="col">nginx tuned</th><th scope="col">Caddy defaults</th><th scope="col">HAProxy defaults</th><th scope="col">Envoy defaults</th><th scope="col">Envoy tuned</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Unary GET, QUERY, POST + Idempotency-Key</th><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><th scope="row">Stream TTFB (first item of a 1.5 s stream)</th><td>✓ 4 ms</td><td>✓ 3 ms</td><td>✓ 3 ms</td><td>✓ 3 ms</td><td>✓ 2 ms</td><td>✓ 2 ms</td></tr>
+    <tr><th scope="row">Client cancel reaches the backend</th><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><th scope="row">Full-duplex request stream (T1)</th><td>✗ request buffered</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><th scope="row">WebSocket (T3)</th><td>✗ no upgrade headers</td><td>✓</td><td>✓</td><td>✓</td><td>✗ no <code>upgrade_configs</code></td><td>✓</td></tr>
+    <tr><th scope="row">zstd response passed through</th><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+    <tr><th scope="row">Stalled consumer: server ahead, HTTP/2</th><td>—</td><td>5.8–6.3 MiB</td><td>9.5 MiB</td><td>6.5–7.0 MiB</td><td>32 MiB</td><td>32 MiB</td></tr>
+    <tr><th scope="row">Stalled consumer: server ahead, WebSocket credit</th><td>—</td><td>4.0 MiB</td><td>4.0 MiB</td><td>4.0 MiB</td><td>—</td><td>4.0 MiB</td></tr>
+  </tbody>
+</table>
+<ol>
+  <li>Request/response traffic works through every proxy with default settings, including <code>QUERY</code>, idempotency keys, ETags and zstd.</li>
+  <li>Streaming responses are never buffered: nginx because apü sends <code>X-Accel-Buffering: no</code> (all four ignore <code>Incremental: ?1</code> today); Caddy, HAProxy and Envoy stream by default.</li>
+  <li>Full duplex needs <code>proxy_request_buffering off</code> in nginx; WebSockets need upgrade headers in nginx and <code>upgrade_configs</code> in Envoy. Caddy and HAProxy work with their defaults.</li>
+  <li>HTTP/2 backpressure is hop-by-hop, so proxies let a server run 5.8–32 MiB ahead of a stalled consumer; the WebSocket tier’s end-to-end credit held at the client’s 4 MiB window behind every proxy that passes WebSockets.</li>
+  <li>Envoy surfaced a crash: when a client cancelled, Envoy reset the upstream stream with <code>INTERNAL_ERROR</code> instead of <code>CANCEL</code>, and the unhandled error killed the server. Fixed, with a regression test for the relevant reset codes.</li>
+  <li>Behind Caddy, apü compresses responses the client never asked to be compressed: Caddy’s upstream transport adds <code>Accept-Encoding: gzip</code> and decompresses for the client.</li>
+</ol>
+<p>The tuned configurations are <code>bench/proxy/nginx-tuned.conf</code> and <code>bench/proxy/envoy-tuned.yaml</code> in the repository.</p>
+
+<h2>Behind load balancers</h2>
+<ul>
+  <li>Servers are stateless: no sessions, no sticky connections. Resume tokens are self-contained and verified by any replica with the shared secret.</li>
+  <li>Heartbeats every 15 s of silence keep streams alive through intermediary timeouts of 15–125 s.</li>
+  <li>Per connection, the server limits concurrent streams (<code>maxConcurrentStreams</code>, 256 — Node’s own default is unlimited), closes idle sessions with GOAWAY (120 s), bounds the time a unary body may take (30 s → <code>408</code>) and the size of messages (<code>413</code>).</li>
+</ul>
+
+<h2>Compression</h2>
+<p><code>Accept-Encoding</code> is negotiated with q-values; the server prefers zstd, then brotli, then gzip, at levels zstd-3, brotli-4 and gzip-1 (brotli-11 runs at about 1 MiB/s — never on the fly). Unary bodies are compressed from 1 KiB, off the event loop from 64 KiB, with <code>Vary: accept-encoding</code> and an ETag per coding. Streams flush the compressor after every burst of frames, so time to first byte is unaffected. On a 100 Mbit/s, 63 ms RTT link, zstd gave 2.7× stream and 1.8× bulk throughput. Don’t mix secrets with attacker-echoed data in one compressed stream.</p>

@@ -1925,7 +1925,8 @@ a.card:hover h3::after {
 
 .spike-bar {
   display: grid;
-  grid-template-columns: repeat(30, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
   gap: 3px;
   margin: 0.25rem 0 0.75rem;
 }

@@ -25,7 +25,7 @@
     <tr><td>11</td><td>Schemas, manifest, derived docs, API catalog, OpenAPI 3.2, generated clients (TypeScript, Python, Go, Java), evolution</td><td><span class="tag tag-ok">implemented</span>; Swift <span class="tag tag-planned">in progress</span></td><td><a href="manifest.html">Clients &amp; OpenAPI</a></td></tr>
     <tr><td>12</td><td>Data plane and performance guidance</td><td>guidance, measured</td><td><a href="measurements.html">Measurements</a></td></tr>
     <tr><td>13</td><td>Open questions</td><td>see below</td><td>below</td></tr>
-    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S29 done</td><td>below</td></tr>
+    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S31 done</td><td>below</td></tr>
   </tbody>
 </table>
 
@@ -78,6 +78,7 @@
     <tr><td>S24–S27</td><td>Uploads that survive a restart; consumer pacing and DPoP groundwork; downloads and CBOR closed; Python clients</td></tr>
     <tr><td>S28</td><td>Production readiness: the npm package and release pipeline, replicas (shared idempotency stores, <code>instance</code> routing verified through nginx), OpenAPI 3.2, a <code>logger</code> option, decisions on every remaining item</td></tr>
     <tr><td>S29</td><td>Clients: Python complete (resume, batches, compression, validation), Go (full duplex) and Java</td></tr>
+    <tr><td>S30–S31</td><td>Beta hardening: live streams in WebKit on Linux (brotli held back), uploads over emulated networks (a session memory limit and an outdated offset on resume, both fixed)</td></tr>
   </tbody>
 </table>
-<p>The suite stood at 391 tests after S29, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in the spike log and in <code>docs/status.md</code>.</p>
+<p>The suite stood at 395 tests after S31, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in the spike log and in <code>docs/status.md</code>.</p>

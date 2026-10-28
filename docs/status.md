@@ -1,128 +1,38 @@
-# Status — 2026-10-28 (overnight session)
+# Status — beta 0.1.0-beta.1 (2026-10-28)
 
-## Since the 04:35 status (read this first)
+## Ready
 
-- **Review of `src/`: 10 bugs fixed** (blob memory, bytes lost on idempotent replay, CORS Vary and
-  preflight, missing Retry-After = no backoff, duplicates after two resume losses, quadratic
-  WebSocket buffering, WebSocket writes hanging on close, regex flags lost in the manifest).
-- **WebSocket tier flow control (`apue.v1`)**: browsers can't pause a WebSocket, and a slow consumer
-  let the server push 250 MiB into page memory in 3 s. Now HTTP/2-style byte windows with credit
-  in text messages; holds at exactly the window in Chrome, Firefox, WebKit and behind nginx, Caddy,
-  HAProxy and Envoy — where HTTP/2's own backpressure let the server run 6–32 MiB ahead (Envoy most).
-  (An earlier "125 MiB through Caddy" was a probe artifact: compressible data + gzip added by Caddy.)
-- **Second review (flow-control code): 10 more fixes**; a WebSocket leak test then found 4 more
-  (incl. a client-process crash in the HTTP/2 transport, unary-over-WebSocket 415s).
-- **A WebKit race**: over RFC 8441 WebKit dropped the last messages when the server closed right
-  after them (~1 in 10 runs, reproduced with a raw WebSocket page) — the client now closes after END.
-- **Speed**: WebSocket uploads 142 → 293 MiB/s, small-message uploads 436k → 972k msg/s, downloads
-  +5 %; server window default raised to 4 MiB after measuring WAN uploads (6.3 → 22.7 MiB/s).
-- **Third review (everything after the second): 10 more fixes** — a startup crash for HTTP/2
-  windows < 64 KiB, lost upload backpressure and a runaway producer in the new send coalescing,
-  over-broad 499 mapping that could hide server bugs, slow protocol-error closes.
-- **Fourth review (of the third review's fixes)**: AbortError from `ctx.signal` waits logged as a
-  server failure, protocol-error closes leaving half-open transports, `close()` closing a shared
-  transport / not closing live sockets; plus a `MaxListenersExceededWarning` on slow streams
-  (FrameWriter created a drain waiter per blocked write).
-- Every fix has a regression test; most were checked to fail without the fix (one, the WebSocket
-  reset → 499, cannot fail in Node and is marked as documenting behaviour). Plus a WebSocket fuzz
-  test (400 seeded sessions, half well-formed); 244 tests, all committed; the final state passed
-  25 consecutive full-suite runs.
+- **Toolkit** published as `apue` (not yet released): server, TypeScript client (fetch, HTTP/2,
+  WebSocket transports), code generators for TypeScript, Python, Go, Java and Swift, OpenAPI 3.2.
+  The package is verified as users get it (`npm run verify:package`: packed, installed offline,
+  every entry point, the CLI for every language, the README quick start).
+- **Tests**: `npm test` — 395 tests: unit, integration, fuzz, chaos, leak, real browsers (Chrome,
+  Firefox, WebKit), generated clients run against live servers in Python, Go, Java and Swift.
+  WebKit on Linux runs locally with `scripts/test-linux-webkit.sh`. Every fix has a test that fails
+  without it (mutation-checked).
+- **CI/CD** (GitHub Actions): CI on every push (Linux: typecheck, tests incl. browsers, site,
+  package), Release on a version tag (npm with provenance, GitHub release), Pages (opt-in).
+- **Production**: replicas (shared idempotency stores, instance routing verified through nginx),
+  bounded shutdown, logging hook, deployment guide ([deployment.md](deployment.md)).
+- **Website**: `site/` (built from `site-src/`), with docs and a page per problem type.
+
+## Before the first release (needs you)
+
+1. Confirm the license (MIT is set) and register `apue.dev` (it was unregistered on 2026-10-28).
+2. GitHub: an npm automation token as secret `NPM_TOKEN` in an environment `npm` (with a required
+   reviewer); for the website, enable Pages (Source: GitHub Actions) and set `PAGES_ENABLED=true`.
+3. Release: date the CHANGELOG entry, then `git tag -a 0.1.0-beta.1 -m 0.1.0-beta.1 && git push
+   origin 0.1.0-beta.1` (CONTRIBUTING.md, "Releasing").
+
+## Open (SPEC-DRAFT.md §13)
+
+Everything else is decided: WebTransport/HTTP/3 are blocked by Node (no QUIC in the official
+build); a full DPoP profile is deferred (groundwork in place); CBOR, CREDIT frames, per-frame
+compression, `$map` and `Location` on QUERY were decided against with reasons. Known limits are
+listed per feature in the spec (e.g. generated clients' duplex support, Swift on Linux untested).
 
 ## Where to start
 
-1. [`README.md`](../README.md) — what apü is, how to run the example, layout.
-2. [`SPEC-DRAFT.md`](../SPEC-DRAFT.md) — draft 01; every section says *implemented* or *planned*.
-3. [`docs/wire.md`](wire.md) — what it looks like on the wire (real curl output).
-4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
-5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
-
-`npm test` runs 348 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
-browsers are skipped if missing). `npm run typecheck` is clean.
-
-## What exists
-
-- **Protocol**: operations with declared effects mapped onto plain HTTP (GET/QUERY/POST/HEAD),
-  RFC 9457 errors, 8-byte frames for streams with in-band END, heartbeats, SSE debug view,
-  pipelined batches (`$ref`), resumable streams (stateless HMAC checkpoints), field selection,
-  binary values as BLOB frames, idempotency keys, deadlines, compression (zstd/br/gzip),
-  CORS, manifest + RFC 9727 catalog, codegen of typed clients from the manifest.
-- **Transports**: HTTP/2 (core API) with HTTP/1.1 fallback; clients over fetch, node:http2 (full
-  duplex) and WebSocket (RFC 8441/6455, with HTTP/2-style byte windows so slow consumers can't
-  make the server flood browser memory); `autoTransport` picks per browser.
-- **Verification**: unit, integration, fuzz, chaos, leak, real-browser (Chrome, Firefox, WebKit), real
-  proxies (nginx, Caddy, HAProxy, Envoy), constrained Docker benchmarks with WAN emulation, gRPC
-  comparison.
-
-## Key numbers (details in docs/benchmarks.md)
-
-- vs grpc-js: 1.5× unary throughput, 30× small-message streaming.
-- 63 ms RTT / 100 Mbit/s: batches 3.0× faster than sequential calls, zstd streams 2.7×,
-  tuned flow-control windows 5–12× (Node still defaults to 64 KiB).
-- Stalled consumer, server ahead: T3 credit 4.0 MiB behind every proxy; HTTP/2 6–32 MiB (hop-by-hop
-  windows; Envoy most) — docs/intermediaries.md.
-- Overhead vs a hand-written node:http2 handler (which validates nothing): 62 % of its unary
-  throughput locally, 75 % of its stream throughput.
-
-## Bugs found by the verification (all fixed, all with regression tests)
-
-| found by | bug |
-|---|---|
-| profiling | O(n) idempotency eviction (24 % of server CPU); per-request `ERR_STREAM_DESTROYED` from discarding request bodies too early |
-| benchmarks | backpressure deadlock when the sink's high-water mark exceeds the buffer limit |
-| Envoy | **server crash** when a peer resets a stream with an error code other than CANCEL |
-| fuzzing | garbage request streams → 500; invalid percent-encoding / huge deadlines → 500; JSON nested ≥ 10,000 levels → 500 |
-| tests | stuck producers outliving deadlines; `server.close()` hanging on closed sessions; `for await` resetting streams on early exit; hang after a 409 retry check; `$lit` unescaping user data in batches |
-| building the example | the batch endpoint at `/` blocked serving the app same-origin → `/$batch` |
-| browsers | Chrome only reuses an h2 session for WebSockets with an identical key (credentials mode) |
-| measuring T3 | a stalled WebSocket consumer let the server push 250 MiB into client memory in 3 s (now bounded by credit windows, `apue.v1`); uploads capped by 5 ms `bufferedAmount` polling (142 → 293 MiB/s) |
-| WebSocket leak test | unary calls over `webSocketTransport` answered 415 (now routed over fetch); invalid stream input surfaced as 502 over T3 instead of 400; **client crash** (`setLocalWindowSize` on a session destroyed while connecting); client resets of request streams logged as server errors (now 499) |
-| code review | unbounded request-stream blob memory; bytes lost on idempotent replay; CORS `Vary`/preflight gaps; missing `Retry-After` retried with no delay; duplicate items after two losses in one resume; quadratic WebSocket buffering; WebSocket writes hanging on close; regex flags dropped from the manifest |
-
-## Flakes found and fixed
-
-- Upload tests hung intermittently under full-suite load (2 of 24 loaded runs): an append refused
-  mid-content left its body iterator attached, so the unread rest was never drained and the
-  connection and `server.close()` never ended. A real server bug since S18, fixed in S20 (0 of 24).
-
-- `examples/todo in real browsers`: the page replays earlier browsers' todos after it reports ready;
-  counting mid-replay gave 102 instead of 101 (seen in Firefox). The test now waits until the list
-  is stable. Chrome occasionally (~1 in 40 runs) fails to load **one module** of the page
-  (`net::ERR_FAILED` for e.g. `/src/batch.ts`, captured by the new CDP diagnostics at 07:17) — the
-  page then never becomes ready (and once navigated by a native form submit). Server side shows no
-  error; cause still open. The example server now logs abnormal streams (`APUE_DEBUG_STREAMS`, on in
-  the tests). Not reproduced since: 25 isolated browser runs, ~50 full-suite runs, and targeted
-  repros under 6 busy CPU loops recording every failed request — 750 page loads in one Chrome and
-  60 loads each in a fresh Chrome profile (as the tests do): 0 failures. With both diagnostics in
-  place, the next occurrence will say where the request failed.
-- WebKit lost the last messages of a WebSocket stream and reported 1006 in ~1 of 10 runs: a
-  server-initiated close right after the data, over RFC 8441. Reproduced with a raw WebSocket page
-  (3–4 of 40), gone after letting the client close after END (0 of 40; spec §8).
-
-## Decisions taken without you (easy to revisit)
-
-- Operation-based, TS-first schemas, working name apü (as agreed).
-- JSON default, CBOR not built (generic binary codecs aren't faster in V8; see research/03).
-- 8-byte frame header (lane field for batches) instead of Connect's 5 bytes.
-- Batch endpoint at `/$batch`; problem type namespace `https://apue.dev/problems/` (domain not bought yet).
-- Cross-origin writes pay a CORS preflight instead of accepting simple content types (CSRF).
-- Fixed 4 MiB stream window by default; gRPC-style auto-tuning implemented but measured no better.
-- `@grpc/grpc-js` + `@grpc/proto-loader` added as dev dependencies for the comparison benchmark only.
-- WebSocket tier flow control as HTTP/2-style **byte** windows with credit in WebSocket **text**
-  messages, mandatory, subprotocol bumped to `apue.v1` (no deployed clients). Message-count CREDIT
-  frames across all tiers stay planned (spec §8 explains why bytes first and why not in-band).
-- Window defaults: browser `receiveWindow` 4 MiB; server `webSocketWindow` = `streamWindow` (4 MiB,
-  what an HTTP/2 request stream gets). Measured at 63 ms RTT: 1 MiB windows uploaded at 6.3 MiB/s,
-  4 MiB at 22.7 (HTTP/2: 27.2) — window / RTT is only an upper bound (~40 % reached here).
-- `webSocketTransport` sends calls without a request stream over fetch (unary over WebSocket had
-  no way to carry a JSON body or GET input).
-- Small WebSocket client frames are coalesced (2.2× small-message uploads); adopted after the WebKit
-  close race was fixed (docs/benchmarks.md, step 5).
-
-## Open (spec §13)
-
-WebTransport / HTTP/3 (the official Node 26 build
-is compiled without QUIC: `node_use_quic: false`) · · generators for more languages (TS + Python exist) · problem-type namespace (apue.dev kept, to be bought if the results are good) · DPoP full profile (deferred; groundwork S25).
-(Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),
-resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14),
-derived manifest docs (S19), spike `t.file()` + file-backed upload store (S20, research/09),
-callers: `principal` hook, credentials over WebSocket, no ambient credentials cross-origin (S21, research/10).)
+[README.md](../README.md) · [SPEC-DRAFT.md](../SPEC-DRAFT.md) (design, spike log with every
+measurement and bug) · [wire.md](wire.md) · [benchmarks.md](benchmarks.md) ·
+[intermediaries.md](intermediaries.md) · [deployment.md](deployment.md).

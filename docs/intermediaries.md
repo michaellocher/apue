@@ -51,7 +51,8 @@ Versions:
 
    Corrected at 07:39: earlier runs reported **125 MiB** through Caddy. That was an artifact of the
    probe: its items were `'x'` × 64 KiB, and Caddy's upstream transport (Go) adds `Accept-Encoding:
-   gzip` on its own, so the server gzipped the stream ~1000× and all of it fit inside the windows —
+   gzip` on its own (Go `net/http` `Transport.DisableCompression`: requested when the request has no
+   Accept-Encoding, and "transparently decoded in the Response.Body"), so the server gzipped the stream ~1000× and all of it fit inside the windows —
    nothing was buffered anywhere (a 500 MiB flood grew no container's memory; the server's stream
    log showed `encoding=gzip accept=gzip`). The probe now sends random (base64) items. Worth knowing
    in itself: behind Caddy, apü compresses responses the client never asked to be compressed (Caddy

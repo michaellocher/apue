@@ -5,6 +5,7 @@ wrong, built purely on HTTP semantics (HTTP/2 first, HTTP/1.1 and HTTP/3-via-pro
 with maximum throughput, short TTFB, compression, multiplexing, duplex streaming and resumability.
 Spikes in Node 26 with native TypeScript and no build step.
 
+- Status of the overnight session (what exists, bugs found, decisions taken): [`docs/status.md`](docs/status.md)
 - Design: [`SPEC-DRAFT.md`](SPEC-DRAFT.md) (draft 01, marks what is implemented vs planned)
 - On the wire: [`docs/wire.md`](docs/wire.md) — real curl sessions (idempotent replay, ETag/304, QUERY,
   selection, problem details, SSE view, a batch in hex)
@@ -60,7 +61,7 @@ the nginx probe.
 
 ```sh
 npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 182 tests incl. headless Chrome + Firefox (skipped if absent)
+npm test             # node --test: 193 tests incl. headless Chrome + Firefox (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
 bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)

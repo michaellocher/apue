@@ -313,3 +313,7 @@ Path/header probe found two 500s (malformed percent-encoding in the op path, dea
 ### S12 — 2026-10-28 ✅ more intermediaries, a crash fixed
 
 Caddy 2.11.7, HAProxy 3.4.7 and Envoy 1.40.2 added to the probe (docs/intermediaries.md): Caddy and HAProxy pass all checks with default configs; Envoy needs `upgrade_configs` for WebSockets. Envoy surfaced a crash: resets with error codes other than CANCEL emit `'error'` on node:http2 server streams, which was unhandled → fixed, regression test for five reset codes. 182 tests.
+
+### S13 — 2026-10-28 ✅ robustness and flow-control experiments
+
+Chaos tests (garbage after the h2 preface, TCP drops mid-stream, GOAWAY with errors, truncated HTTP/1.1, WebSocket dropped mid-frame), leak test (10,000 mixed calls: heap and handles flat), the example app driven in Chrome and Firefox, multiplexing measurements (stream window vs small-call latency), gRPC-style BDP window auto-tuning (opt-in after measuring), JSON nesting limit (deep nesting caused 500s). 193 tests.

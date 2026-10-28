@@ -2,7 +2,7 @@
 import http2 from 'node:http2';
 import type { Transport, TransportResponse } from './client.ts';
 import { createDecompressor } from './compression.ts';
-import { pump } from './node-streams.ts';
+import { pump, WRITE_SLICE } from './node-streams.ts';
 
 export interface Http2TransportOptions {
   /** Extra CA certificate(s), e.g. a self-signed dev cert. */
@@ -100,7 +100,8 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
         { ':method': method, ':path': path, ...requestHeaders },
         { endStream: body === undefined, signal },
       );
-      if (body instanceof Uint8Array) stream.end(body);
+      // Large bodies in slices with backpressure (see WRITE_SLICE); small ones in one go.
+      if (body instanceof Uint8Array) body.byteLength > WRITE_SLICE ? void pump(single(body), stream) : stream.end(body);
       else if (body instanceof Blob) void pump(body.stream() as AsyncIterable<Uint8Array>, stream); // read as it is sent
       else if (body !== undefined) void pump(body, stream);
       const owner = getSession();
@@ -176,4 +177,8 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
       return new Promise((resolve) => current.close(() => resolve()));
     },
   };
+}
+
+async function* single(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+  yield bytes;
 }

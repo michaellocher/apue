@@ -22,6 +22,7 @@ const api = defineApi({
   'count.inc': op({ effect: 'unsafe', input: t.object({ by: t.number() }), output: t.object({ count: t.number() }) }),
   'feed.watch': op({ effect: 'safe', stream: 'server', input: t.object({ n: t.number() }), output: t.number() }),
   'files.upload': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
+  'feed.stuck': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
 });
 
 let counter = 0;
@@ -48,6 +49,10 @@ const handlers: Handlers<typeof api> = {
   'count.inc': ({ by }) => ({ count: (counter += by) }),
   'feed.watch': async function* ({ n }) {
     for (let i = 0; i < n; i++) yield i;
+  },
+  'feed.stuck': async function* () {
+    yield 1;
+    await new Promise(() => {}); // ignores its signal
   },
   'files.upload': async (inputs) => {
     let n = 0;
@@ -203,6 +208,24 @@ describe('pipelined batches', () => {
     await batch.send({ timeoutMs: 100 });
     assert.equal(await quick.result, 'quick');
     await assert.rejects(slow.result, (e: ApueError) => e.status === 504);
+  });
+
+  test('the deadline also ends a stuck streaming lane', async () => {
+    const batch = new ApueClient(api, base).batch();
+    const stuck = batch.stream('feed.stuck');
+    const quick = batch.call('users.get', { id: 'q' });
+    const started = performance.now();
+    await batch.send({ timeoutMs: 150 });
+    assert.ok(performance.now() - started < 1_000);
+    const seen: number[] = [];
+    await assert.rejects(
+      async () => {
+        for await (const n of stuck) seen.push(n);
+      },
+      (e: ApueError) => e.status === 504,
+    );
+    assert.deepEqual(seen, [1]);
+    assert.equal((await quick.result).id, 'q');
   });
 
   test('lanes without END fail as truncated', async () => {

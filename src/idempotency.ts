@@ -26,6 +26,7 @@ export interface IdempotencyStore {
 interface Entry {
   fingerprint: string;
   expiresAt: number;
+  seq: number;
   response?: StoredResponse;
 }
 
@@ -38,6 +39,12 @@ export interface MemoryStoreOptions {
 /** Single-process store. Multi-replica deployments need a shared store with the same contract. */
 export class MemoryIdempotencyStore implements IdempotencyStore {
   #entries = new Map<string, Entry>();
+  // Insertion-ordered queue (= expiry order, constant TTL) with lazy deletion. Walking the Map
+  // itself from the front is slow after many deletions (V8 keeps tombstones until rehash): a full
+  // store cost ~9 µs per insert; the queue makes eviction amortised O(1).
+  #queue: Array<{ key: string; seq: number }> = [];
+  #head = 0;
+  #seq = 0;
   #ttlMs: number;
   #maxEntries: number;
   #now: () => number;
@@ -61,7 +68,9 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
     }
     this.#entries.delete(key);
     this.#evict(now);
-    this.#entries.set(key, { fingerprint, expiresAt: now + this.#ttlMs });
+    const seq = ++this.#seq;
+    this.#entries.set(key, { fingerprint, expiresAt: now + this.#ttlMs, seq });
+    this.#queue.push({ key, seq });
     return { state: 'new' };
   }
 
@@ -75,15 +84,32 @@ export class MemoryIdempotencyStore implements IdempotencyStore {
   }
 
   #evict(now: number): void {
-    if (this.#entries.size < this.#maxEntries) return;
-    for (const [key, entry] of this.#entries) {
-      if (entry.expiresAt <= now) this.#entries.delete(key);
+    // Expired entries are at the front of the queue.
+    while (this.#head < this.#queue.length) {
+      const { key, seq } = this.#queue[this.#head]!;
+      const entry = this.#entries.get(key);
+      if (entry && entry.seq === seq) {
+        if (entry.expiresAt > now) break;
+        this.#entries.delete(key);
+      }
+      this.#head++; // expired or stale (released / re-claimed) item
     }
-    // Still full: drop oldest completed entries (Map iterates in insertion order). Never drop
-    // in-progress claims, or a concurrent retry could execute twice.
-    for (const [key, entry] of this.#entries) {
-      if (this.#entries.size < this.#maxEntries) break;
-      if (entry.response) this.#entries.delete(key);
+    if (this.#entries.size >= this.#maxEntries) {
+      // Still full: drop the oldest completed entries, 1/8 of capacity at once. Never drop
+      // in-progress claims, or a concurrent retry could execute twice.
+      let toDrop = Math.max(1, this.#maxEntries >> 3);
+      for (let i = this.#head; i < this.#queue.length && toDrop > 0; i++) {
+        const { key, seq } = this.#queue[i]!;
+        const entry = this.#entries.get(key);
+        if (entry && entry.seq === seq && entry.response) {
+          this.#entries.delete(key);
+          toDrop--;
+        }
+      }
+    }
+    if (this.#head > 1024 && this.#head * 2 > this.#queue.length) {
+      this.#queue = this.#queue.slice(this.#head);
+      this.#head = 0;
     }
   }
 }

@@ -54,6 +54,19 @@ const EMPTY = new Uint8Array(0);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+// Node's TextEncoder is ~4× slower than Buffer for short strings (bench/micro.ts), so use Buffer
+// when it exists; browsers take the TextEncoder path.
+interface NodeBufferLike {
+  from(text: string): Uint8Array;
+  byteLength(text: string): number;
+  allocUnsafe(size: number): Uint8Array & {
+    write(text: string, offset: number): number;
+    writeUInt16BE(value: number, offset: number): number;
+    writeUInt32BE(value: number, offset: number): number;
+  };
+}
+const NodeBuffer = (globalThis as { Buffer?: NodeBufferLike }).Buffer;
+
 export function encodeFrame(type: number, payload: Uint8Array = EMPTY, lane = 0, flags = 0): Uint8Array {
   if (lane < 0 || lane > MAX_LANE) throw new FrameError(`lane out of range: ${lane}`);
   const out = new Uint8Array(HEADER_SIZE + payload.byteLength);
@@ -68,7 +81,23 @@ export function encodeFrame(type: number, payload: Uint8Array = EMPTY, lane = 0,
 
 // JSON is the default message encoding (research/03: V8-native JSON beats JS binary decoders).
 export function encodeJson(value: unknown): Uint8Array {
-  return textEncoder.encode(JSON.stringify(value));
+  const json = JSON.stringify(value) ?? 'null';
+  return NodeBuffer ? NodeBuffer.from(json) : textEncoder.encode(json);
+}
+
+/** Header + JSON payload in a single allocation (no intermediate payload buffer). */
+export function jsonFrame(type: number, value: unknown, lane = 0): Uint8Array {
+  const json = JSON.stringify(value) ?? 'null';
+  if (!NodeBuffer) return encodeFrame(type, textEncoder.encode(json), lane);
+  if (lane < 0 || lane > MAX_LANE) throw new FrameError(`lane out of range: ${lane}`);
+  const length = NodeBuffer.byteLength(json);
+  const out = NodeBuffer.allocUnsafe(HEADER_SIZE + length);
+  out[0] = type;
+  out[1] = 0;
+  out.writeUInt16BE(lane, 2);
+  out.writeUInt32BE(length, 4);
+  out.write(json, HEADER_SIZE);
+  return out;
 }
 
 export function decodeJson(payload: Uint8Array): unknown {
@@ -76,11 +105,11 @@ export function decodeJson(payload: Uint8Array): unknown {
 }
 
 export function msgFrame(value: unknown, lane = 0): Uint8Array {
-  return encodeFrame(FrameType.MSG, encodeJson(value), lane);
+  return jsonFrame(FrameType.MSG, value, lane);
 }
 
 export function endFrame(info: EndInfo, lane = 0): Uint8Array {
-  return encodeFrame(FrameType.END, encodeJson(info), lane);
+  return jsonFrame(FrameType.END, info, lane);
 }
 
 /**
@@ -157,13 +186,24 @@ export class FrameDecoder {
   }
 }
 
+/** Yields all frames completed by each incoming chunk at once (one async step per chunk, not per frame). */
+export async function* decodeFrameBatches(
+  source: AsyncIterable<Uint8Array>,
+  maxPayload = DEFAULT_MAX_PAYLOAD,
+): AsyncGenerator<Frame[]> {
+  const decoder = new FrameDecoder(maxPayload);
+  for await (const chunk of source) {
+    const frames = decoder.push(chunk);
+    if (frames.length > 0) yield frames;
+  }
+  decoder.end();
+}
+
 export async function* decodeFrames(
   source: AsyncIterable<Uint8Array>,
   maxPayload = DEFAULT_MAX_PAYLOAD,
 ): AsyncGenerator<Frame> {
-  const decoder = new FrameDecoder(maxPayload);
-  for await (const chunk of source) yield* decoder.push(chunk);
-  decoder.end();
+  for await (const frames of decodeFrameBatches(source, maxPayload)) yield* frames;
 }
 
 export function frameDecoderStream(maxPayload = DEFAULT_MAX_PAYLOAD): TransformStream<Uint8Array, Frame> {

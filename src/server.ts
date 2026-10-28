@@ -1,6 +1,6 @@
 // apü server: contract-driven HTTP mapping (S2) over node:http2 (h2 + HTTP/1.1 fallback),
 // unary JSON or framed streaming in both directions (S1).
-import { createHash } from 'node:crypto';
+import { hash as cryptoHash } from 'node:crypto';
 import http2 from 'node:http2';
 import type { AddressInfo, Socket } from 'node:net';
 import type { Writable } from 'node:stream';
@@ -12,14 +12,16 @@ import {
   encodeFrame,
   encodeJson,
   FrameType,
+  jsonFrame,
   type EndInfo,
   type Problem,
 } from './frame.ts';
 import { MemoryIdempotencyStore, type IdempotencyStore, type StoredResponse } from './idempotency.ts';
+import { onExchange, type Exchange } from './exchange.ts';
 import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
-import { ValidationError } from './schema.ts';
+import { ValidationError, type Schema } from './schema.ts';
 
 export interface CallContext {
   readonly op: string;
@@ -52,6 +54,8 @@ export interface ApueServerOptions {
   /** Frames are coalesced into one socket write until this many bytes are pending. 0 = no coalescing. */
   coalesceBytes?: number;
   maxBodyBytes?: number;
+  /** Response bytes buffered per stream before a producer waits (FrameWriter backpressure). */
+  maxBufferedBytes?: number;
   /** HTTP/2 per-stream receive window (SETTINGS_INITIAL_WINDOW_SIZE). */
   streamWindow?: number;
   /** HTTP/2 per-connection receive window. */
@@ -91,11 +95,14 @@ const REPLAYED = 'apue-replayed';
 export interface Renderer {
   readonly contentType: string;
   render(type: number, payload: Uint8Array, lane: number): Uint8Array;
+  /** Renders a JSON-payload frame without an intermediate payload buffer. */
+  renderJson(type: number, value: unknown, lane: number): Uint8Array;
 }
 
 export const frameRenderer: Renderer = {
   contentType: MediaType.STREAM_JSON,
   render: (type, payload, lane) => encodeFrame(type, payload, lane),
+  renderJson: (type, value, lane) => jsonFrame(type, value, lane),
 };
 
 const SSE_EVENTS: Record<number, string> = {
@@ -115,6 +122,10 @@ export const sseRenderer: Renderer = {
     const data = type === FrameType.BLOB ? Buffer.from(payload).toString('base64') : Buffer.from(payload).toString('utf8');
     return textEncoder.encode(`event: ${lane === 0 ? name : `${name}:${lane}`}\ndata: ${data}\n\n`);
   },
+  renderJson(type, value, lane) {
+    const name = SSE_EVENTS[type] ?? `x-${type}`;
+    return Buffer.from(`event: ${lane === 0 ? name : `${name}:${lane}`}\ndata: ${JSON.stringify(value) ?? 'null'}\n\n`);
+  },
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -124,6 +135,11 @@ export const sseRenderer: Renderer = {
 export interface FrameWriterOptions {
   renderer?: Renderer;
   coalesceBytes?: number;
+  /**
+   * Bytes that may sit in the sink's buffer before the producer waits for 'drain'. Waiting at the
+   * stream's 16 KiB default high-water mark costs an event-loop round trip per coalesced flush.
+   */
+  maxBufferedBytes?: number;
 }
 
 export class FrameWriter {
@@ -132,6 +148,7 @@ export class FrameWriter {
   #sink: Writable;
   #renderer: Renderer;
   #coalesceBytes: number;
+  #maxBufferedBytes: number;
   #pending: Uint8Array[] = [];
   #pendingBytes = 0;
   #scheduled = false;
@@ -142,10 +159,24 @@ export class FrameWriter {
     this.#sink = sink;
     this.#renderer = options.renderer ?? frameRenderer;
     this.#coalesceBytes = options.coalesceBytes ?? 16 * 1024;
+    this.#maxBufferedBytes = options.maxBufferedBytes ?? 256 * 1024;
   }
 
-  async frame(type: number, payload: Uint8Array, lane = 0): Promise<void> {
-    const bytes = this.#renderer.render(type, payload, lane);
+  // The write methods return a promise only while the sink needs draining, so producers can skip
+  // an `await` (one microtask) per message: `const p = writer.msg(v); if (p) await p;`.
+  frame(type: number, payload: Uint8Array, lane = 0): Promise<void> | undefined {
+    return this.#push(this.#renderer.render(type, payload, lane));
+  }
+
+  msg(value: unknown, lane = 0): Promise<void> | undefined {
+    return this.#push(this.#renderer.renderJson(FrameType.MSG, value, lane));
+  }
+
+  end(info: EndInfo, lane = 0): Promise<void> | undefined {
+    return this.#push(this.#renderer.renderJson(FrameType.END, info, lane));
+  }
+
+  #push(bytes: Uint8Array): Promise<void> | undefined {
     this.#pending.push(bytes);
     this.#pendingBytes += bytes.byteLength;
     if (this.#pendingBytes >= this.#coalesceBytes) {
@@ -154,21 +185,16 @@ export class FrameWriter {
       this.#scheduled = true;
       setImmediate(() => this.flush());
     }
-    await drained(this.#sink);
-  }
-
-  msg(value: unknown, lane = 0): Promise<void> {
-    return this.frame(FrameType.MSG, encodeJson(value), lane);
-  }
-
-  end(info: EndInfo, lane = 0): Promise<void> {
-    return this.frame(FrameType.END, encodeJson(info), lane);
+    // Only wait when 'drain' is guaranteed to come (a write returned false): waiting on the buffer
+    // size alone deadlocks when the sink's high-water mark is above maxBufferedBytes.
+    const mustWait = this.#sink.writableNeedDrain && this.#sink.writableLength > this.#maxBufferedBytes;
+    return mustWait ? drained(this.#sink) : undefined;
   }
 
   flush(): void {
     this.#scheduled = false;
     if (this.#pending.length === 0 || isClosed(this.#sink)) return;
-    const chunk = concatBytes(this.#pending, this.#pendingBytes);
+    const chunk = this.#pending.length === 1 ? this.#pending[0]! : Buffer.concat(this.#pending, this.#pendingBytes);
     this.#pending = [];
     this.#pendingBytes = 0;
     this.#sink.write(chunk);
@@ -206,6 +232,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     connectionWindow = 32 * 1024 * 1024,
     validateOutput = true,
     maxBatchCalls = 64,
+    maxBufferedBytes = 256 * 1024,
   } = options;
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
@@ -234,22 +261,24 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     sessions.add(session);
     session.on('close', () => sessions.delete(session));
   });
-  server.on('request', (req, res) => void handle(req, res));
+  onExchange(server, (exchange) => void handle(exchange, exchange));
 
-  async function handle(req: http2.Http2ServerRequest, res: http2.Http2ServerResponse): Promise<void> {
-    // Own completion flag: on RST_STREAM the h2 compat layer marks `res` finished before 'close',
-    // so `writableFinished` cannot tell a cancelled stream from a completed one.
+  // `req` and `res` are the same Exchange; the two names keep request- and response-side code readable.
+  async function handle(req: Exchange, res: Exchange): Promise<void> {
+    // Own completion flag: 'close' fires for completed and for reset streams alike.
     const clientGone = new AbortController();
     let completed = false;
     const complete = () => (completed = true);
-    res.on('close', () => {
+    res.onClose(() => {
       if (!completed) clientGone.abort(new ApueError(499, 'Client Closed Request'));
     });
     let signal = clientGone.signal;
     const method = req.method;
     const head = method === 'HEAD';
     try {
-      const url = new URL(req.url, 'https://apue.invalid');
+      const queryAt = req.url.indexOf('?');
+      const pathname = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
+      const url = { pathname, search: queryAt === -1 ? '' : req.url.slice(queryAt) };
       if (url.pathname === MANIFEST_PATH) {
         if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
         complete();
@@ -298,13 +327,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
       if (head) {
         complete();
-        res.writeHead(200, { ...STREAM_HEADERS, vary: 'accept' });
-        return void res.end();
+        return res.send(200, { ...STREAM_HEADERS, vary: 'accept' });
       }
       const result = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
       if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
-      const items = validateOutput ? mapAsync(result, (item) => def.output.parse(item)) : result;
-      return await streamResponse(req, res, items, signal, clientGone.signal, complete);
+      return await streamResponse(req, res, result, validateOutput ? def.output : undefined, signal, clientGone.signal, complete);
     } catch (error) {
       if (clientGone.signal.aborted) return;
       const problem = toProblem(error);
@@ -377,8 +404,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   }
 
   async function handleBatch(
-    req: http2.Http2ServerRequest,
-    res: http2.Http2ServerResponse,
+    req: Exchange,
+    res: Exchange,
     signal: AbortSignal,
     gone: AbortSignal,
     complete: () => void,
@@ -392,7 +419,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
     // Batches always stream: every lane reports as soon as it completes (TTFB = fastest call).
     res.writeHead(200, STREAM_HEADERS);
-    const writer = new FrameWriter(res, { coalesceBytes });
+    const writer = new FrameWriter(res.sink, { coalesceBytes, maxBufferedBytes });
     writer.startHeartbeat(heartbeatMs);
     const results: Array<Promise<{ ok: boolean; value?: unknown }>> = [];
     for (const [lane, call] of calls.entries()) {
@@ -423,7 +450,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     output: (lane: number) => unknown,
     writer: FrameWriter,
     signal: AbortSignal,
-    req: http2.Http2ServerRequest,
+    req: Exchange,
   ): Promise<{ ok: boolean; value?: unknown }> {
     const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method };
     try {
@@ -440,9 +467,17 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       const result = await abortable(Promise.resolve(handlerMap[call.op]!(input, ctx)), signal);
       if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${call.op} did not return an AsyncIterable`);
-      for await (const item of result) {
-        await writer.msg(validateOutput ? call.def.output.parse(item) : item, lane);
-        if (signal.aborted) throw signal.reason;
+      // Race each item against the batch signal so a stuck producer can't outlive the deadline
+      // (and with it the whole batch response).
+      const iterator = result[Symbol.asyncIterator]();
+      try {
+        for (let next = await abortable(iterator.next(), signal); !next.done; next = await abortable(iterator.next(), signal)) {
+          const pending = writer.msg(validateOutput ? call.def.output.parse(next.value) : next.value, lane);
+          if (pending) await pending;
+        }
+      } catch (error) {
+        void iterator.return?.();
+        throw error;
       }
       await writer.end({ status: 200 }, lane);
       return { ok: true };
@@ -494,9 +529,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   }
 
   async function streamResponse(
-    req: http2.Http2ServerRequest,
-    res: http2.Http2ServerResponse,
+    req: Exchange,
+    res: Exchange,
     items: AsyncIterable<unknown>,
+    output: Schema<unknown> | undefined,
     signal: AbortSignal,
     gone: AbortSignal,
     complete: () => void,
@@ -514,26 +550,42 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     const accept = req.headers.accept ?? '';
     const renderer = accept.includes(MediaType.SSE) && !accept.includes(MediaType.STREAM_JSON) ? sseRenderer : frameRenderer;
     res.writeHead(200, { ...STREAM_HEADERS, 'content-type': renderer.contentType, vary: 'accept' });
-    const writer = new FrameWriter(res, { renderer, coalesceBytes });
+    const writer = new FrameWriter(res.sink, { renderer, coalesceBytes, maxBufferedBytes });
     writer.startHeartbeat(heartbeatMs);
-    try {
-      let next = early.status === 'fulfilled' ? early.value : await first;
-      while (!next.done) {
-        await writer.msg(next.value);
-        next = await abortable(iterator.next(), signal);
-      }
-      await writer.end({ status: 200 });
-    } catch (error) {
+    let finished = false;
+    const finish = (info: EndInfo | undefined) => {
+      if (finished) return;
+      finished = true;
       void iterator.return?.();
-      if (gone.aborted) return;
-      const problem = toProblem(error);
-      await writer.end({ status: problem.status, problem });
-    } finally {
+      if (info && !gone.aborted) void writer.end(info);
       writer.close();
       if (!gone.aborted) {
         complete();
         res.end();
       }
+    };
+    // A deadline or client abort ends the stream at once, even while the producer is stuck; the
+    // loop notices `finished` on its next turn. One listener per stream instead of a
+    // Promise.race per item (that race was a measurable per-message cost, bench S4).
+    const onAbort = () => {
+      const problem = toProblem(signal.reason);
+      finish(gone.aborted ? undefined : { status: problem.status, problem });
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    try {
+      let next = early.status === 'fulfilled' ? early.value : await first;
+      while (!next.done && !finished) {
+        const pending = writer.msg(output ? output.parse(next.value) : next.value);
+        if (pending) await pending;
+        if (finished) break;
+        next = await iterator.next();
+      }
+      finish({ status: 200 });
+    } catch (error) {
+      const problem = toProblem(error);
+      finish(gone.aborted ? undefined : { status: problem.status, problem });
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
   }
 
@@ -602,8 +654,9 @@ function methodNotAllowed(method: string, allow: string): ApueError {
   return new ApueError(405, 'Method Not Allowed', `${method} is not allowed here`, {}, { allow });
 }
 
-function parseQueryInput(url: URL): unknown {
-  const values = url.searchParams.getAll('i');
+function parseQueryInput(url: { search: string }): unknown {
+  if (url.search === '') return undefined;
+  const values = new URLSearchParams(url.search).getAll('i');
   if (values.length > 1) throw new ApueError(400, 'Bad Request', 'query parameter i given more than once');
   if (values.length === 0) return undefined;
   try {
@@ -613,7 +666,7 @@ function parseQueryInput(url: URL): unknown {
   }
 }
 
-async function readJsonBody(req: http2.Http2ServerRequest, maxBodyBytes: number, query: boolean): Promise<unknown> {
+async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean): Promise<unknown> {
   const type = baseMediaType(req.headers['content-type']);
   // RFC 10008 §2: servers MUST fail a QUERY whose Content-Type is missing.
   if (query && !type) throw new ApueError(400, 'Bad Request', 'QUERY requires a Content-Type');
@@ -633,7 +686,7 @@ async function readJsonBody(req: http2.Http2ServerRequest, maxBodyBytes: number,
   }
 }
 
-async function* readInputStream(req: http2.Http2ServerRequest): AsyncGenerator<unknown> {
+async function* readInputStream(req: Exchange): AsyncGenerator<unknown> {
   for await (const frame of decodeFrames(req as AsyncIterable<Uint8Array>)) {
     if (frame.type === FrameType.MSG) {
       yield decodeJson(frame.payload);
@@ -659,9 +712,6 @@ async function* validatedStream(source: AsyncIterable<unknown>, def: OpDef): Asy
   }
 }
 
-async function* mapAsync<T, R>(source: AsyncIterable<T>, fn: (item: T) => R): AsyncGenerator<R> {
-  for await (const item of source) yield fn(item);
-}
 
 function validateInput(def: OpDef, input: unknown): unknown {
   try {
@@ -695,13 +745,14 @@ function cacheControl(def: OpDef): string {
 }
 
 function hash(text: string | Uint8Array): string {
-  return createHash('sha256').update(text).digest('base64url');
+  // One-shot API (no Hash object); SHA-256 is hardware-accelerated: ~0.43 ms per MiB (bench S4).
+  return cryptoHash('sha256', text, 'base64url');
 }
 
 /** Strong ETag over the representation bytes; If-None-Match → 304 (RFC 9110 §13.1.2). */
 function sendCacheable(
-  req: http2.Http2ServerRequest,
-  res: http2.Http2ServerResponse,
+  req: Exchange,
+  res: Exchange,
   body: Uint8Array,
   headers: Record<string, string>,
 ): void {
@@ -723,21 +774,19 @@ function problemOutcome(problem: Problem, error?: unknown): StoredResponse & { p
   return { status: problem.status, headers, body: encodeJson(problem), payload: problem };
 }
 
-function timeoutSignal(signal: AbortSignal, req: http2.Http2ServerRequest): AbortSignal {
+function timeoutSignal(signal: AbortSignal, req: Exchange): AbortSignal {
   const timeoutMs = parseTimeout(req.headers[Header.TIMEOUT]);
   return timeoutMs === undefined ? signal : AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]);
 }
 
 function sendBytes(
-  res: http2.Http2ServerResponse,
+  res: Exchange,
   status: number,
   headers: Record<string, string>,
   body?: Uint8Array,
   contentLength = body?.byteLength,
 ): void {
-  res.writeHead(status, contentLength === undefined || status === 304 ? headers : { ...headers, 'content-length': String(contentLength) });
-  if (body) res.end(body);
-  else res.end();
+  res.send(status, contentLength === undefined || status === 304 ? headers : { ...headers, 'content-length': String(contentLength) }, body);
 }
 
 function toProblem(error: unknown): Problem {

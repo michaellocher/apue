@@ -1,5 +1,9 @@
 // Minimal TS-first schema builder (SPEC-DRAFT §11): runtime validation + static inference +
 // JSON Schema export, from one definition. Web-only, erasable syntax only.
+//
+// Hot path: validation runs for every message of a stream, so the success path allocates only
+// the normalised output. Issue paths are a mutable segment stack, formatted only on failure
+// (bench/schema-micro.ts).
 
 export interface Issue {
   path: string;
@@ -16,12 +20,18 @@ export class ValidationError extends Error {
   }
 }
 
+/** Validation state shared down the tree: current path (segment stack) and collected issues. */
+export interface CheckContext {
+  path: Array<string | number>;
+  issues: Issue[];
+}
+
 export interface Schema<T> {
   readonly kind: string;
   /** Validates and returns a normalised value (unknown object keys are dropped). */
   parse(value: unknown): T;
-  /** Collects issues instead of throwing; returns undefined when invalid. */
-  check(value: unknown, path: string, issues: Issue[]): T | undefined;
+  /** Collects issues into `ctx` instead of throwing; the result is meaningless if issues were added. */
+  check(value: unknown, ctx: CheckContext): T | undefined;
   toJSONSchema(): Record<string, unknown>;
   /** Phantom field carrying the static type. Never set at runtime. */
   readonly __type?: T;
@@ -43,7 +53,7 @@ export type InferShape<S extends Shape> = Simplify<
 
 function define<T>(
   kind: string,
-  check: (value: unknown, path: string, issues: Issue[]) => T | undefined,
+  check: (value: unknown, ctx: CheckContext) => T | undefined,
   jsonSchema: () => Record<string, unknown>,
 ): Schema<T> {
   return {
@@ -51,12 +61,19 @@ function define<T>(
     check,
     toJSONSchema: jsonSchema,
     parse(value) {
-      const issues: Issue[] = [];
-      const result = check(value, '', issues);
-      if (issues.length > 0) throw new ValidationError(issues);
+      const ctx: CheckContext = { path: [], issues: [] };
+      const result = check(value, ctx);
+      if (ctx.issues.length > 0) throw new ValidationError(ctx.issues);
       return result as T;
     },
   };
+}
+
+function report(ctx: CheckContext, message: string): undefined {
+  let path = '';
+  for (const segment of ctx.path) path = typeof segment === 'number' ? `${path}[${segment}]` : path ? `${path}.${segment}` : segment;
+  ctx.issues.push({ path, message });
+  return undefined;
 }
 
 function typeOf(value: unknown): string {
@@ -64,8 +81,6 @@ function typeOf(value: unknown): string {
   if (Array.isArray(value)) return 'array';
   return typeof value;
 }
-
-const join = (path: string, key: string | number) => (typeof key === 'number' ? `${path}[${key}]` : path ? `${path}.${key}` : key);
 
 export interface StringOptions {
   min?: number;
@@ -86,38 +101,40 @@ export interface ArrayOptions {
 
 export const t = {
   string(options: StringOptions = {}): Schema<string> {
+    const { min, max, pattern } = options;
     return define(
       'string',
-      (value, path, issues) => {
-        if (typeof value !== 'string') return void issues.push({ path, message: `expected string, got ${typeOf(value)}` });
-        if (options.min !== undefined && value.length < options.min) issues.push({ path, message: `shorter than ${options.min}` });
-        if (options.max !== undefined && value.length > options.max) issues.push({ path, message: `longer than ${options.max}` });
-        if (options.pattern && !options.pattern.test(value)) issues.push({ path, message: `does not match ${options.pattern}` });
+      (value, ctx) => {
+        if (typeof value !== 'string') return report(ctx, `expected string, got ${typeOf(value)}`);
+        if (min !== undefined && value.length < min) report(ctx, `shorter than ${min}`);
+        if (max !== undefined && value.length > max) report(ctx, `longer than ${max}`);
+        if (pattern && !pattern.test(value)) report(ctx, `does not match ${pattern}`);
         return value;
       },
       () => ({
         type: 'string',
-        ...(options.min === undefined ? {} : { minLength: options.min }),
-        ...(options.max === undefined ? {} : { maxLength: options.max }),
-        ...(options.pattern ? { pattern: options.pattern.source } : {}),
+        ...(min === undefined ? {} : { minLength: min }),
+        ...(max === undefined ? {} : { maxLength: max }),
+        ...(pattern ? { pattern: pattern.source } : {}),
       }),
     );
   },
 
   number(options: NumberOptions = {}): Schema<number> {
+    const { int, min, max } = options;
     return define(
-      options.int ? 'integer' : 'number',
-      (value, path, issues) => {
-        if (typeof value !== 'number' || !Number.isFinite(value)) return void issues.push({ path, message: `expected number, got ${typeOf(value)}` });
-        if (options.int && !Number.isInteger(value)) issues.push({ path, message: 'expected integer' });
-        if (options.min !== undefined && value < options.min) issues.push({ path, message: `less than ${options.min}` });
-        if (options.max !== undefined && value > options.max) issues.push({ path, message: `greater than ${options.max}` });
+      int ? 'integer' : 'number',
+      (value, ctx) => {
+        if (typeof value !== 'number' || !Number.isFinite(value)) return report(ctx, `expected number, got ${typeOf(value)}`);
+        if (int && !Number.isInteger(value)) report(ctx, 'expected integer');
+        if (min !== undefined && value < min) report(ctx, `less than ${min}`);
+        if (max !== undefined && value > max) report(ctx, `greater than ${max}`);
         return value;
       },
       () => ({
-        type: options.int ? 'integer' : 'number',
-        ...(options.min === undefined ? {} : { minimum: options.min }),
-        ...(options.max === undefined ? {} : { maximum: options.max }),
+        type: int ? 'integer' : 'number',
+        ...(min === undefined ? {} : { minimum: min }),
+        ...(max === undefined ? {} : { maximum: max }),
       }),
     );
   },
@@ -125,61 +142,73 @@ export const t = {
   boolean(): Schema<boolean> {
     return define(
       'boolean',
-      (value, path, issues) => (typeof value === 'boolean' ? value : void issues.push({ path, message: `expected boolean, got ${typeOf(value)}` })),
+      (value, ctx) => (typeof value === 'boolean' ? value : report(ctx, `expected boolean, got ${typeOf(value)}`)),
       () => ({ type: 'boolean' }),
     );
   },
 
   /** String union, e.g. t.enum(['open', 'closed']). (Named `enum` as a property, not TS enum syntax.) */
   enum<const V extends readonly string[]>(values: V): Schema<V[number]> {
+    const allowed = new Set<unknown>(values);
     return define(
       'enum',
-      (value, path, issues) =>
-        values.includes(value as string) ? (value as V[number]) : void issues.push({ path, message: `expected one of ${values.join(', ')}` }),
+      (value, ctx) => (allowed.has(value) ? (value as V[number]) : report(ctx, `expected one of ${values.join(', ')}`)),
       () => ({ type: 'string', enum: [...values] }),
     );
   },
 
   array<T>(item: Schema<T>, options: ArrayOptions = {}): Schema<T[]> {
+    const { max } = options;
     return define(
       'array',
-      (value, path, issues) => {
-        if (!Array.isArray(value)) return void issues.push({ path, message: `expected array, got ${typeOf(value)}` });
-        if (options.max !== undefined && value.length > options.max) {
-          return void issues.push({ path, message: `more than ${options.max} items` });
+      (value, ctx) => {
+        if (!Array.isArray(value)) return report(ctx, `expected array, got ${typeOf(value)}`);
+        if (max !== undefined && value.length > max) return report(ctx, `more than ${max} items`);
+        const out = new Array<T>(value.length);
+        for (let i = 0; i < value.length; i++) {
+          ctx.path.push(i);
+          out[i] = item.check(value[i], ctx) as T;
+          ctx.path.pop();
         }
-        return value.map((v, i) => item.check(v, join(path, i), issues) as T);
+        return out;
       },
-      () => ({ type: 'array', items: item.toJSONSchema(), ...(options.max === undefined ? {} : { maxItems: options.max }) }),
+      () => ({ type: 'array', items: item.toJSONSchema(), ...(max === undefined ? {} : { maxItems: max }) }),
     );
   },
 
   object<S extends Shape>(shape: S): Schema<InferShape<S>> {
+    // Computed once per schema, not per parse.
+    const fields = Object.entries(shape).map(([key, schema]) => ({
+      key,
+      schema,
+      optional: (schema as Partial<OptionalMarker>).optional === true,
+    }));
     return define(
       'object',
-      (value, path, issues) => {
-        if (typeOf(value) !== 'object') return void issues.push({ path, message: `expected object, got ${typeOf(value)}` });
+      (value, ctx) => {
+        if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+          return report(ctx, `expected object, got ${typeOf(value)}`);
+        }
         const input = value as Record<string, unknown>;
         const out: Record<string, unknown> = {};
-        for (const [key, schema] of Object.entries(shape)) {
+        for (const { key, schema, optional } of fields) {
           const field = input[key];
+          ctx.path.push(key);
           if (field === undefined) {
-            if (!(schema as Partial<OptionalMarker>).optional) issues.push({ path: join(path, key), message: 'required' });
-            continue;
+            if (!optional) report(ctx, 'required');
+          } else {
+            out[key] = schema.check(field, ctx);
           }
-          out[key] = schema.check(field, join(path, key), issues);
+          ctx.path.pop();
         }
         // Unknown keys are dropped, not rejected: newer clients may send fields older servers don't know.
         return out as InferShape<S>;
       },
-      () => {
-        const entries = Object.entries(shape);
-        return {
-          type: 'object',
-          properties: Object.fromEntries(entries.map(([key, schema]) => [key, schema.toJSONSchema()])),
-          required: entries.filter(([, schema]) => !(schema as Partial<OptionalMarker>).optional).map(([key]) => key),
-        };
-      },
+      () => ({
+        type: 'object',
+        properties: Object.fromEntries(fields.map(({ key, schema }) => [key, schema.toJSONSchema()])),
+        required: fields.filter((f) => !f.optional).map((f) => f.key),
+      }),
     );
   },
 
@@ -190,7 +219,7 @@ export const t = {
   nullable<T>(schema: Schema<T>): Schema<T | null> {
     return define(
       schema.kind,
-      (value, path, issues) => (value === null ? null : schema.check(value, path, issues)),
+      (value, ctx) => (value === null ? null : schema.check(value, ctx)),
       () => ({ anyOf: [schema.toJSONSchema(), { type: 'null' }] }),
     );
   },
@@ -203,7 +232,7 @@ export const t = {
   void(): Schema<void> {
     return define(
       'void',
-      (value, path, issues) => (value === undefined || value === null ? undefined : void issues.push({ path, message: 'expected no value' })),
+      (value, ctx) => (value === undefined || value === null ? undefined : report(ctx, 'expected no value')),
       () => ({ type: 'null' }),
     );
   },

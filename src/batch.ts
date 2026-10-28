@@ -1,8 +1,8 @@
 // Client side of pipelined batches (SPEC-DRAFT §10): dependent calls in one round trip, results
 // streamed back per lane as each call completes. Web-only.
 import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from './api.ts';
-import { ACCEPT, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared } from './client.ts';
-import { decodeFrames, decodeJson, FrameType, type EndInfo } from './frame.ts';
+import { ACCEPT, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared } from './client.ts';
+import { decodeFrameBatches, decodeJson, FrameType, type EndInfo } from './frame.ts';
 import { ApueError, baseMediaType, MediaType, ProblemType } from './protocol.ts';
 import { containsRef, encodeArgs, Ref } from './refs.ts';
 
@@ -186,24 +186,26 @@ export class Batch<A extends Api> {
       body: new TextEncoder().encode(canonicalJson({ calls })),
     };
     const controller = new AbortController();
-    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    const unlink = linkSignal(options.signal, controller);
     let finished = false;
     try {
-      const res = await this.#client.sendPrepared(prepared, options.retries ?? this.#client.retryBudget, signal);
+      const res = await this.#client.sendPrepared(prepared, options.retries ?? this.#client.retryBudget, controller.signal);
       if (res.status !== 200 || baseMediaType(res.headers.get('content-type')) !== MediaType.STREAM_JSON) {
         const bytes = await readAll(res.body);
         finished = true;
         throw problemError(bytes, res.status >= 400 ? res.status : 502);
       }
       const open = new Set(this.#entries.keys());
-      for await (const frame of decodeFrames(res.body)) {
-        const sink = this.#entries[frame.lane]?.sink;
-        if (!sink || !open.has(frame.lane)) continue;
-        if (frame.type === FrameType.MSG) {
-          sink.msg(decodeJson(frame.payload));
-        } else if (frame.type === FrameType.END) {
-          sink.end(decodeJson(frame.payload) as EndInfo);
-          open.delete(frame.lane);
+      for await (const frames of decodeFrameBatches(res.body)) {
+        for (const frame of frames) {
+          const sink = this.#entries[frame.lane]?.sink;
+          if (!sink || !open.has(frame.lane)) continue;
+          if (frame.type === FrameType.MSG) {
+            sink.msg(decodeJson(frame.payload));
+          } else if (frame.type === FrameType.END) {
+            sink.end(decodeJson(frame.payload) as EndInfo);
+            open.delete(frame.lane);
+          }
         }
       }
       finished = true;
@@ -214,6 +216,7 @@ export class Batch<A extends Api> {
         for (const lane of open) this.#entries[lane]!.sink.fail(error);
       }
     } finally {
+      unlink();
       if (!finished) controller.abort();
     }
   }

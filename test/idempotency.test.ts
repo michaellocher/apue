@@ -46,4 +46,16 @@ describe('MemoryIdempotencyStore', () => {
     assert.equal(store.begin('done2', 'f').state, 'replay');
     assert.equal(store.begin('done1', 'f').state, 'new');
   });
+
+  test('a full store stays fast (amortised eviction)', () => {
+    const store = new MemoryIdempotencyStore({ maxEntries: 10_000 });
+    const started = performance.now();
+    for (let i = 0; i < 200_000; i++) {
+      store.begin(`k${i}`, 'f');
+      store.complete(`k${i}`, response(1));
+    }
+    const elapsed = performance.now() - started;
+    assert.ok(store.size <= 10_000);
+    assert.ok(elapsed < 1_000, `200k inserts into a full store took ${elapsed.toFixed(0)} ms`);
+  });
 });

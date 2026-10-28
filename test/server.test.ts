@@ -1,7 +1,7 @@
 // S1 behaviour: streaming, errors, cancellation, deadlines, duplex, wire details.
 import assert from 'node:assert/strict';
 import https from 'node:https';
-import { PassThrough } from 'node:stream';
+import { PassThrough, Writable } from 'node:stream';
 import { after, before, describe, test } from 'node:test';
 import { defineApi, op } from '../src/api.ts';
 import { ApueClient } from '../src/client.ts';
@@ -23,6 +23,7 @@ const api = defineApi({
   'idle.then.one': op({ effect: 'unsafe', stream: 'server', input: t.void(), output: t.string() }),
   'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.object({ echo: t.number() }) }),
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
+  'stuck.stream': op({ effect: 'unsafe', stream: 'server', input: t.void(), output: t.string() }),
 });
 
 let cancelled: PromiseWithResolvers<string>;
@@ -69,6 +70,11 @@ const handlers: Handlers<typeof api> = {
     for await (const n of inputs) sum += n;
     return sum;
   },
+  // Yields once, then hangs and ignores its signal: the deadline must still end the stream.
+  'stuck.stream': async function* () {
+    yield 'first';
+    await new Promise(() => {});
+  },
 };
 
 let server: { url: string; close(): Promise<void> };
@@ -113,6 +119,19 @@ for (const name of ['fetch', 'http2'] as const) {
     test('deadline → 504 without retries', async () => {
       const started = performance.now();
       await assert.rejects(client.call('slow.unary', undefined, { timeoutMs: 100 }), (e: ApueError) => e.status === 504);
+      assert.ok(performance.now() - started < 1_000);
+    });
+
+    test('deadline ends a stream whose producer is stuck (in-band 504)', async () => {
+      const seen: string[] = [];
+      const started = performance.now();
+      await assert.rejects(
+        async () => {
+          for await (const item of client.stream('stuck.stream', undefined, { timeoutMs: 150 })) seen.push(item);
+        },
+        (e: ApueError) => e.status === 504 && e.problem.title === 'Deadline Exceeded',
+      );
+      assert.deepEqual(seen, ['first']);
       assert.ok(performance.now() - started < 1_000);
     });
 
@@ -238,6 +257,21 @@ describe('FrameWriter', () => {
     sink.end();
     const frames = await Array.fromAsync(decodeFrames(sink));
     assert.deepEqual(frames.map((f) => decodeJson(f.payload)), Array.from({ length: 100 }, (_, i) => i));
+  });
+
+  test('backpressure never deadlocks when the sink high-water mark exceeds maxBufferedBytes', async () => {
+    // Regression: waiting on buffer size alone hung when 'drain' was never going to fire.
+    const sink = new Writable({ highWaterMark: 64 * 1024, write: (_chunk, _encoding, callback) => setTimeout(callback, 1) });
+    const writer = new FrameWriter(sink, { maxBufferedBytes: 16 * 1024 });
+    const done = (async () => {
+      for (let i = 0; i < 20_000; i++) {
+        const pending = writer.msg({ i, name: 'item', ok: true });
+        if (pending) await pending;
+      }
+      writer.close();
+    })();
+    const timeout = new Promise((resolve) => setTimeout(resolve, 5_000, 'timeout').unref());
+    assert.notEqual(await Promise.race([done.then(() => 'done'), timeout]), 'timeout');
   });
 
   test('flushes early once coalesceBytes is reached; 0 disables coalescing', async () => {

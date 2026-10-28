@@ -12,7 +12,7 @@ import {
   type OutputOf,
   type StreamKind,
 } from './api.ts';
-import { concatBytes, decodeFrames, decodeJson, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
+import { concatBytes, decodeFrameBatches, decodeJson, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
 import { ValidationError } from './schema.ts';
 import { Batch } from './batch.ts';
@@ -90,10 +90,27 @@ export class ApueClient<A extends Api> {
     this.#maxBackoffMs = options.maxBackoffMs ?? 2_000;
   }
 
-  /** Unary call. */
-  async call<K extends OpsOf<A, 'none'>>(op: K, ...[input, options]: Args<A[K]>): Promise<OutputOf<A[K]>> {
-    for await (const value of this.#run(op, input, options)) return value as OutputOf<A[K]>;
-    throw new ApueError(502, 'Empty Response');
+  /** Unary call. (No async generator on this path: bench S4 showed it in the per-call cost.) */
+  async call<K extends OpsOf<A, 'none'>>(op: K, ...[input, options = {}]: Args<A[K]>): Promise<OutputOf<A[K]>> {
+    const def = this.#definition(op);
+    const controller = new AbortController();
+    const unlink = linkSignal(options.signal, controller);
+    try {
+      const res = await this.#send(op, def, input, options, controller.signal);
+      const type = baseMediaType(res.headers.get('content-type'));
+      const bytes = await readAll(res.body);
+      if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
+      if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
+      return decodeJson(bytes) as OutputOf<A[K]>;
+    } catch (error) {
+      controller.abort();
+      // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
+      // always get their own abort reason.
+      if (options.signal?.aborted) throw options.signal.reason;
+      throw error;
+    } finally {
+      unlink();
+    }
   }
 
   /** Server-streaming call. Breaking out of the loop cancels the call on the server. */
@@ -129,26 +146,33 @@ export class ApueClient<A extends Api> {
     return this.#retries;
   }
 
-  async *#run(opName: string, input: unknown, options: CallOptions = {}): AsyncGenerator<unknown> {
+  #definition(opName: string): OpDef {
     const def = this.#api[opName];
     if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
+    return def;
+  }
+
+  async *#run(opName: string, input: unknown, options: CallOptions = {}): AsyncGenerator<unknown> {
+    const def = this.#definition(opName);
     const controller = new AbortController();
-    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    const unlink = linkSignal(options.signal, controller);
     let finished = false;
     try {
-      const res = await this.#send(opName, def, input, options, signal);
+      const res = await this.#send(opName, def, input, options, controller.signal);
       const type = baseMediaType(res.headers.get('content-type'));
       if (type === MediaType.STREAM_JSON && res.status === 200) {
-        for await (const frame of decodeFrames(res.body)) {
-          if (frame.type === FrameType.MSG) {
-            yield decodeJson(frame.payload);
-          } else if (frame.type === FrameType.END) {
-            const info = decodeJson(frame.payload) as EndInfo;
-            finished = true;
-            if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
-            return;
+        for await (const frames of decodeFrameBatches(res.body)) {
+          for (const frame of frames) {
+            if (frame.type === FrameType.MSG) {
+              yield decodeJson(frame.payload);
+            } else if (frame.type === FrameType.END) {
+              const info = decodeJson(frame.payload) as EndInfo;
+              finished = true;
+              if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
+              return;
+            }
+            // HEARTBEAT, CHECKPOINT and unknown frame types are ignored.
           }
-          // HEARTBEAT, CHECKPOINT and unknown frame types are ignored.
         }
         throw new ApueError(502, 'Truncated Stream', 'response ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
       }
@@ -163,6 +187,7 @@ export class ApueClient<A extends Api> {
       if (options.signal?.aborted) throw options.signal.reason;
       throw error;
     } finally {
+      unlink();
       if (!finished) controller.abort();
     }
   }
@@ -204,11 +229,12 @@ export class ApueClient<A extends Api> {
       // Per-attempt signal: aborting it discards a response we won't use (resets the h2 stream).
       // Merely returning an unstarted body iterator would leave the stream open.
       const attemptController = new AbortController();
-      const attemptSignal = AbortSignal.any([signal, attemptController.signal]);
+      const unlinkAttempt = linkSignal(signal, attemptController);
       let res: TransportResponse;
       try {
-        res = await this.#transport.request({ ...prepared, signal: attemptSignal });
+        res = await this.#transport.request({ ...prepared, signal: attemptController.signal });
       } catch (error) {
+        unlinkAttempt();
         if (signal.aborted || attempt >= budget) throw error;
         await sleep(this.#backoff(attempt), signal);
         continue;
@@ -217,6 +243,7 @@ export class ApueClient<A extends Api> {
       // (Envoy < 1.40 on HTTP/1). Retry the read as POST; remember only if POST then fares better.
       if (prepared.method === 'QUERY' && QUERY_REJECTED.has(res.status)) {
         attemptController.abort();
+        unlinkAttempt();
         queryRejectedWith = res.status;
         prepared = { ...prepared, method: 'POST' };
         attempt--; // a method fallback is not a retry
@@ -227,6 +254,7 @@ export class ApueClient<A extends Api> {
         const delay = await this.#retryDelay(res, attempt);
         if (delay !== undefined) {
           attemptController.abort();
+          unlinkAttempt();
           await sleep(delay, signal);
           continue;
         }
@@ -306,6 +334,23 @@ export async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Arr
 async function* single(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
   yield bytes;
 }
+
+/**
+ * Aborts `child` when `parent` aborts; returns an unlink function. Replaces AbortSignal.any,
+ * which costs ~2.7 µs per call on Node 26 (bench S4) — more than a whole loopback request's share.
+ */
+export function linkSignal(parent: AbortSignal | undefined, child: AbortController): () => void {
+  if (!parent) return noop;
+  if (parent.aborted) {
+    child.abort(parent.reason);
+    return noop;
+  }
+  const onAbort = () => child.abort(parent.reason);
+  parent.addEventListener('abort', onAbort, { once: true });
+  return () => parent.removeEventListener('abort', onAbort);
+}
+
+const noop = () => {};
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {

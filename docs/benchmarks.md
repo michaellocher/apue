@@ -80,8 +80,8 @@ Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCI
 
 - Docker Desktop runs containers in a VM on the same Mac; "1 CPU" is a CFS quota, which causes the
   tail latencies (p99 50–66 ms at 0.5 CPU). At 0.5 CPU the raw bulk baseline came out *slower* than
-  apü in two separate runs; it is measured first, right after the CPU-heavy stream scenario, so
-  quota throttling is the likely (unverified) cause — treat that cell as an artifact.
+  apü in two full runs. Running the bulk scenario alone twice gave raw/apü 174/154 and 128/141 MiB/s:
+  at 0.5 CPU, bulk numbers swing ±20 % between runs, so that cell shows noise, not a difference.
 - WAN runs vary: the tuned-window download was 7.0 MiB/s in one run and 2.9 MiB/s in the final
   one (TCP behaviour under netem); the 64 KiB window was 0.56–0.57 MiB/s in both.
 - netem applies to `lo` in the shared namespace, i.e. to both directions; the RTT was measured

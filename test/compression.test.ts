@@ -165,6 +165,23 @@ describe('streams', () => {
     });
   }
 
+  test('streams rank brotli last (WebKit on Linux holds brotli output back until the end); unary keeps it', async () => {
+    const codingOf = async (path: string, acceptEncoding: string, accept: string) => {
+      const req = session.request({ ':path': path, 'accept-encoding': acceptEncoding, accept });
+      req.end();
+      const headers = await new Promise<http2.IncomingHttpHeaders>((resolve) => req.once('response', resolve));
+      req.resume();
+      await new Promise((resolve) => req.once('end', resolve));
+      return headers['content-encoding'];
+    };
+    // What WebKit on Linux sends:
+    assert.equal(await codingOf('/slow.stream', 'gzip, deflate, br', MediaType.STREAM_JSON), 'gzip');
+    assert.equal(await codingOf('/slow.stream', 'zstd, br, gzip', MediaType.STREAM_JSON), 'zstd');
+    assert.equal(await codingOf('/slow.stream', 'br', MediaType.STREAM_JSON), 'br'); // only brotli: still compressed
+    assert.equal(await codingOf('/slow.stream', 'gzip;q=0.5, br', MediaType.STREAM_JSON), 'br'); // explicit q-values win
+    assert.equal(await codingOf('/big.get', 'gzip, deflate, br', MediaType.JSON), 'br'); // unary responses end: brotli is fine
+  });
+
   test('typed client decompresses every coding (http2 transport)', async () => {
     for (const acceptEncoding of ['zstd', 'br', 'gzip', '']) {
       const client = new ApueClient(api, http2Transport(server.url, { ca: testCert().cert, acceptEncoding }));

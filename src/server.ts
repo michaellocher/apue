@@ -27,6 +27,8 @@ import { acceptKey, checkHandshake, WsClose, WsConnection } from './websocket.ts
 import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClientGone, isUploadRef, MAX_TIMEOUT_MS, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 export { isClientGone } from './protocol.ts';
+// The idempotency store contract, so applications can plug in a shared store (replicas).
+export { MemoryIdempotencyStore, type BeginResult, type IdempotencyStore, type MemoryStoreOptions, type StoredResponse } from './idempotency.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, MAX_SELECT_PATHS, project, SelectionError, type Selection } from './select.ts';
@@ -419,6 +421,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   } = options;
   const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
+  // Streams prefer anything over brotli (only a tie-break: explicit q-values still win). WebKit on
+  // Linux (libsoup) holds brotli-decoded data back until the response ends — a live stream showed
+  // 76 of 202 items, forever — while gzip and zstd flushes reach the page at once (S30).
+  const streamCodings = [...codings.filter((c) => c !== 'br'), ...codings.filter((c) => c === 'br')];
   const cors = options.cors;
   const resumeTokens = new ResumeTokens(options.resume);
   if (!(shutdownGraceMs >= 0)) throw new RangeError(`shutdownGraceMs must be ≥ 0 (or Infinity), got ${shutdownGraceMs}`);
@@ -1148,7 +1154,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     gone: AbortSignal,
     complete: () => void,
   ): { writer: FrameWriter; close(): void } {
-    const coding = negotiate(req.headers['accept-encoding'], codings);
+    const coding = negotiate(req.headers['accept-encoding'], streamCodings);
     const out: Record<string, string> = codings.length > 0 ? { ...headers, vary: appendVary(headers.vary, 'accept-encoding') } : { ...headers };
     if (coding) out['content-encoding'] = coding;
     res.writeHead(200, out);

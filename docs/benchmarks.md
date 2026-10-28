@@ -12,41 +12,30 @@ validation and stripping, ETags, idempotency keys, framing, deadlines, cancellat
 
 ## Key results
 
-| | local (M-series, 10 cores) | Docker 1 CPU / 1 GiB | Docker 0.5 CPU / 256 MiB | Docker 1 CPU, WAN (63 ms RTT, 100 Mbit/s) |
-|---|---|---|---|---|
-| unary GET c=32: apü / raw | 25.4k / 47.7k req/s (53 %) | 14.0k / 26.5k (53 %) | 8.8k / 19.6k (45 %) | 383 / 397 req/s (96 %) |
-| unary POST + Idempotency-Key c=32 | 19.9k req/s | 10.6k | 5.6k | 380 |
-| stream, small msgs: apü / NDJSON | 1.94M / 2.82M msg/s (69 %) | 0.93M / 1.84M (51 %) | 0.34M / 0.91M (37 %) | 0.24M / 0.24M (98 %) |
-| stream + zstd | 1.84M msg/s | 0.79M | 0.33M | **0.65M (2.7× NDJSON)** |
-| 1 MiB responses: apü / raw | 320 / 409 MiB/s (78 %) | 170 / 195 (87 %) | 162 / 108 (noisy, CFS quota) | 6.3 / 6.5 |
-| 1 MiB JSON with zstd (wire 118 KiB) | 160 MiB/s | 77 | 43 | **11.5 MiB/s (1.8× identity)** |
-| 3 dependent calls: sequential / batch | 0.41 / 0.22 ms | 0.81 / 0.48 ms | 0.81 / 0.41 ms | **212 / 75 ms (2.8×)** |
-| 4 MiB download: 64 KiB window / tuned | 111 / 320 MiB/s | 51 / 209 | 23 / 213 | **0.57 / 7.0 MiB/s (12×)** |
-| server memory under load | — | 141 MiB | 93 MiB | 56 MiB |
+Final runs after all optimizations (spike S10). "c=32" = 32 concurrent calls on one HTTP/2 connection.
 
-## Conclusions
-
-1. **On real networks the protocol design dominates, not CPU.** With 63 ms RTT the unary
-   overhead disappears (96 % of raw), while pipelined batches (2.8×), compressed streams (2.7×) and
-   tuned flow-control windows (12×) decide throughput and latency.
-2. **The HTTP/2 window defaults are a real trap.** Node 26.12.1 still advertises the RFC's 64 KiB;
-   apü sets 4 MiB per stream / 32 MiB per connection on both ends.
-3. **Compression: zstd is the right default.** zstd-3 reaches about brotli-4's ratio (118 vs 101 KiB
-   for 1 MiB) at ~1.5–1.7× its speed; gzip-1 is fast but only 3.2×. On loopback, compression costs
-   throughput; behind 100 Mbit/s it is a net win from the first byte. Per-burst flushing keeps TTFB.
-4. **CPU overhead on small machines is the remaining weak spot**: ~50 % of a raw handler for tiny
-   unary calls and 37–69 % for message streams. The profile is now spread over node:http2 internals,
-   JSON, validation and TLS; the large, cheap wins have been taken (see below).
+| | local (M-series, 10 cores) | Docker 2 CPU / 1 GiB | Docker 1 CPU / 1 GiB | Docker 0.5 CPU / 256 MiB | Docker 1 CPU, WAN (63 ms RTT, 100 Mbit/s) |
+|---|---|---|---|---|---|
+| unary GET c=32: apü / raw | 29.2k / 46.8k req/s (62 %) | 17.8k / 28.3k (63 %) | 17.9k / 28.2k (64 %) | 10.5k / 22.2k (47 %) | 385 / 407 req/s (95 %) |
+| unary POST + Idempotency-Key c=32 | 20.9k req/s | 13.0k | 12.6k | 6.0k | 378 |
+| stream, small msgs: apü / NDJSON | 1.96M / 2.61M msg/s (75 %) | 1.22M / 1.83M (67 %) | 0.94M / 1.94M (48 %) | 0.45M / 0.89M (50 %) | 0.24M / 0.24M (103 %) |
+| stream + zstd | 1.69M msg/s | 0.96M | 0.85M | 0.32M | **0.64M (2.7× NDJSON)** |
+| 1 MiB responses: apü / raw | 334 / 399 MiB/s (84 %) | 164 / 194 (85 %) | 195 / 215 (91 %) | 162 / 85 (artifact, see caveats) | 6.1 / 6.6 |
+| 1 MiB JSON with zstd (wire 118 KiB) | 162 MiB/s | 77 | 76 | 51 | **11.3 MiB/s (1.8× identity)** |
+| 3 dependent calls: sequential / batch | 0.67 / 0.31 ms | 0.75 / 0.39 ms | 0.75 / 0.39 ms | 0.91 / 0.48 ms | **203 / 67 ms (3.0×)** |
+| 4 MiB download: 64 KiB window / tuned | 103 / 373 MiB/s | 88 / 209 | 68 / 210 | 23 / 146 | **0.56 / 2.9–7.0 MiB/s (5–12×)** |
+| server memory under load | — | 143 MiB | 141 MiB | 94 MiB | 55 MiB |
 
 ## Optimizations driven by profiling (before → after, local)
 
-Measured in two steps (each step's changes were benchmarked together end-to-end; the per-change
-numbers are isolated micro-benchmarks):
+Measured in three steps (each step's changes were benchmarked together end-to-end; the per-change
+numbers are isolated micro-benchmarks or A/B runs):
 
 | step | changes (isolated measurement) | end-to-end effect (local) |
 |---|---|---|
 | 1 | HTTP/2 core stream API instead of the compat layer (compat alone: −23 % req/s); no `AbortSignal.any` on the client (2.7 µs per call on Node 26); unary fast path without async generator; idempotency eviction O(n) → amortised O(1) (was 24 % of server CPU; Map tombstones kept a naïve fix at ~9 µs/insert, a FIFO queue brought it to 0.7 µs) | unary GET c=32 18.7k → 23.4k, c=1 5.3k → 7.6k; POST + key 7.4k → 18.7k req/s |
 | 2 | single-allocation JSON frames via Buffer (frame encode 498 → 140 ns; Node's TextEncoder is ~4× slower than Buffer for short strings); schema validation without per-field allocations (2.1–2.3×, User 593 → 257 ns); one abort listener per stream instead of a `Promise.race` per item; batched frame decoding (async step per chunk, not per frame) | stream 0.91M → 1.94M msg/s |
+| 3 | unread request bodies discarded only after `finish` (the early `resume()` made node:http2 destroy streams with a pending write and create an `ERR_STREAM_DESTROYED` per request); `respond()` without options; unary bodies read via events instead of an async iterator (A/B, 3 rounds: +4–6 %) | unary GET c=32 25.4k → 29.2k |
 
 Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCII checks (only
 14–17 % faster decode ≈ 3 % of client CPU, Node-only); larger per-stream buffers before waiting for
@@ -55,7 +44,11 @@ Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCI
 ## Caveats
 
 - Docker Desktop runs containers in a VM on the same Mac; "1 CPU" is a CFS quota, which causes the
-  tail latencies (p99 ~56 ms at 0.5 CPU) and the noisy bulk numbers at 0.5 CPU.
+  tail latencies (p99 50–66 ms at 0.5 CPU). At 0.5 CPU the raw bulk baseline came out *slower* than
+  apü in two separate runs; it is measured first, right after the CPU-heavy stream scenario, so
+  quota throttling is the likely (unverified) cause — treat that cell as an artifact.
+- WAN runs vary: the tuned-window download was 7.0 MiB/s in one run and 2.9 MiB/s in the final
+  one (TCP behaviour under netem); the 64 KiB window was 0.56–0.57 MiB/s in both.
 - netem applies to `lo` in the shared namespace, i.e. to both directions; the RTT was measured
   with ping (63 ms for 2 × 25 ms configured).
 - Clients ran unconstrained; constrained-client numbers would be lower.
@@ -64,131 +57,131 @@ Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCI
 
 #### local-mac-final
 
-Node v26.12.1; 10 CPUs, 16384 MiB, server and client as separate processes on the same machine; 2026-10-28T02:10Z
+Node v26.12.1; 10 CPUs, 16384 MiB, server and client as separate processes on the same machine; 2026-10-28T02:53Z
 
 | scenario | variant | result | p50 | p99 |
 |---|---|---|---|---|
-| unary c=1 | raw node:http2 GET | 13,347 req/s | 0.07 ms | 0.15 ms |
-| unary c=1 | apü safe op (GET) | 9,455 req/s | 0.10 ms | 0.24 ms |
-| unary c=1 | apü unsafe op (POST + key) | 8,828 req/s | 0.10 ms | 0.23 ms |
-| unary c=32 | raw node:http2 GET | 47,724 req/s | 0.62 ms | 1.85 ms |
-| unary c=32 | apü safe op (GET) | 25,371 req/s | 1.21 ms | 2.05 ms |
-| unary c=32 | apü unsafe op (POST + key) | 19,940 req/s | 1.55 ms | 2.30 ms |
-| server stream 200k small msgs | raw NDJSON (split + JSON.parse) | 2,820,182 msg/s |  |  |
-| server stream 200k small msgs | apü stream (frames, validated) | 1,938,475 msg/s |  |  |
-| server stream 200k small msgs | apü stream + zstd | 1,844,881 msg/s |  |  |
-| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 409 MiB/s |  |  |
-| bulk 1024 KiB responses | apü safe op | 320 MiB/s |  |  |
-| 3 dependent calls | sequential calls | 0.41 ms | 0.41 ms | 0.71 ms |
-| 3 dependent calls | apü batch (1 round trip) | 0.22 ms | 0.22 ms | 0.56 ms |
-| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 338 MiB/s |  |  |
-| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 93.11 MiB/s |  |  |
-| compression, 1024 KiB JSON | br (wire 101 KiB) | 95.39 MiB/s |  |  |
-| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 160 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 111 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 320 MiB/s |  |  |
+| unary c=1 | raw node:http2 GET | 10,508 req/s | 0.09 ms | 0.18 ms |
+| unary c=1 | apü safe op (GET) | 8,837 req/s | 0.11 ms | 0.20 ms |
+| unary c=1 | apü unsafe op (POST + key) | 7,319 req/s | 0.13 ms | 0.26 ms |
+| unary c=32 | raw node:http2 GET | 46,803 req/s | 0.63 ms | 1.81 ms |
+| unary c=32 | apü safe op (GET) | 29,182 req/s | 1.03 ms | 1.96 ms |
+| unary c=32 | apü unsafe op (POST + key) | 20,884 req/s | 1.48 ms | 2.06 ms |
+| server stream 200k small msgs | raw NDJSON (split + JSON.parse) | 2,611,033 msg/s |  |  |
+| server stream 200k small msgs | apü stream (frames, validated) | 1,955,323 msg/s |  |  |
+| server stream 200k small msgs | apü stream + zstd | 1,693,462 msg/s |  |  |
+| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 399 MiB/s |  |  |
+| bulk 1024 KiB responses | apü safe op | 334 MiB/s |  |  |
+| 3 dependent calls | sequential calls | 0.67 ms | 0.67 ms | 0.81 ms |
+| 3 dependent calls | apü batch (1 round trip) | 0.31 ms | 0.31 ms | 0.61 ms |
+| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 328 MiB/s |  |  |
+| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 94.57 MiB/s |  |  |
+| compression, 1024 KiB JSON | br (wire 101 KiB) | 102 MiB/s |  |  |
+| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 162 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 103 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 373 MiB/s |  |  |
 
 #### docker-2cpu-1g
 
-Node v26.12.1; server container: 2 CPU, 1g RAM; network: loopback → loopback; 2026-10-28T02:06Z
+Node v26.12.1; server container: 2 CPU, 1g RAM; network: loopback → loopback; 2026-10-28T02:48Z
 
 | scenario | variant | result | p50 | p99 |
 |---|---|---|---|---|
-| unary c=1 | raw node:http2 GET | 6,348 req/s | 0.15 ms | 0.33 ms |
-| unary c=1 | apü safe op (GET) | 4,934 req/s | 0.19 ms | 0.40 ms |
-| unary c=1 | apü unsafe op (POST + key) | 4,340 req/s | 0.22 ms | 0.49 ms |
-| unary c=32 | raw node:http2 GET | 27,178 req/s | 1.09 ms | 3.13 ms |
-| unary c=32 | apü safe op (GET) | 14,613 req/s | 2.07 ms | 3.86 ms |
-| unary c=32 | apü unsafe op (POST + key) | 10,932 req/s | 2.81 ms | 5.20 ms |
-| server stream 200k small msgs | raw NDJSON (split + JSON.parse) | 1,699,652 msg/s |  |  |
-| server stream 200k small msgs | apü stream (frames, validated) | 1,165,749 msg/s |  |  |
-| server stream 200k small msgs | apü stream + zstd | 944,178 msg/s |  |  |
-| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 183 MiB/s |  |  |
-| bulk 1024 KiB responses | apü safe op | 132 MiB/s |  |  |
-| 3 dependent calls | sequential calls | 1.04 ms | 1.04 ms | 2.27 ms |
-| 3 dependent calls | apü batch (1 round trip) | 0.69 ms | 0.69 ms | 1.21 ms |
-| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 163 MiB/s |  |  |
-| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 50.68 MiB/s |  |  |
-| compression, 1024 KiB JSON | br (wire 101 KiB) | 47.14 MiB/s |  |  |
-| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 77.57 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 85.24 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 147 MiB/s |  |  |
+| unary c=1 | raw node:http2 GET | 6,726 req/s | 0.14 ms | 0.29 ms |
+| unary c=1 | apü safe op (GET) | 5,614 req/s | 0.17 ms | 0.33 ms |
+| unary c=1 | apü unsafe op (POST + key) | 4,560 req/s | 0.21 ms | 0.40 ms |
+| unary c=32 | raw node:http2 GET | 28,329 req/s | 1.06 ms | 2.86 ms |
+| unary c=32 | apü safe op (GET) | 17,752 req/s | 1.70 ms | 3.60 ms |
+| unary c=32 | apü unsafe op (POST + key) | 13,016 req/s | 2.35 ms | 4.12 ms |
+| server stream 200k small msgs | raw NDJSON (split + JSON.parse) | 1,829,354 msg/s |  |  |
+| server stream 200k small msgs | apü stream (frames, validated) | 1,222,537 msg/s |  |  |
+| server stream 200k small msgs | apü stream + zstd | 962,626 msg/s |  |  |
+| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 194 MiB/s |  |  |
+| bulk 1024 KiB responses | apü safe op | 164 MiB/s |  |  |
+| 3 dependent calls | sequential calls | 0.75 ms | 0.75 ms | 1.11 ms |
+| 3 dependent calls | apü batch (1 round trip) | 0.39 ms | 0.39 ms | 0.62 ms |
+| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 173 MiB/s |  |  |
+| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 51.67 MiB/s |  |  |
+| compression, 1024 KiB JSON | br (wire 101 KiB) | 50.14 MiB/s |  |  |
+| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 76.64 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 88.26 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 209 MiB/s |  |  |
 
 #### docker-1cpu-1g
 
-Node v26.12.1; server container: 1 CPU, 1g RAM; network: loopback → loopback; 2026-10-28T02:06Z
+Node v26.12.1; server container: 1 CPU, 1g RAM; network: loopback → loopback; 2026-10-28T02:48Z
 
 | scenario | variant | result | p50 | p99 |
 |---|---|---|---|---|
-| unary c=1 | raw node:http2 GET | 6,508 req/s | 0.14 ms | 0.30 ms |
-| unary c=1 | apü safe op (GET) | 5,039 req/s | 0.19 ms | 0.38 ms |
-| unary c=1 | apü unsafe op (POST + key) | 4,248 req/s | 0.22 ms | 0.46 ms |
-| unary c=32 | raw node:http2 GET | 26,480 req/s | 1.12 ms | 3.07 ms |
-| unary c=32 | apü safe op (GET) | 13,994 req/s | 2.17 ms | 4.16 ms |
-| unary c=32 | apü unsafe op (POST + key) | 10,649 req/s | 2.81 ms | 5.69 ms |
-| server stream 200k small msgs | raw NDJSON (split + JSON.parse) | 1,836,266 msg/s |  |  |
-| server stream 200k small msgs | apü stream (frames, validated) | 928,071 msg/s |  |  |
-| server stream 200k small msgs | apü stream + zstd | 787,104 msg/s |  |  |
-| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 195 MiB/s |  |  |
-| bulk 1024 KiB responses | apü safe op | 170 MiB/s |  |  |
-| 3 dependent calls | sequential calls | 0.81 ms | 0.81 ms | 1.45 ms |
-| 3 dependent calls | apü batch (1 round trip) | 0.48 ms | 0.48 ms | 0.71 ms |
-| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 176 MiB/s |  |  |
-| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 51.13 MiB/s |  |  |
-| compression, 1024 KiB JSON | br (wire 101 KiB) | 49.59 MiB/s |  |  |
-| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 76.56 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 51.03 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 209 MiB/s |  |  |
+| unary c=1 | raw node:http2 GET | 6,808 req/s | 0.14 ms | 0.28 ms |
+| unary c=1 | apü safe op (GET) | 5,491 req/s | 0.17 ms | 0.32 ms |
+| unary c=1 | apü unsafe op (POST + key) | 4,565 req/s | 0.21 ms | 0.40 ms |
+| unary c=32 | raw node:http2 GET | 28,166 req/s | 1.06 ms | 2.87 ms |
+| unary c=32 | apü safe op (GET) | 17,908 req/s | 1.69 ms | 3.45 ms |
+| unary c=32 | apü unsafe op (POST + key) | 12,582 req/s | 2.40 ms | 4.43 ms |
+| server stream 200k small msgs | raw NDJSON (split + JSON.parse) | 1,940,950 msg/s |  |  |
+| server stream 200k small msgs | apü stream (frames, validated) | 937,336 msg/s |  |  |
+| server stream 200k small msgs | apü stream + zstd | 847,416 msg/s |  |  |
+| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 215 MiB/s |  |  |
+| bulk 1024 KiB responses | apü safe op | 195 MiB/s |  |  |
+| 3 dependent calls | sequential calls | 0.75 ms | 0.75 ms | 1.06 ms |
+| 3 dependent calls | apü batch (1 round trip) | 0.39 ms | 0.39 ms | 0.59 ms |
+| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 198 MiB/s |  |  |
+| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 54.15 MiB/s |  |  |
+| compression, 1024 KiB JSON | br (wire 101 KiB) | 50.82 MiB/s |  |  |
+| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 75.77 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 68.26 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 210 MiB/s |  |  |
 
 #### docker-0.5cpu-256m
 
-Node v26.12.1; server container: 0.5 CPU, 256m RAM; network: loopback → loopback; 2026-10-28T02:07Z
+Node v26.12.1; server container: 0.5 CPU, 256m RAM; network: loopback → loopback; 2026-10-28T02:48Z
 
 | scenario | variant | result | p50 | p99 |
 |---|---|---|---|---|
-| unary c=1 | raw node:http2 GET | 5,547 req/s | 0.15 ms | 0.37 ms |
-| unary c=1 | apü safe op (GET) | 4,403 req/s | 0.19 ms | 0.47 ms |
-| unary c=1 | apü unsafe op (POST + key) | 2,932 req/s | 0.23 ms | 0.75 ms |
-| unary c=32 | raw node:http2 GET | 19,562 req/s | 1.14 ms | 19.43 ms |
-| unary c=32 | apü safe op (GET) | 8,828 req/s | 2.20 ms | 56.23 ms |
-| unary c=32 | apü unsafe op (POST + key) | 5,599 req/s | 3.22 ms | 57.16 ms |
-| server stream 100k small msgs | raw NDJSON (split + JSON.parse) | 913,987 msg/s |  |  |
-| server stream 100k small msgs | apü stream (frames, validated) | 336,037 msg/s |  |  |
-| server stream 100k small msgs | apü stream + zstd | 326,985 msg/s |  |  |
-| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 108 MiB/s |  |  |
+| unary c=1 | raw node:http2 GET | 5,826 req/s | 0.14 ms | 0.34 ms |
+| unary c=1 | apü safe op (GET) | 5,042 req/s | 0.17 ms | 0.38 ms |
+| unary c=1 | apü unsafe op (POST + key) | 3,446 req/s | 0.21 ms | 0.50 ms |
+| unary c=32 | raw node:http2 GET | 22,182 req/s | 1.03 ms | 3.93 ms |
+| unary c=32 | apü safe op (GET) | 10,525 req/s | 1.82 ms | 50.50 ms |
+| unary c=32 | apü unsafe op (POST + key) | 5,993 req/s | 2.75 ms | 65.98 ms |
+| server stream 100k small msgs | raw NDJSON (split + JSON.parse) | 885,440 msg/s |  |  |
+| server stream 100k small msgs | apü stream (frames, validated) | 446,649 msg/s |  |  |
+| server stream 100k small msgs | apü stream + zstd | 315,655 msg/s |  |  |
+| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 84.81 MiB/s |  |  |
 | bulk 1024 KiB responses | apü safe op | 162 MiB/s |  |  |
-| 3 dependent calls | sequential calls | 0.81 ms | 0.81 ms | 1.83 ms |
-| 3 dependent calls | apü batch (1 round trip) | 0.41 ms | 0.41 ms | 0.76 ms |
-| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 175 MiB/s |  |  |
-| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 41.57 MiB/s |  |  |
-| compression, 1024 KiB JSON | br (wire 101 KiB) | 30.10 MiB/s |  |  |
-| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 42.54 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 22.89 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 213 MiB/s |  |  |
+| 3 dependent calls | sequential calls | 0.91 ms | 0.91 ms | 1.33 ms |
+| 3 dependent calls | apü batch (1 round trip) | 0.48 ms | 0.48 ms | 0.89 ms |
+| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 145 MiB/s |  |  |
+| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 37.88 MiB/s |  |  |
+| compression, 1024 KiB JSON | br (wire 101 KiB) | 33.66 MiB/s |  |  |
+| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 50.68 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 23.36 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 146 MiB/s |  |  |
 
 #### docker-1cpu-1g-wan
 
-Node v26.12.1; server container: 1 CPU, 1g RAM; network: delay 25ms rate 100mbit → 62.568 ms RTT (measured); 2026-10-28T02:08Z
+Node v26.12.1; server container: 1 CPU, 1g RAM; network: delay 25ms rate 100mbit → 64.952 ms RTT (measured); 2026-10-28T02:50Z
 
 | scenario | variant | result | p50 | p99 |
 |---|---|---|---|---|
-| unary c=1 | raw node:http2 GET | 14.28 req/s | 69.95 ms | 94.61 ms |
-| unary c=1 | apü safe op (GET) | 14.31 req/s | 70.57 ms | 81.14 ms |
-| unary c=1 | apü unsafe op (POST + key) | 14.00 req/s | 72.61 ms | 84.53 ms |
-| unary c=32 | raw node:http2 GET | 397 req/s | 81.04 ms | 91.37 ms |
-| unary c=32 | apü safe op (GET) | 383 req/s | 84.64 ms | 96.94 ms |
-| unary c=32 | apü unsafe op (POST + key) | 380 req/s | 85.04 ms | 96.97 ms |
-| server stream 100k small msgs | raw NDJSON (split + JSON.parse) | 244,541 msg/s |  |  |
-| server stream 100k small msgs | apü stream (frames, validated) | 238,567 msg/s |  |  |
-| server stream 100k small msgs | apü stream + zstd | 652,700 msg/s |  |  |
-| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 6.49 MiB/s |  |  |
-| bulk 1024 KiB responses | apü safe op | 6.34 MiB/s |  |  |
-| 3 dependent calls | sequential calls | 212 ms | 212 ms | 234 ms |
-| 3 dependent calls | apü batch (1 round trip) | 74.58 ms | 74.58 ms | 87.98 ms |
-| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 6.27 MiB/s |  |  |
-| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 8.66 MiB/s |  |  |
-| compression, 1024 KiB JSON | br (wire 101 KiB) | 10.53 MiB/s |  |  |
-| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 11.51 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 0.57 MiB/s |  |  |
-| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 7.03 MiB/s |  |  |
+| unary c=1 | raw node:http2 GET | 14.68 req/s | 67.59 ms | 80.07 ms |
+| unary c=1 | apü safe op (GET) | 14.22 req/s | 71.52 ms | 78.72 ms |
+| unary c=1 | apü unsafe op (POST + key) | 13.94 req/s | 70.86 ms | 120 ms |
+| unary c=32 | raw node:http2 GET | 407 req/s | 76.99 ms | 95.13 ms |
+| unary c=32 | apü safe op (GET) | 385 req/s | 82.26 ms | 96.20 ms |
+| unary c=32 | apü unsafe op (POST + key) | 378 req/s | 84.69 ms | 93.46 ms |
+| server stream 100k small msgs | raw NDJSON (split + JSON.parse) | 237,949 msg/s |  |  |
+| server stream 100k small msgs | apü stream (frames, validated) | 244,342 msg/s |  |  |
+| server stream 100k small msgs | apü stream + zstd | 639,383 msg/s |  |  |
+| bulk 1024 KiB responses | raw node:http2 (+ JSON.parse) | 6.60 MiB/s |  |  |
+| bulk 1024 KiB responses | apü safe op | 6.10 MiB/s |  |  |
+| 3 dependent calls | sequential calls | 203 ms | 203 ms | 218 ms |
+| 3 dependent calls | apü batch (1 round trip) | 67.38 ms | 67.38 ms | 81.47 ms |
+| compression, 1024 KiB JSON | identity (wire 1024 KiB) | 6.45 MiB/s |  |  |
+| compression, 1024 KiB JSON | gzip (wire 320 KiB) | 8.53 MiB/s |  |  |
+| compression, 1024 KiB JSON | br (wire 101 KiB) | 10.70 MiB/s |  |  |
+| compression, 1024 KiB JSON | zstd (wire 118 KiB) | 11.26 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 64 KiB (RFC default) | 0.56 MiB/s |  |  |
+| download 4 MiB, uncompressed | client window 4 MiB / 32 MiB (apü default) | 2.85 MiB/s |  |  |
 

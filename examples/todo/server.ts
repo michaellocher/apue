@@ -102,6 +102,19 @@ if (process.env.APUE_DEBUG_STREAMS) {
     });
   });
   server.server.on('sessionError', (error) => console.error('[session error]', error.message));
+  // Live change streams that have data waiting to be sent: is the server blocked by the client's
+  // flow control (remoteWindowSize ~0) or by something else? (Diagnoses a stall seen in CI.)
+  server.server.on('stream', (stream, headers) => {
+    if (!String(headers[':path']).startsWith('/todos.changes')) return;
+    let last = '';
+    const timer = setInterval(() => {
+      const state = `unsent=${stream.writableLength} needDrain=${stream.writableNeedDrain} sessionWindow=${stream.session?.state.remoteWindowSize} outbound=${stream.session?.state.outboundQueueSize} streamState=${stream.state?.state}`;
+      if (stream.writableLength > 0 && state !== last) console.error(`[changes] ${state}`);
+      last = state;
+    }, 500);
+    timer.unref();
+    stream.once('close', () => clearInterval(timer));
+  });
 }
 const port = await server.listen(Number(process.env.PORT ?? 8443), process.env.HOST ?? '127.0.0.1');
 console.log(`todo example on https://localhost:${port} (self-signed cert; use mkcert or accept it in the browser)`);

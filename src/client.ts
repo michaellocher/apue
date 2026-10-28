@@ -15,7 +15,7 @@ import {
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
 import { BlobAssembler, messageFrames } from './blobs.ts';
-import { containsBytes, ValidationError } from './schema.ts';
+import { containsBytes, mapBytes, ValidationError } from './schema.ts';
 import { canonicalSelection } from './select.ts';
 import { Batch } from './batch.ts';
 
@@ -39,6 +39,18 @@ export interface Transport {
   request(request: TransportRequest): Promise<TransportResponse>;
   close?(): Promise<void>;
 }
+
+/** What a t.bytes() input accepts in place of the bytes once they are uploaded (`client.upload`). */
+export interface UploadRef {
+  $upload: string;
+}
+
+function isUploadRef(value: unknown): value is UploadRef {
+  return typeof value === 'object' && value !== null && !(value instanceof Uint8Array) && typeof (value as UploadRef).$upload === 'string' && Object.keys(value).length === 1;
+}
+
+/** Interop version of draft-ietf-httpbis-resumable-upload-14 (Appendix B). */
+const UPLOAD_INTEROP_VERSION = '10';
 
 export interface CallOptions {
   signal?: AbortSignal;
@@ -117,6 +129,7 @@ export class ApueClient<A extends Api> {
     const controller = new AbortController();
     const unlink = linkSignal(options.signal, controller);
     try {
+      input = (await this.#withUploads(def, input, controller.signal)) as typeof input;
       const res = await this.#send(op, def, input, options, controller.signal);
       const type = baseMediaType(res.headers.get('content-type'));
       // Ops whose output contains bytes are answered framed (MSG + BLOB frames + END).
@@ -197,6 +210,7 @@ export class ApueClient<A extends Api> {
     let sinceCheckpoint = 0;
     let skip = 0;
     try {
+      input = await this.#withUploads(def, input, controller.signal);
       for (;;) {
         const res = await this.#send(opName, def, input, options, controller.signal, resumeToken);
         const type = baseMediaType(res.headers.get('content-type'));
@@ -279,7 +293,8 @@ export class ApueClient<A extends Api> {
       headers.incremental = '?1';
       return { method: 'POST', path: `/${opName}`, headers, body: encodeInputs(input as AsyncIterable<unknown>, def) };
     }
-    const value = validate(def, input, 'input');
+    // Inputs with bytes were validated before their bytes became upload references (#withUploads).
+    const value = containsBytes(def.input) ? input : validate(def, input, 'input');
     const select = options.select?.length ? `s=${encodeURIComponent(canonicalSelection(options.select))}` : '';
     if (isCacheableRead(def)) {
       const readUrl = readPath(opName, value);
@@ -293,6 +308,84 @@ export class ApueClient<A extends Api> {
       headers['idempotency-key'] = sfString(options.idempotencyKey ?? crypto.randomUUID());
     }
     return { method, path: `/${opName}${select ? `?${select}` : ''}`, headers, ...(body === undefined ? {} : { body }) };
+  }
+
+  /**
+   * Uploads bytes resumably to `/$uploads` (draft-ietf-httpbis-resumable-upload-14, research/06)
+   * and returns the reference that t.bytes() inputs accept. "Careful" creation (an empty request
+   * that only returns the upload's location — fetch never exposes 104), then one PATCH with all
+   * content; after a lost connection, a 5xx/429 or an offset conflict it asks for the offset
+   * (HEAD) and sends only the rest.
+   */
+  async upload(bytes: Uint8Array, options: { signal?: AbortSignal; resumes?: number } = {}): Promise<UploadRef> {
+    const controller = new AbortController();
+    const unlink = linkSignal(options.signal, controller);
+    try {
+      return await this.#uploadBytes(bytes, controller.signal, options.resumes);
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason;
+      throw asProtocolError(error);
+    } finally {
+      unlink();
+    }
+  }
+
+  async #uploadBytes(bytes: Uint8Array, signal: AbortSignal, resumes = 5): Promise<UploadRef> {
+    const interop = { 'upload-draft-interop-version': UPLOAD_INTEROP_VERSION };
+    const created = await this.#transport.request({
+      method: 'POST',
+      path: '/$uploads',
+      headers: { ...interop, 'upload-complete': '?0', 'upload-length': String(bytes.byteLength), 'content-type': 'application/octet-stream' },
+      body: new Uint8Array(0),
+      signal,
+    });
+    const createdBody = await readAll(created.body);
+    const location = created.headers.get('location') ?? '';
+    if (created.status !== 201) throw problemError(createdBody, created.status);
+    // Only ever PATCH our own upload resources, never a location the response points elsewhere.
+    if (!/^\/\$uploads\/[A-Za-z0-9_-]+$/.test(location)) throw new ApueError(502, 'Bad Gateway', `unexpected upload location ${JSON.stringify(location)}`);
+    let offset = 0;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await this.#transport.request({
+          method: 'PATCH',
+          path: location,
+          headers: { ...interop, 'content-type': 'application/partial-upload', 'upload-offset': String(offset), 'upload-complete': '?1' },
+          body: bytes.subarray(offset),
+          signal,
+        });
+        const body = await readAll(res.body);
+        if (res.status === 201 && res.headers.get('upload-complete') === '?1') return { $upload: (decodeJson(body) as { upload: string }).upload };
+        if (res.status !== 409 && res.status !== 429 && res.status < 500) throw problemError(body, res.status);
+        if (attempt >= resumes) throw problemError(body, res.status);
+      } catch (error) {
+        if (signal.aborted || error instanceof ApueError || attempt >= resumes) throw error;
+        // a lost connection: resume below
+      }
+      await sleep(this.#backoff(attempt), signal);
+      const head = await this.#transport.request({ method: 'HEAD', path: location, headers: interop, signal });
+      await readAll(head.body);
+      const known = head.headers.get('upload-offset');
+      if (head.status >= 300 || known === null || !/^\d{1,15}$/.test(known)) throw new ApueError(head.status >= 300 ? head.status : 502, 'Upload Not Resumable', `offset retrieval answered ${head.status}`);
+      offset = Number(known); // a completed upload answers with its size: the empty PATCH then replays the reference
+    }
+  }
+
+  /**
+   * Unary inputs with t.bytes(): validated here, then every Uint8Array is uploaded and replaced by
+   * its reference. References from `upload()` may be passed in their place (an upload used twice).
+   */
+  async #withUploads(def: OpDef, input: unknown, signal: AbortSignal): Promise<unknown> {
+    if (hasRequestStream(def) || !containsBytes(def.input)) return input;
+    const refs = new Map<Uint8Array, UploadRef>(); // placeholder → reference, for validation only
+    const placeheld = await mapBytes(def.input, input, (value) => {
+      if (!isUploadRef(value)) return value;
+      const placeholder = new Uint8Array(0);
+      refs.set(placeholder, { $upload: value.$upload });
+      return placeholder;
+    });
+    const value = validate(def, placeheld, 'input');
+    return mapBytes(def.input, value, (bytes) => refs.get(bytes as Uint8Array) ?? (bytes instanceof Uint8Array ? this.#uploadBytes(bytes, signal) : bytes));
   }
 
   #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal, resumeToken?: string): Promise<TransportResponse> {

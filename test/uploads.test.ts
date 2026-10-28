@@ -4,7 +4,11 @@ import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import http2 from 'node:http2';
 import { after, before, describe, test } from 'node:test';
+import tls from 'node:tls';
 import { defineApi, op } from '../src/api.ts';
+import { ApueClient, fetchTransport, type Transport, type TransportRequest } from '../src/client.ts';
+import { ApueError } from '../src/protocol.ts';
+import { http2Transport } from '../src/transport-http2.ts';
 import { t } from '../src/schema.ts';
 import { createApueServer, type Handlers } from '../src/server.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
@@ -16,13 +20,19 @@ const api = defineApi({
     input: t.object({ name: t.string(), data: t.bytes(), thumb: t.optional(t.bytes()) }),
     output: t.object({ name: t.string(), size: t.number(), sha256: t.string() }),
   }),
+  'files.flaky': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.number() }),
 });
+let flakyCalls = 0;
 let executions = 0;
 const sha = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const handlers: Handlers<typeof api> = {
   'files.store': ({ name, data }) => {
     executions++;
     return { name, size: data.byteLength, sha256: sha(data) };
+  },
+  'files.flaky': ({ data }) => {
+    if (++flakyCalls === 1) throw new ApueError(503, 'Service Unavailable', 'try again', { retryable: true }, { 'retry-after': '0' });
+    return data.byteLength;
   },
 };
 
@@ -259,5 +269,115 @@ describe('upload references in op inputs', () => {
   test('ops with bytes in a unary input need uploads enabled', () => {
     const { key, cert } = testCert();
     assert.throws(() => createApueServer(api, handlers, { key, cert }), /files\.store has bytes in a unary input/);
+  });
+});
+
+describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
+  /** Records requests; `tamper` may replace a request (e.g. cut its body) before it is sent. */
+  function recording(inner: Transport, tamper?: (req: TransportRequest, index: number) => TransportRequest | Promise<never>) {
+    const log: TransportRequest[] = [];
+    const transport: Transport = {
+      request(req) {
+        log.push(req);
+        const changed = tamper?.(req, log.length - 1);
+        if (changed instanceof Promise) return changed;
+        return inner.request(changed ?? req);
+      },
+      close: () => inner.close?.() ?? Promise.resolve(),
+    };
+    return { transport, log };
+  }
+  const h2 = () => http2Transport(server.url, { ca: testCert().cert });
+
+  test('t.bytes() inputs upload automatically (node:http2 and fetch); the handler gets the bytes', async () => {
+    tls.setDefaultCACertificates([...tls.getCACertificates('default'), testCert().cert]);
+    const data = new Uint8Array(randomBytes(2 * MiB));
+    for (const transport of [h2(), fetchTransport(server.url)]) {
+      const { transport: t1, log } = recording(transport);
+      const client = new ApueClient(api, t1);
+      assert.deepEqual(await client.call('files.store', { name: 'f', data }), { name: 'f', size: data.byteLength, sha256: sha(data) });
+      assert.deepEqual(log.map((r) => `${r.method} ${r.path.split('/').slice(0, 2).join('/')}`), ['POST /$uploads', 'PATCH /$uploads', 'POST /files.store']);
+      await client.close();
+    }
+  });
+
+  test('a connection lost mid-upload resumes from the server\'s offset: only the rest is sent again', async () => {
+    const data = new Uint8Array(randomBytes(1 * MiB));
+    const { transport, log } = recording(h2(), (req, index) => {
+      if (req.method !== 'PATCH' || index !== 1) return req;
+      const body = req.body as Uint8Array;
+      return {
+        ...req,
+        body: (async function* () {
+          yield body.subarray(0, 400_000);
+          await sleep(50);
+          throw new Error('ECONNRESET (simulated)');
+        })(),
+      };
+    });
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    const ref = await client.upload(data);
+    const patches = log.filter((r) => r.method === 'PATCH');
+    assert.equal(patches.length, 2);
+    assert.equal(patches[1]!.headers['upload-offset'], '400000');
+    assert.equal((patches[1]!.body as Uint8Array).byteLength, data.byteLength - 400_000);
+    assert.equal(log.filter((r) => r.method === 'HEAD').length, 1);
+    assert.equal((await client.call('files.store', { name: 'x', data: ref as unknown as Uint8Array })).sha256, sha(data)); // a reference passes as is
+    await client.close();
+  });
+
+  test('an offset conflict (409) is recovered via offset retrieval', async () => {
+    const { transport, log } = recording(h2(), (req, index) => (req.method === 'PATCH' && index === 1 ? { ...req, headers: { ...req.headers, 'upload-offset': '7' } } : req));
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    const data = new Uint8Array(randomBytes(1000));
+    const ref = await client.upload(data);
+    assert.ok(ref.$upload);
+    assert.deepEqual(log.map((r) => r.method), ['POST', 'PATCH', 'HEAD', 'PATCH']);
+    await client.close();
+  });
+
+  test('never PATCHes a location outside /$uploads', async () => {
+    const fake: Transport = {
+      async request(req) {
+        assert.equal(req.method, 'POST', 'must not follow the location');
+        return { status: 201, headers: new Headers({ location: 'https://evil.example/collect' }), body: (async function* () {})() };
+      },
+    };
+    await assert.rejects(new ApueClient(api, fake).upload(new Uint8Array(1)), (e: ApueError) => e.status === 502 && /unexpected upload location/.test(e.message));
+  });
+
+  test('gives up after its resume budget; honours the caller\'s abort', async () => {
+    const failing = recording(h2(), (req) => (req.method === 'PATCH' ? Promise.reject(new Error('ECONNRESET (simulated)')) : req));
+    const client = new ApueClient(api, failing.transport, { backoffMs: 1 });
+    await assert.rejects(client.upload(new Uint8Array(10), { resumes: 2 }), /ECONNRESET/);
+    assert.equal(failing.log.filter((r) => r.method === 'PATCH').length, 3);
+    const controller = new AbortController();
+    const slow = recording(h2(), (req) =>
+      req.method === 'PATCH'
+        ? new Promise<never>((_resolve, reject) => {
+            req.signal.addEventListener('abort', () => reject(req.signal.reason), { once: true }); // as real transports do
+            controller.abort(new Error('stop'));
+          })
+        : req,
+    );
+    await assert.rejects(new ApueClient(api, slow.transport).upload(new Uint8Array(10), { signal: controller.signal }), /stop/);
+    await client.close();
+  });
+
+  test('invalid input fails on the client before anything is uploaded', async () => {
+    const { transport, log } = recording(h2());
+    const client = new ApueClient(api, transport);
+    await assert.rejects(client.call('files.store', { name: 1 as unknown as string, data: new Uint8Array(3) }), (e: ApueError) => e.status === 400);
+    await assert.rejects(client.call('files.store', { name: 'n', data: 'nope' as unknown as Uint8Array }), (e: ApueError) => e.status === 400);
+    assert.equal(log.length, 0);
+    await client.close();
+  });
+
+  test('a retried op call reuses its upload (no second upload)', async () => {
+    const { transport, log } = recording(h2());
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    assert.equal(await client.call('files.flaky', { data: new Uint8Array(5000) }), 5000);
+    assert.deepEqual(log.map((r) => `${r.method} ${r.path.split('/')[1]}`), ['POST $uploads', 'PATCH $uploads', 'POST files.flaky', 'POST files.flaky']);
+    await client.close();
   });
 });

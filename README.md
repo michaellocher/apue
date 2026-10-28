@@ -9,7 +9,8 @@ Spikes in Node 26 with native TypeScript and no build step.
 - Research: [`research/`](research/) — problems of existing API styles, HTTP/2 and modern HTTP,
   data plane performance, Node 26 platform, verified normative details
 - Measurements: [`docs/benchmarks.md`](docs/benchmarks.md) (local, constrained Docker, WAN
-  emulation) · [`docs/intermediaries.md`](docs/intermediaries.md) (through real nginx)
+  emulation, vs gRPC/grpc-js: 1.5× unary, 30× streaming) · [`docs/intermediaries.md`](docs/intermediaries.md)
+  (through real nginx)
 
 ## In one minute
 
@@ -56,7 +57,7 @@ cert). Optional: Chrome/Firefox for the real-browser tests, Docker for constrain
 the nginx probe.
 
 ```sh
-npm install          # typescript + @types/node, for typechecking only
+npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
 npm test             # node --test: 177 tests incl. headless Chrome + Firefox (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)

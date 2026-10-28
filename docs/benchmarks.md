@@ -26,6 +26,41 @@ Final runs after all optimizations (spike S10). "c=32" = 32 concurrent calls on 
 | 4 MiB download: 64 KiB window / tuned | 103 / 373 MiB/s | 88 / 209 | 68 / 210 | 23 / 146 | **0.56 / 2.9–7.0 MiB/s (5–12×)** |
 | server memory under load | — | 143 MiB | 141 MiB | 94 MiB | 55 MiB |
 
+## Against gRPC (`@grpc/grpc-js` 1.14.6, the official Node implementation)
+
+Same machine, same shapes (`bench/grpc/bench.proto` mirrors `bench/api.ts`), TLS + HTTP/2 for both,
+servers and client in separate processes (`node bench/run.ts --only grpc`). apü validates and
+strips every output against its schema; gRPC (protobuf) does schema encoding instead.
+
+| | gRPC (grpc-js) | apü | apü / gRPC |
+|---|---|---|---|
+| unary c=1 | 5,518 req/s (p50 0.17 ms) | 8,699 req/s (p50 0.11 ms) | 1.6× |
+| unary c=32 | 19,697 req/s (p99 3.55 ms) | 29,634 req/s (p99 1.96 ms) | 1.5× |
+| server stream, 200k small messages | 67,258 msg/s | 2,039,233 msg/s | 30× |
+
+The stream gap is grpc-js' per-message cost, not the harness: with and without backpressure on the
+server, and with `for await` or `'data'` events on the client, grpc-js stayed at 56–59k msg/s
+(single-process check). apü's frame coalescing, batched decoding and single-allocation encoding
+(below) make the difference. This says nothing about gRPC in Go, C++ or Rust.
+
+## Conclusions
+
+1. **On real networks the protocol design dominates, not CPU.** With 63 ms RTT the unary overhead
+   disappears (95 % of a raw handler), while pipelined batches (3.0×), compressed streams (2.7×)
+   and tuned flow-control windows (5–12×; the tuned result varied between runs) decide throughput
+   and latency.
+2. **The HTTP/2 window defaults are a real trap.** Node 26.12.1 still advertises the RFC's 64 KiB;
+   apü sets 4 MiB per stream / 32 MiB per connection on both ends.
+3. **Compression: zstd is the right default.** zstd-3 reaches about brotli-4's ratio (118 vs 101 KiB
+   for 1 MiB) at ~1.5–1.7× its speed; gzip-1 is fast but only 3.2×. On loopback, compression costs
+   throughput; behind 100 Mbit/s it is a net win. Per-burst flushing keeps TTFB.
+4. **Against the established Node RPC stack apü is faster** (1.5× unary, 30× streaming vs grpc-js)
+   while doing more per call (schema validation and stripping, ETags, idempotency).
+5. **CPU overhead versus a hand-written handler is the remaining cost**: 47–64 % of a raw handler
+   for tiny unary calls and 48–75 % for message streams (the raw baselines do no validation, no
+   ETags, no idempotency and no backpressure). The profile is spread over node:http2 internals,
+   JSON, validation and TLS; the large, cheap wins have been taken (see below).
+
 ## Optimizations driven by profiling (before → after, local)
 
 Measured in three steps (each step's changes were benchmarked together end-to-end; the per-change

@@ -489,6 +489,9 @@ export async function handleUpload(req: Exchange, store: UploadStore, scope: str
     case 'HEAD':
     case 'GET': {
       if (!upload) throw notFound();
+      // Never an outdated offset (§10): the client has given up on a request still appending here.
+      await takeOver(upload);
+      if (store.get(upload.id, upload.scope) !== upload) throw notFound();
       return { status: 204, headers: { ...state(store, upload), 'cache-control': 'no-store' } };
     }
     case 'PATCH':
@@ -526,12 +529,7 @@ async function append(req: Exchange, store: UploadStore, upload: Upload): Promis
   const offset = parseInteger(req.headers['upload-offset'], 'Upload-Offset');
   const complete = parseBoolean(req.headers['upload-complete'], 'Upload-Complete');
   if (offset === undefined || complete === undefined) throw new ApueError(400, 'Bad Request', 'appends need Upload-Offset and Upload-Complete');
-  // A newer append wins over one still in flight (its connection may be dead but not yet noticed).
-  // Loop: another request may have taken over while we waited; and the upload may be gone.
-  while (upload.writer) {
-    upload.writer.abort();
-    await upload.writer.done;
-  }
+  await takeOver(upload); // the upload may be gone afterwards
   if (store.get(upload.id, upload.scope) !== upload) throw notFound();
   const location = `${UPLOADS_PATH}/${upload.id}`;
   if (upload.complete) {
@@ -555,6 +553,18 @@ async function append(req: Exchange, store: UploadStore, upload: Upload): Promis
   await receive(req, store, upload);
   if (complete) return finish(store, upload, location);
   return { status: 204, headers: state(store, upload) };
+}
+
+/**
+ * Terminates a request still appending to the upload, as the draft recommends (§10): the client
+ * only sends a new request once it considers the previous one failed — its connection may be dead
+ * but not yet noticed. Loops: another request may have taken over while we waited.
+ */
+async function takeOver(upload: Upload): Promise<void> {
+  while (upload.writer) {
+    upload.writer.abort();
+    await upload.writer.done;
+  }
 }
 
 /** Appends the request content as it arrives, so an interrupted request keeps what came through. */

@@ -311,31 +311,61 @@ describe('resumable uploads (draft-14)', () => {
     session.on('error', () => {});
     const req = session.request({ ':method': 'PATCH', ':path': location, 'content-type': 'application/partial-upload', 'upload-offset': '0', 'upload-complete': '?1' });
     req.on('error', () => {});
-    req.write(data.subarray(0, 300_000));
-    for (let i = 0; i < 50 && Number((await request('HEAD', location)).headers['upload-offset']) < 300_000; i++) await sleep(10);
+    await new Promise((resolve) => req.write(data.subarray(0, 300_000), resolve));
+    await sleep(100); // (no HEAD while the append runs: it would terminate the append, §10)
     session.destroy(); // connection lost mid-content
-    await sleep(50);
     const offset = Number((await request('HEAD', location)).headers['upload-offset']);
-    assert.equal(offset, 300_000);
+    assert.ok(offset > 0 && offset <= 300_000, `kept what arrived (${offset})`);
     const done = await patch(location, offset, true, data.subarray(offset));
     assert.equal(done.status, 201);
     const call = await request('POST', '/files.store', { 'content-type': 'application/json' }, Buffer.from(JSON.stringify({ name: 'r', data: { $upload: json(done).upload } })));
     assert.equal(json(call).sha256, sha(data));
   });
 
-  test('a newer append supersedes one still in flight (its connection may be dead)', async () => {
-    const location = await careful();
+  /** An append that never ends (looks like a hung connection), with the first 1000 bytes of `data` sent. */
+  const hung = (location: string, data: Uint8Array) => {
     const session = http2.connect(server.url, { ca: testCert().cert });
     session.on('error', () => {});
     const stale = session.request({ ':method': 'PATCH', ':path': location, 'content-type': 'application/partial-upload', 'upload-offset': '0', 'upload-complete': '?1' });
     stale.on('error', () => {});
-    const staleStatus = new Promise<number>((resolve) => stale.on('response', (h) => resolve(Number(h[':status']))));
-    stale.write(new Uint8Array(1000)); // never ended: looks like a hung connection
-    for (let i = 0; i < 50 && Number((await request('HEAD', location)).headers['upload-offset']) < 1000; i++) await sleep(10);
-    const done = await patch(location, 1000, true, new Uint8Array(500));
+    const status = new Promise<number>((resolve) => stale.on('response', (h) => resolve(Number(h[':status']))));
+    stale.write(data.subarray(0, 1000));
+    return { stale, status, session };
+  };
+
+  test('a newer append supersedes one still in flight (its connection may be dead)', async () => {
+    const location = await careful();
+    const data = randomBytes(1500);
+    const { status, session } = hung(location, data);
+    await sleep(100);
+    // From the creation's offset 0. The stale append arrived in between: a 409 is allowed (§10), but
+    // with the final offset — the stale request is terminated before the check.
+    let done = await patch(location, 0, true, data);
+    if (done.status === 409) done = await patch(location, Number(done.headers['upload-offset']), true, data.subarray(Number(done.headers['upload-offset'])));
     assert.equal(done.status, 201);
     assert.equal(json(done).size, 1500);
-    assert.equal(await staleStatus, 409);
+    const call = await request('POST', '/files.store', { 'content-type': 'application/json' }, Buffer.from(JSON.stringify({ name: 's', data: { $upload: json(done).upload } })));
+    assert.equal(json(call).sha256, sha(data));
+    assert.equal(await status, 409);
+    session.destroy();
+  });
+
+  test('offset retrieval terminates an append still in flight: the offset it reports is final (§10)', async () => {
+    // Found by the WAN upload benchmark: HEAD answered while a cut PATCH was still being appended,
+    // the resumed PATCH then got 409 — an outdated offset the draft forbids, and a wasted round trip.
+    const location = await careful();
+    const data = randomBytes(3000);
+    const { stale, status, session } = hung(location, data);
+    await sleep(100);
+    const offset = Number((await request('HEAD', location)).headers['upload-offset']);
+    assert.equal(await status, 409, 'the stale append was terminated');
+    stale.write(data.subarray(1000, 2000)); // late content of the given-up request: not appended
+    await sleep(100);
+    assert.equal(Number((await request('HEAD', location)).headers['upload-offset']), offset, 'unchanged');
+    const done = await patch(location, offset, true, data.subarray(offset));
+    assert.equal(done.status, 201, 'the reported offset is accepted');
+    const call = await request('POST', '/files.store', { 'content-type': 'application/json' }, Buffer.from(JSON.stringify({ name: 'h', data: { $upload: json(done).upload } })));
+    assert.equal(json(call).sha256, sha(data));
     session.destroy();
   });
 });

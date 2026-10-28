@@ -11,6 +11,7 @@ import { defineApi, op, type Api } from '../src/api.ts';
 import { ApueClient } from '../src/client.ts';
 import { generateApi, schemaCode, type Manifest } from '../src/codegen.ts';
 import { t } from '../src/schema.ts';
+import { download } from '../src/downloads.ts';
 import { buildManifest, type Handlers } from '../src/server.ts';
 import { http2Transport } from '../src/transport-http2.ts';
 import { startServer, testCert } from './helpers.ts';
@@ -39,6 +40,7 @@ const original = defineApi({
   'users.cached': op({ effect: 'safe', input: t.void(), output: t.string(), cache: { maxAge: 5, cdnMaxAge: 600, groups: ['users'] } }),
   'chat': op({ effect: 'idempotent', stream: 'bidi', input: t.string(), output: t.nullable(t.string()) }),
   'docs.ingest': op({ effect: 'unsafe', input: t.object({ doc: t.file({ max: 1000 }), cover: t.optional(t.file()) }), output: t.number() }),
+  'docs.export': op({ effect: 'safe', input: t.void(), output: t.object({ zip: t.download({ type: 'application/zip' }), raw: t.optional(t.download()) }) }),
 });
 
 async function importGenerated(code: string): Promise<Api> {
@@ -92,6 +94,7 @@ test('CLI against a running server; the generated contract drives a typed client
       for await (const s of inputs) yield s;
     },
     'docs.ingest': ({ doc }) => doc.size,
+    'docs.export': () => ({ zip: download.fromBytes(new Uint8Array([1, 2, 3]), { type: 'application/zip' }) }),
   };
   const server = await startServer(original, handlers, { uploads: {} });
   const dir = mkdtempSync(join(tmpdir(), 'apue-cli-'));
@@ -102,6 +105,9 @@ test('CLI against a running server; the generated contract drives a typed client
   const generated = (await import(pathToFileURL(out).href)) as { api: typeof original };
   const client = new ApueClient(generated.api, http2Transport(server.url, { ca: testCert().cert }));
   assert.deepEqual(await client.call('users.get', { id: 'ab-1' }), { id: 'ab-1', score: 1, role: 'admin', tags: [], manager: null, extra: { any: 'thing' }, active: true, code: 'AB/1' });
+  // A generated client turns t.download() references into Downloads too.
+  const exported = await client.call('docs.export');
+  assert.deepEqual([...(await exported.zip.bytes())], [1, 2, 3]);
   // The generated schemas validate on the client too: no request is sent for invalid input.
   await assert.rejects(client.call('users.get', { id: 42 as unknown as string }), (e: { status: number }) => e.status === 400);
   await client.close();

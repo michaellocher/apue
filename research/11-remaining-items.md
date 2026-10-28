@@ -61,8 +61,32 @@ re-checked in the code. Item by item: consumer pacing (CREDIT frames), DPoP, lar
 - Prior art (cited by the subagent, to be spot-checked): Google `alt=media` + Range, Microsoft Graph
   pre-authenticated download URLs, RFC 9110 Range/If-Range/206/416, RFC 9530 `Repr-Digest`,
   RFC 6266 `Content-Disposition`.
-- Design and implementation: see S26 in SPEC-DRAFT.md.
+- Design and implementation: §6 "Download outputs" and S26 in SPEC-DRAFT.md. Deviations from the
+  subagent's proposal: a per-process registry with unguessable 128-bit ids instead of HMAC-signed
+  stateless tokens (same capability semantics; replicas would need shared storage either way — not
+  covered, like uploads); no spooling helper for streams yet (`fromFile`, `fromBytes`, or any object
+  with `size` and `open(range)`).
 
-## 4. CBOR
+## 4. CBOR — closed with measurements
 
-Pending (benchmark spike running).
+Spike (measured, Node 26, this machine, 3 processes × 5 rounds, medians; cbor-x 1.6 installed for
+comparison; a hand-written generic CBOR and a schema-compiled codec, both round-trip-checked against
+cbor-x):
+
+| shape | JSON enc / dec | JSON + validation | generic CBOR | cbor-x | compiled tuple |
+|---|---|---|---|---|---|
+| small (users.get) | 507 / 613 ns | 777 / 865 ns | 538 / 989 ns | 710 / 644 ns | 323 / 609 ns |
+| 100 objects | 32 / 52 µs | 59 / 80 µs | 52 / 98 µs | 66 / 73 µs | 31 / 61 µs |
+| 10k items | 0.46 / 1.06 ms | 1.27 / 1.88 ms | 1.32 / 1.67 ms | 1.45 / 1.64 ms | 0.66 / 1.08 ms |
+| numbers (5k points) | 576 / 939 µs | 1.09 / 1.48 ms | 903 / 505 µs | 1030 / 712 µs | 419 / 587 µs |
+
+- Sizes after zstd: CBOR is often *larger* than JSON (binary integers compress worse than text).
+- Share of a real unary call (CPU profile of bench/server.ts at 32 concurrent calls): JSON encode +
+  decode + validation ≈ 11 % (GET) / 9 % (POST + key) of server CPU — the upper bound for any codec.
+  The best case (compiled tuple) saves ≈ 3 %; generic CBOR ≈ 0 %.
+- Costs: two more media types and negotiation, ETags per representation, number-width and
+  canonicalization rules, every client and generator, unreadable in curl/devtools/SSE; the only fast
+  form (keyless tuples) breaks schema evolution.
+- **Decision: closed.** Cheaper wins in the same area, without a wire change, if ever needed: fusing
+  validation into encoding, and avoiding `canonicalJson` (3–10× slower than `JSON.stringify`) for
+  POST fingerprints.

@@ -1,7 +1,7 @@
 // Client side of pipelined batches (SPEC-DRAFT §10): dependent calls in one round trip, results
 // streamed back per lane as each call completes. Web-only.
 import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from './api.ts';
-import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared, type WithUploadRefs } from './client.ts';
+import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type ClientOutputOf, type OpsOf, type Prepared, type WithUploadRefs } from './client.ts';
 import { decodeFrameBatches, decodeJson, FrameError, FrameType, type EndInfo } from './frame.ts';
 import { containsBytes } from './schema.ts';
 import { ApueError, baseMediaType, isUploadRef, MediaType, ProblemType, type UploadRef } from './protocol.ts';
@@ -132,12 +132,12 @@ export class Batch<A extends Api> {
     this.#client = client;
   }
 
-  call<K extends OpsOf<A, 'none'>>(op: K, ...[input]: BatchArgs<A[K]>): BatchCall<OutputOf<A[K]>> {
-    return this.#add(op, input, new BatchCall<OutputOf<A[K]>>(this.#entries.length));
+  call<K extends OpsOf<A, 'none'>>(op: K, ...[input]: BatchArgs<A[K]>): BatchCall<ClientOutputOf<A[K]>> {
+    return this.#add(op, input, new BatchCall<ClientOutputOf<A[K]>>(this.#entries.length));
   }
 
-  stream<K extends OpsOf<A, 'server'>>(op: K, ...[input]: BatchArgs<A[K]>): BatchStream<OutputOf<A[K]>> {
-    return this.#add(op, input, new BatchStream<OutputOf<A[K]>>(this.#entries.length));
+  stream<K extends OpsOf<A, 'server'>>(op: K, ...[input]: BatchArgs<A[K]>): BatchStream<ClientOutputOf<A[K]>> {
+    return this.#add(op, input, new BatchStream<ClientOutputOf<A[K]>>(this.#entries.length));
   }
 
   /**
@@ -235,7 +235,7 @@ export class Batch<A extends Api> {
             assembler.push(frame);
           } else if (frame.type === FrameType.MSG) {
             const value = decodeJson(frame.payload);
-            sink.msg(blobs ? assembler.resolve(value, frame.lane) : value);
+            sink.msg(this.#client.outputValue(this.#entries[frame.lane]!.def, blobs ? assembler.resolve(value, frame.lane) : value));
           } else if (frame.type === FrameType.END) {
             sink.end(decodeJson(frame.payload) as EndInfo);
             open.delete(frame.lane);

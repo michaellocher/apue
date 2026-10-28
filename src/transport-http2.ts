@@ -90,6 +90,7 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
   }
 
   return {
+    baseUrl: origin.replace(/\/$/, ''),
     get streamWindow() {
       return window;
     },

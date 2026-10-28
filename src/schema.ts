@@ -78,6 +78,88 @@ export interface FileValue {
   stream(): AsyncIterable<Uint8Array>;
 }
 
+/**
+ * What a handler returns for a t.download() output: the content's size and random access to it.
+ * The server serves it as a download resource with Range support (`/$downloads/…`); the output
+ * carries a reference. Helpers: `download.fromFile()`, `download.fromBytes()` (src/downloads.ts).
+ */
+export interface DownloadSource {
+  readonly size: number;
+  /** Media type of the content (default application/octet-stream). */
+  readonly type?: string;
+  /** Suggested file name (Content-Disposition: attachment). */
+  readonly filename?: string;
+  /** SHA-256 of the content, hex, if known (Repr-Digest; clients verify it). */
+  readonly sha256?: string;
+  /** The content, or the bytes `start`..`end` (inclusive) of it. */
+  open(range?: { start: number; end: number }): AsyncIterable<Uint8Array>;
+}
+
+/** The wire form of a t.download() value: a reference to the download resource. */
+export interface DownloadRef {
+  readonly $download: string;
+  readonly size: number;
+  readonly type: string;
+  readonly sha256?: string;
+  /** When the URL stops working (RFC 3339, UTC). */
+  readonly expires: string;
+}
+
+export function isDownloadSource(value: unknown): value is DownloadSource {
+  return typeof value === 'object' && value !== null && typeof (value as DownloadSource).size === 'number' && typeof (value as DownloadSource).open === 'function';
+}
+
+export function isDownloadRef(value: unknown): value is DownloadRef {
+  if (typeof value !== 'object' || value === null) return false;
+  const ref = value as Record<string, unknown>;
+  return (
+    typeof ref.$download === 'string' &&
+    ref.$download.startsWith('/$downloads/') &&
+    Number.isSafeInteger(ref.size) &&
+    (ref.size as number) >= 0 &&
+    typeof ref.type === 'string' &&
+    typeof ref.expires === 'string' &&
+    (ref.sha256 === undefined || (typeof ref.sha256 === 'string' && /^[0-9a-f]{64}$/.test(ref.sha256)))
+  );
+}
+
+/** Whether the schema has a t.download() anywhere. */
+export function containsDownload(schema: Schema<unknown>): boolean {
+  const cached = downloadCache.get(schema);
+  if (cached !== undefined) return cached;
+  downloadCache.set(schema, false); // cycle guard
+  const result =
+    schema.kind === 'download' ||
+    (schema.element !== undefined && containsDownload(schema.element)) ||
+    (schema.inner !== undefined && containsDownload(schema.inner)) ||
+    (schema.fields !== undefined && Object.values(schema.fields).some(containsDownload));
+  downloadCache.set(schema, result);
+  return result;
+}
+const downloadCache = new WeakMap<Schema<unknown>, boolean>();
+
+/** Rebuilds `value` with `fn` applied at every t.download() position (like mapBytes, synchronous). */
+export function mapDownloads(schema: Schema<unknown>, value: unknown, fn: (value: unknown) => unknown): unknown {
+  if (value === undefined || value === null || !containsDownload(schema)) return value;
+  if (schema.kind === 'download') return fn(value);
+  if (schema.inner) return mapDownloads(schema.inner, value, fn);
+  if (schema.element && Array.isArray(value)) {
+    const items = value.map((item) => mapDownloads(schema.element!, item, fn));
+    return items.every((item, i) => item === value[i]) ? value : items;
+  }
+  if (schema.fields && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    let out: Record<string, unknown> | undefined;
+    for (const key of Object.keys(schema.fields)) {
+      if (!Object.hasOwn(record, key)) continue;
+      const after = mapDownloads(schema.fields[key]!, record[key], fn);
+      if (after !== record[key]) (out ??= { ...record })[key] = after;
+    }
+    return out ?? value;
+  }
+  return value;
+}
+
 function isFileValue(value: unknown): value is FileValue {
   return typeof value === 'object' && value !== null && typeof (value as FileValue).size === 'number' && typeof (value as FileValue).stream === 'function';
 }
@@ -337,6 +419,38 @@ export const t = {
         return value as FileValue;
       },
       () => ({ type: 'string', contentMediaType: 'application/octet-stream', 'x-apue-transfer': 'upload', ...(max === undefined ? {} : { 'x-apue-max-size': max }) }),
+    );
+  },
+
+  /**
+   * A large binary output, delivered out of band: the handler returns a DownloadSource, the output
+   * carries a reference to a short-lived download URL with Range support (resumable, usable as a
+   * plain link), and clients get a Download. For outputs only. In-band t.bytes() outputs stay for
+   * small and medium values (clients accept up to 64 MiB per message).
+   */
+  download(options: { type?: string } = {}): Schema<DownloadSource> {
+    const { type } = options;
+    return define(
+      'download',
+      (value, ctx) => {
+        // Server side: what the handler returned; client side: the reference on the wire.
+        if (isDownloadSource(value) && Number.isSafeInteger(value.size) && value.size >= 0) return value;
+        if (isDownloadRef(value)) return value as unknown as DownloadSource;
+        return report(ctx, `expected a download (size and open()), got ${typeOf(value)}`);
+      },
+      () => ({
+        type: 'object',
+        'x-apue-transfer': 'download',
+        ...(type === undefined ? {} : { contentMediaType: type }),
+        properties: {
+          $download: { type: 'string' },
+          size: { type: 'integer', minimum: 0 },
+          type: { type: 'string' },
+          sha256: { type: 'string' },
+          expires: { type: 'string' },
+        },
+        required: ['$download', 'size', 'type', 'expires'],
+      }),
     );
   },
 

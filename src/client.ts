@@ -15,7 +15,8 @@ import {
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, isUploadRef, MediaType, ProblemType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH, type UploadRef } from './protocol.ts';
 import { BlobAssembler, messageFrames } from './blobs.ts';
-import { containsBytes, mapBytes, ValidationError, type FileValue } from './schema.ts';
+import { containsBytes, containsDownload, isDownloadRef, mapBytes, mapDownloads, ValidationError, type DownloadSource, type FileValue } from './schema.ts';
+import { Download } from './download.ts';
 import { canonicalSelection } from './select.ts';
 import { Batch } from './batch.ts';
 
@@ -43,6 +44,8 @@ export interface TransportResponse {
 
 export interface Transport {
   request(request: TransportRequest): Promise<TransportResponse>;
+  /** The API's origin, when known: download URLs (t.download()) are made absolute against it. */
+  readonly baseUrl?: string;
   close?(): Promise<void>;
 }
 
@@ -117,8 +120,22 @@ function withRequestHeaders(transport: Transport, options: ClientOptions): Trans
       return transport.request({ ...req, headers: { ...req.headers, ...extra, ...(value === undefined ? {} : { authorization: value }) } });
     },
     close: () => transport.close?.() ?? Promise.resolve(),
+    ...(transport.baseUrl === undefined ? {} : { baseUrl: transport.baseUrl }),
   };
 }
+
+/** Client-side outputs: wherever the schema has t.download(), a Download stands. */
+export type WithDownloads<T> = T extends DownloadSource
+  ? Download
+  : T extends Uint8Array
+    ? T
+    : T extends readonly (infer E)[]
+      ? WithDownloads<E>[]
+      : T extends object
+        ? { [K in keyof T]: WithDownloads<T[K]> }
+        : T;
+/** What the client returns for an op's output. */
+export type ClientOutputOf<D> = WithDownloads<OutputOf<D>>;
 
 export type OpsOf<A extends Api, S extends StreamKind> = {
   [K in keyof A & string]: A[K] extends OpDef<any, any, infer X> ? ([X] extends [S] ? K : never) : never;
@@ -160,7 +177,7 @@ export class ApueClient<A extends Api> {
   }
 
   /** Unary call. (No async generator on this path: bench S4 showed it in the per-call cost.) */
-  async call<K extends OpsOf<A, 'none'>>(op: K, ...[input, options = {}]: Args<A[K]>): Promise<OutputOf<A[K]>> {
+  async call<K extends OpsOf<A, 'none'>>(op: K, ...[input, options = {}]: Args<A[K]>): Promise<ClientOutputOf<A[K]>> {
     const def = this.#definition(op);
     const controller = new AbortController();
     const unlink = linkSignal(options.signal, controller);
@@ -169,11 +186,11 @@ export class ApueClient<A extends Api> {
       const res = await this.#send(op, def, await this.prepareUploads(def, input, controller.signal, created), options, controller.signal);
       const type = baseMediaType(res.headers.get('content-type'));
       // Ops whose output contains bytes are answered framed (MSG + BLOB frames + END).
-      if (type === MediaType.STREAM_JSON && res.status === 200) return (await readFramedValue(res.body)) as OutputOf<A[K]>;
+      if (type === MediaType.STREAM_JSON && res.status === 200) return this.outputValue(def, await readFramedValue(res.body)) as ClientOutputOf<A[K]>;
       const bytes = res.bytes ? await res.bytes() : await readAll(res.body);
       if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
       if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
-      return decodeJson(bytes) as OutputOf<A[K]>;
+      return this.outputValue(def, decodeJson(bytes)) as ClientOutputOf<A[K]>;
     } catch (error) {
       controller.abort();
       // Transports report aborts differently (fetch: the reason, node:http2: AbortError); callers
@@ -192,13 +209,13 @@ export class ApueClient<A extends Api> {
     input: WithUploadRefs<InputOf<A[K]>>,
     select: readonly FieldPath<OutputOf<A[K]>>[],
     options: Omit<CallOptions, 'select'> = {},
-  ): Promise<DeepPartial<OutputOf<A[K]>>> {
-    return (this.call as (op: string, input: unknown, options: CallOptions) => Promise<DeepPartial<OutputOf<A[K]>>>)(op, input, { ...options, select });
+  ): Promise<DeepPartial<ClientOutputOf<A[K]>>> {
+    return (this.call as (op: string, input: unknown, options: CallOptions) => Promise<DeepPartial<ClientOutputOf<A[K]>>>)(op, input, { ...options, select });
   }
 
   /** Server-streaming call. Breaking out of the loop cancels the call on the server. */
-  stream<K extends OpsOf<A, 'server'>>(op: K, ...[input, options]: Args<A[K]>): AsyncGenerator<OutputOf<A[K]>> {
-    return this.#run(op, input, options) as AsyncGenerator<OutputOf<A[K]>>;
+  stream<K extends OpsOf<A, 'server'>>(op: K, ...[input, options]: Args<A[K]>): AsyncGenerator<ClientOutputOf<A[K]>> {
+    return this.#run(op, input, options) as AsyncGenerator<ClientOutputOf<A[K]>>;
   }
 
   /** Client- or bidi-streaming call. Full duplex depends on the transport (§8 tiers). */
@@ -206,8 +223,8 @@ export class ApueClient<A extends Api> {
     op: K,
     inputs: AsyncIterable<InputOf<A[K]>>,
     options?: CallOptions,
-  ): AsyncGenerator<OutputOf<A[K]>> {
-    return this.#run(op, inputs, options) as AsyncGenerator<OutputOf<A[K]>>;
+  ): AsyncGenerator<ClientOutputOf<A[K]>> {
+    return this.#run(op, inputs, options) as AsyncGenerator<ClientOutputOf<A[K]>>;
   }
 
   async close(): Promise<void> {
@@ -224,6 +241,13 @@ export class ApueClient<A extends Api> {
   /** @internal */
   get queryAllowed(): boolean {
     return !this.#queryUnsupported;
+  }
+
+  /** @internal Download references in a decoded output → Download objects. */
+  outputValue(def: OpDef, value: unknown): unknown {
+    if (!containsDownload(def.output)) return value;
+    const context = { transport: this.#transport, retries: this.#retries, backoffMs: this.#backoffMs };
+    return mapDownloads(def.output, value, (ref) => (isDownloadRef(ref) ? new Download(ref, context) : ref));
   }
 
   /** @internal */
@@ -259,7 +283,7 @@ export class ApueClient<A extends Api> {
           finished = true;
           if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
           if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
-          yield decodeJson(bytes);
+          yield this.outputValue(def, decodeJson(bytes));
           return;
         }
         // Blob framing (and its escaping) is used exactly for ops whose output contains bytes.
@@ -268,7 +292,7 @@ export class ApueClient<A extends Api> {
           for await (const frames of decodeFrameBatches(res.body)) {
             for (const frame of frames) {
               if (frame.type === FrameType.MSG) {
-                const value = assembler ? assembler.resolve(decodeJson(frame.payload)) : decodeJson(frame.payload);
+                const value = this.outputValue(def, assembler ? assembler.resolve(decodeJson(frame.payload)) : decodeJson(frame.payload));
                 sinceCheckpoint++;
                 if (skip > 0) {
                   skip--;
@@ -743,6 +767,7 @@ export function fetchTransport(baseUrl: string, options: FetchTransportOptions |
   const { fetch: fetchImpl = fetch, credentials } = typeof options === 'function' ? { fetch: options, credentials: undefined } : options;
   const base = baseUrl.replace(/\/$/, '');
   return {
+    baseUrl: base,
     async request({ method, path, headers, body, signal }) {
       const streaming = body !== undefined && !(body instanceof Uint8Array) && !(body instanceof Blob);
       const init: RequestInit & { duplex?: 'half' } = {

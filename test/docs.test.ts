@@ -79,6 +79,8 @@ describe('derived documentation in the manifest', () => {
     assert.equal(manifest.ops['users.code'].example, undefined); // a pattern the placeholder can't meet; void input
     assert.deepEqual(manifest.ops['files.put'].example, { input: { data: { $upload: '<upload id>' } } }); // bytes in: the reference form
     assert.equal(manifest.ops['files.get'].example, undefined); // bytes out travel as BLOB frames
+    const exporting = buildManifest(defineApi({ 'x.export': op({ effect: 'safe', input: t.void(), output: t.object({ zip: t.download({ type: 'application/zip' }) }) }) })) as { ops: Record<string, any> };
+    assert.deepEqual(exporting.ops['x.export'].example, { output: { zip: { $download: '/$downloads/<id>', size: 0, type: 'application/zip', expires: '<RFC 3339 UTC>' } } }); // downloads: the reference form
     assert.deepEqual(manifest.ops['events.watch'].example, { input: { from: 0 }, output: 0 }); // single messages
     for (const [name, def] of Object.entries(api)) {
       const example = manifest.ops[name].example;

@@ -1,6 +1,6 @@
 // Operation definitions and the effect → HTTP method mapping (SPEC-DRAFT §4, §5). Shared by
 // server and client: TS clients import the API definition, so types and validation come for free.
-import { containsBytes, containsFile, type Infer, type Schema } from './schema.ts';
+import { containsBytes, containsDownload, containsFile, type Infer, type Schema } from './schema.ts';
 
 export type Effect = 'safe' | 'idempotent' | 'unsafe';
 export type StreamKind = 'none' | 'server' | 'client' | 'bidi';
@@ -77,7 +77,12 @@ export function op(def: OpInit<Schema<unknown>, Schema<unknown>> & { stream?: St
   if (def.invalidates?.length && def.effect === 'safe') throw new Error('invalidates is ignored on safe methods (RFC 9875 §3): use it on idempotent/unsafe ops');
   // Bytes in a unary input travel as upload references ({ "$upload": id }, SPEC-DRAFT §6): the
   // server must enable `uploads` for such ops (checked by createApueServer).
-  if (containsFile(def.output)) throw new Error('t.file() is for inputs only (outputs with bytes use t.bytes(), sent as BLOB frames)');
+  if (containsFile(def.output)) throw new Error('t.file() is for inputs only (outputs with bytes use t.bytes(), sent as BLOB frames, or t.download())');
+  if (containsDownload(def.input)) throw new Error('t.download() is for outputs only (large inputs use t.file())');
+  // A cached output would hand out download URLs after they expired (they live minutes).
+  if (containsDownload(def.output) && (def.cache?.maxAge !== undefined || def.cache?.cdnMaxAge !== undefined)) {
+    throw new Error('outputs with t.download() cannot have cache maxAge/cdnMaxAge: their URLs expire');
+  }
   if ((def.stream === 'client' || def.stream === 'bidi') && containsFile(def.input)) throw new Error('t.file() needs a unary input (it travels as an upload reference)');
   if (def.resumable && def.effect === 'unsafe') throw new Error('resumable ops must be safe or idempotent (resuming re-sends the request)');
   return { ...def, stream: def.stream ?? 'none' };

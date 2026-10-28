@@ -170,6 +170,18 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     await rejects(client.call('files.ingest', { file: new Blob([new Uint8Array(9 * 1024 * 1024)]) }), 400);
     return `${blob.size} bytes, server digest = browser digest`;
   });
+  await check('t.download(): a link-usable URL with Range through CORS; content verified, corruption refused', async () => {
+    const { archive } = await client.call('export.archive', { corrupt: false });
+    if (!archive.url.startsWith(apiUrl)) throw new Error(`url ${archive.url} is not absolute on ${apiUrl}`);
+    const bytes = await archive.bytes(); // WebCrypto-verified
+    if (bytes.byteLength !== 1024 * 1024 || bytes[7] !== 49) throw new Error('wrong content');
+    // What a media element or a download manager does: a Range request (cross-origin here).
+    const part = await fetch(archive.url, { headers: { range: 'bytes=100-199' } });
+    equal([part.status, part.headers.get('content-range'), part.headers.get('accept-ranges'), (await part.arrayBuffer()).byteLength], [206, `bytes 100-199/${1024 * 1024}`, 'bytes', 100]);
+    const { archive: corrupt } = await client.call('export.archive', { corrupt: true });
+    await rejects(corrupt.bytes(), 502);
+    return `1 MiB via ${archive.url.replace(apiUrl, '')}`;
+  });
   await check('autoTransport: streaming upload in every browser (fetch T2 or WebSocket T3)', async () => {
     const auto = new ApueClient(browserApi, autoTransport(apiUrl));
     async function* numbers() {

@@ -31,7 +31,8 @@ import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, MAX_SELECT_PATHS, project, SelectionError, type Selection } from './select.ts';
 import { HTTP_CONVENTIONS, opErrors, opExample, opHttp, PROTOCOL_ERRORS } from './docs.ts';
 import { BlobAssembler, blobChunks, decodeFramedValue, messageFrames, splitMessage } from './blobs.ts';
-import { containsBytes, mapBytes, ValidationError } from './schema.ts';
+import { containsBytes, containsDownload, isDownloadSource, mapBytes, mapDownloads, ValidationError } from './schema.ts';
+import { DownloadStore, DOWNLOADS_PATH, serveDownload, type DownloadOptions } from './downloads.ts';
 import { handleUpload, UploadStore, UPLOADS_PATH, type UploadOptions } from './uploads.ts';
 
 export type { Exchange } from './exchange.ts';
@@ -126,6 +127,11 @@ export interface ApueServerOptions {
    * storage any client can fill); required by ops with bytes in a unary input.
    */
   uploads?: UploadOptions;
+  /**
+   * Download resources for t.download() outputs (`/$downloads/…`, Range support, short-lived
+   * unguessable URLs). Enabled automatically for APIs that have such outputs.
+   */
+  downloads?: DownloadOptions;
   /** Validate (and strip unknown fields from) handler output. Default true: no accidental data leaks. */
   validateOutput?: boolean;
   /** Store for Idempotency-Key replays; `false` disables the feature. */
@@ -395,6 +401,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
   checkWindow('webSocketWindow', webSocketWindow);
   const uploads = options.uploads ? new UploadStore(options.uploads) : undefined;
+  const downloads = Object.values(api).some((def) => containsDownload(def.output)) || options.downloads ? new DownloadStore(options.downloads) : undefined;
+  /** t.download() values in an output → references to download resources. */
+  const withDownloads = (def: OpDef, value: unknown): unknown =>
+    downloads && containsDownload(def.output) ? mapDownloads(def.output, value, (v) => (isDownloadSource(v) ? downloads.register(v) : v)) : value;
   for (const [name, def] of Object.entries(api)) {
     if (!hasRequestStream(def) && containsBytes(def.input) && !uploads) {
       throw new Error(`${name} has bytes in a unary input: they arrive as upload references, enable options.uploads`);
@@ -622,6 +632,12 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         complete();
         return void res.send(response.status, response.headers, head ? undefined : response.body);
       }
+      if (url.pathname.startsWith(`${DOWNLOADS_PATH}/`)) {
+        if (!downloads) throw new ApueError(404, 'Not Found', 'this server has no downloads');
+        await serveDownload(req, res, downloads, url.pathname, clientGone.signal);
+        complete();
+        return;
+      }
       if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete, await identify(req), releases);
       const opName = decodePathSegment(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
@@ -794,7 +810,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const handler = handlerMap[opName]!;
       const result = await abortable(Promise.resolve(handler(input, ctx)), ctx.signal);
       const validated = (validateOutput ? def.output.parse(result) : result) ?? null;
-      const value = selection ? project(validated, selection) : validated;
+      const value = withDownloads(def, selection ? project(validated, selection) : validated);
       const outcome: Outcome = {
         status: 200,
         // A JSON body can't carry bytes: such outputs are answered framed (BLOB frames + MSG + END)
@@ -1047,10 +1063,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
   /** Per-item output handling for streams: validate (strip unknown fields), then project. */
   function outputShaper(def: OpDef, selection: Selection | undefined): ((item: unknown) => unknown) | undefined {
-    if (!validateOutput && !selection) return undefined;
+    if (!validateOutput && !selection && !containsDownload(def.output)) return undefined;
     return (item) => {
       const validated = validateOutput ? def.output.parse(item) : item;
-      return selection ? project(validated, selection) : validated;
+      return withDownloads(def, selection ? project(validated, selection) : validated);
     };
   }
 
@@ -1387,8 +1403,8 @@ function hash(text: string | Uint8Array): string {
 
 // PATCH/DELETE and the Upload-* fields are for resumable uploads (`/$uploads`).
 const CORS_ALLOW_METHODS = 'DELETE, GET, HEAD, PATCH, POST, QUERY';
-const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'dpop', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version']);
-const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding, location, upload-offset, upload-complete, upload-limit, upload-length, www-authenticate, dpop-nonce';
+const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'dpop', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version', 'range', 'if-range']);
+const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding, location, upload-offset, upload-complete, upload-limit, upload-length, www-authenticate, dpop-nonce, accept-ranges, content-range, content-disposition, repr-digest';
 
 /**
  * Adds CORS response headers for an allowed Origin and answers preflights. Returns true when the

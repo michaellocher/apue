@@ -80,7 +80,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   boolean: ['type'],
   null: ['type'],
   array: ['type', 'items', 'maxItems'],
-  object: ['type', 'properties', 'required'],
+  object: ['type', 'properties', 'required', 'x-apue-transfer', 'contentMediaType'],
 };
 
 /**
@@ -118,6 +118,9 @@ export function schemaCode(schema: JsonSchema): string {
     case 'array':
       return `t.array(${schemaCode(schema.items ?? {})}${schema.maxItems === undefined ? '' : `, { max: ${schema.maxItems} }`})`;
     case 'object': {
+      // t.download(): the reference's fields are fixed by the type, only the media type varies.
+      if (schema['x-apue-transfer'] === 'download') return `t.download(${opts([['type', schema.contentMediaType]])})`;
+      if (schema['x-apue-transfer'] !== undefined || schema.contentMediaType !== undefined) throw unsupported();
       const required = new Set<string>(schema.required ?? []);
       const fields = Object.entries<JsonSchema>(schema.properties ?? {}).map(([key, value]) => {
         const code = schemaCode(value);

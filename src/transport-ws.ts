@@ -42,6 +42,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
   const ownsHttp = options.http === undefined; // a caller's transport may be shared: theirs to close
   const live = new Set<WebSocket>();
   return {
+    baseUrl: baseUrl.replace(/\/$/, ''),
     async close() {
       for (const ws of live) ws.close(WS_CLOSE_CANCELLED, 'transport closed');
       if (ownsHttp) await http.close?.();

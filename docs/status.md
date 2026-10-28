@@ -36,7 +36,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 337 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 346 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -120,7 +120,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## Open (spec §13)
 
-CBOR · WebTransport / HTTP/3 (the official Node 26 build
+WebTransport / HTTP/3 (the official Node 26 build
 is compiled without QUIC: `node_use_quic: false`) · · generators for other
 languages · problem-type namespace (apue.dev kept, to be bought if the results are good) · DPoP full profile (deferred; groundwork S25).
 (Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),

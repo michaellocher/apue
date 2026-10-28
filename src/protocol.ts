@@ -140,6 +140,8 @@ export function isClientGone(error: unknown): boolean {
 
 // Resumable uploads (SPEC-DRAFT §6, research/06): shared by server (uploads.ts) and client.
 export const UPLOADS_PATH = '/$uploads';
+/** Download resources for t.download() outputs (src/downloads.ts). */
+export const DOWNLOADS_PATH = '/$downloads';
 /** draft-ietf-httpbis-resumable-upload-14, Appendix B. */
 export const UPLOAD_INTEROP_VERSION = '10';
 

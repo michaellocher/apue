@@ -16,6 +16,7 @@ import { ApueError } from '../src/protocol.ts';
 import type { Handlers } from '../src/server.ts';
 import { browserApi } from './browser/api.ts';
 import type { CheckResult } from './browser/suite.ts';
+import { download } from '../src/downloads.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -31,6 +32,7 @@ const WEBKIT = await (async () => {
 const FIREFOX = process.env.FIREFOX_PATH ?? '/Applications/Firefox.app/Contents/MacOS/firefox';
 const ROOT = resolve(import.meta.dirname, '..');
 
+const EXPORT = new Uint8Array(1024 * 1024).map((_, i) => (i * 7) % 251);
 let cancelledStreams = 0;
 let flooded = 0;
 const FLOOD_ITEM = 'x'.repeat(64 * 1024);
@@ -80,6 +82,11 @@ const handlers: Handlers<typeof browserApi> = {
       size += chunk.byteLength;
     }
     return { size, sha256: hash.digest('hex'), declared: file.sha256 };
+  },
+  'export.archive': ({ corrupt }) => {
+    const archive = download.fromBytes(EXPORT, { type: 'application/zip', filename: 'export.zip' });
+    // corrupt: announces another digest — the client must refuse the content
+    return { archive: corrupt ? { ...archive, sha256: '0'.repeat(64) } : archive };
   },
   'who.am': (_, ctx) => ({ principal: ctx.principal ?? null, authorization: (ctx.headers.authorization as string | undefined) ?? null, protocols: null }),
   'who.streaming': async (inputs, ctx) => {

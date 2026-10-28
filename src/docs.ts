@@ -35,6 +35,7 @@ export const HTTP_CONVENTIONS = {
   headers: { deadline: Header.TIMEOUT, idempotencyKey: 'idempotency-key', resume: Header.RESUME },
   streams: `${MediaType.STREAM_JSON}: 8-byte frame header (type, flags, lane, length) + payload; examples show single messages`,
   bytes: 'inputs: {"$upload": "<id>"} after POST /$uploads (when enabled); outputs: BLOB frames',
+  downloads: 't.download() outputs: {"$download": "/$downloads/<id>", "size", "type", "sha256"?, "expires"}; GET/HEAD with Range (206/416), If-Range, ETag, Repr-Digest; the URL is a short-lived capability',
   webSocket: `request streams from browsers: wss://<host>/<op>?timeout=<ms>, subprotocols ${WS_SUBPROTOCOL} and ${WS_AUTH_PREFIX}<Authorization value, base64url without padding>`,
 } as const;
 
@@ -121,6 +122,11 @@ function sample(schema: JsonSchema, side: 'input' | 'output'): { value: unknown;
       return item && { value: [item.value], json: [item.json] };
     }
     case 'object': {
+      if (schema['x-apue-transfer'] === 'download') {
+        if (side === 'input') return undefined;
+        const ref = { $download: '/$downloads/<id>', size: 0, type: schema.contentMediaType ?? 'application/octet-stream', expires: '<RFC 3339 UTC>' };
+        return { value: ref, json: ref };
+      }
       const value: Record<string, unknown> = {};
       const json: Record<string, unknown> = {};
       const required = new Set<string>(schema.required ?? []);

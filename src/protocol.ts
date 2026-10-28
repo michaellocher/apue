@@ -103,3 +103,18 @@ const CLIENT_GONE_CODES = new Set([
 export function isClientGone(error: unknown): boolean {
   return typeof error === 'object' && error !== null && CLIENT_GONE_CODES.has(String((error as { code?: unknown }).code));
 }
+
+// Resumable uploads (SPEC-DRAFT §6, research/06): shared by server (uploads.ts) and client.
+export const UPLOADS_PATH = '/$uploads';
+/** draft-ietf-httpbis-resumable-upload-14, Appendix B. */
+export const UPLOAD_INTEROP_VERSION = '10';
+
+/** What a t.bytes() input carries instead of the bytes once they are uploaded. */
+export interface UploadRef {
+  $upload: string;
+}
+
+/** `{ "$upload": "<id>" }` and nothing else. */
+export function isUploadRef(value: unknown): value is UploadRef {
+  return typeof value === 'object' && value !== null && !(value instanceof Uint8Array) && typeof (value as UploadRef).$upload === 'string' && Object.keys(value).length === 1;
+}

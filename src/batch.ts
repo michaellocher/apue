@@ -1,7 +1,7 @@
 // Client side of pipelined batches (SPEC-DRAFT §10): dependent calls in one round trip, results
 // streamed back per lane as each call completes. Web-only.
 import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from './api.ts';
-import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared } from './client.ts';
+import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared, type WithUploadRefs } from './client.ts';
 import { decodeFrameBatches, decodeJson, FrameError, FrameType, type EndInfo } from './frame.ts';
 import { containsBytes } from './schema.ts';
 import { ApueError, baseMediaType, MediaType, ProblemType } from './protocol.ts';
@@ -11,7 +11,7 @@ import { containsRef, encodeArgs, Ref } from './refs.ts';
 /** Following a path through optional fields: a missing value fails the lane at runtime (400). */
 type Step<T, K extends keyof NonNullable<T>> = NonNullable<NonNullable<T>[K]>;
 
-type BatchArgs<D> = undefined extends InputOf<D> ? [input?: InputOf<D>] : [input: InputOf<D>];
+type BatchArgs<D> = undefined extends InputOf<D> ? [input?: WithUploadRefs<InputOf<D>>] : [input: WithUploadRefs<InputOf<D>>];
 
 interface LaneSink {
   msg(value: unknown): void;
@@ -165,17 +165,34 @@ export class Batch<A extends Api> {
     for (const lane of lanesOf(input)) {
       if (lane >= sink.lane) throw new Error(`ref to call ${lane} must come from an earlier call in this batch`);
     }
-    // Inputs containing refs can only be validated on the server, after resolution.
-    const value = containsRef(input) ? input : validate(def, input, `input of call ${sink.lane}`);
+    // Inputs containing refs can only be validated on the server, after resolution; inputs with
+    // bytes are validated when their bytes are uploaded (send).
+    const value = containsRef(input) || containsBytes(def.input) ? input : validate(def, input, `input of call ${sink.lane}`);
     this.#entries.push({ op, def, input: value, sink });
     return sink;
   }
 
   async #run(options: CallOptions): Promise<void> {
+    const controller = new AbortController();
+    const unlink = linkSignal(options.signal, controller);
+    // Bytes in inputs become upload references first (deleted again once the batch has settled).
+    const uploads = await Promise.all(this.#entries.map(({ def, input }) => this.#client.prepareUploads(def, input, controller.signal, !containsRef(input)))).catch((error: unknown) => {
+      unlink();
+      throw error;
+    });
+    try {
+      await this.#exchange(options, controller, uploads.map((u) => u.input));
+    } finally {
+      unlink();
+      this.#client.releaseUploads(uploads.flatMap((u) => u.created));
+    }
+  }
+
+  async #exchange(options: CallOptions, controller: AbortController, inputs: unknown[]): Promise<void> {
     const allSafe = this.#entries.every((entry) => entry.def.effect === 'safe');
-    const calls = this.#entries.map(({ op, def, input }) => ({
+    const calls = this.#entries.map(({ op, def }, i) => ({
       op,
-      ...(input === undefined ? {} : { in: encodeArgs(input) }),
+      ...(inputs[i] === undefined ? {} : { in: encodeArgs(inputs[i]) }),
       // Keys make non-safe calls replay-safe, so the whole batch can be retried.
       ...(def.effect === 'safe' ? {} : { key: crypto.randomUUID() }),
     }));
@@ -187,8 +204,6 @@ export class Batch<A extends Api> {
       headers,
       body: new TextEncoder().encode(canonicalJson({ calls })),
     };
-    const controller = new AbortController();
-    const unlink = linkSignal(options.signal, controller);
     let finished = false;
     try {
       const res = await this.#client.sendPrepared(prepared, options.retries ?? this.#client.retryBudget, controller.signal);
@@ -225,7 +240,6 @@ export class Batch<A extends Api> {
         for (const lane of open) this.#entries[lane]!.sink.fail(error);
       }
     } finally {
-      unlink();
       if (!finished) controller.abort();
     }
   }

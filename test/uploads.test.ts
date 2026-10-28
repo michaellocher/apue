@@ -21,6 +21,7 @@ const api = defineApi({
     output: t.object({ name: t.string(), size: t.number(), sha256: t.string() }),
   }),
   'files.flaky': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.number() }),
+  'files.scramble': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.string() }),
 });
 let flakyCalls = 0;
 let executions = 0;
@@ -29,6 +30,11 @@ const handlers: Handlers<typeof api> = {
   'files.store': ({ name, data }) => {
     executions++;
     return { name, size: data.byteLength, sha256: sha(data) };
+  },
+  'files.scramble': ({ data }) => {
+    const before = sha(data);
+    data.fill(0); // a handler changing its input in place
+    return before;
   },
   'files.flaky': ({ data }) => {
     if (++flakyCalls === 1) throw new ApueError(503, 'Service Unavailable', 'try again', { retryable: true }, { 'retry-after': '0' });
@@ -39,7 +45,8 @@ const handlers: Handlers<typeof api> = {
 let now = 1_000_000;
 let server: { url: string; close(): Promise<void> };
 before(async () => {
-  server = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, ttlMs: 60_000, now: () => now } });
+  // scopeBytes above storeBytes: these tests use one scope and need the store-wide limit reachable
+  server = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, scopeBytes: 20 * MiB, ttlMs: 60_000, now: () => now } });
 });
 after(() => server.close());
 
@@ -170,6 +177,32 @@ describe('resumable uploads (draft-14)', () => {
     assert.equal((await patch(await careful(), 0, true, new Uint8Array(3 * MiB))).status, 201);
   });
 
+  test('per-credential quotas: bytes and uploads, so one client cannot lock out the others', async () => {
+    const small = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, scopeBytes: 1 * MiB, scopeUploads: 3 } });
+    const at = (method: string, path: string, headers: Record<string, string>, body?: Uint8Array) =>
+      new Promise<Reply>((resolve, reject) => {
+        const session = http2.connect(small.url, { ca: testCert().cert });
+        session.on('error', reject);
+        const req = session.request({ ':method': method, ':path': path, ...headers }, { endStream: body === undefined });
+        const chunks: Buffer[] = [];
+        let response: http2.IncomingHttpHeaders = {};
+        req.on('response', (h) => (response = h));
+        req.on('data', (c: Buffer) => chunks.push(c));
+        req.on('end', () => (session.close(), resolve({ status: Number(response[':status']), headers: response, body: Buffer.concat(chunks), interim: [] })));
+        req.on('error', reject);
+        if (body !== undefined) req.end(body);
+      });
+    const alice = { authorization: 'Bearer alice', 'upload-complete': '?1' };
+    assert.equal((await at('POST', '/$uploads', alice, new Uint8Array(MiB))).status, 201);
+    const over = await at('POST', '/$uploads', alice, new Uint8Array(1));
+    assert.equal(over.status, 429); // alice's 1 MiB are used up …
+    assert.equal((await at('POST', '/$uploads', { authorization: 'Bearer bob', 'upload-complete': '?1' }, new Uint8Array(MiB))).status, 201); // … bob is unaffected
+    const many = { authorization: 'Bearer carol', 'upload-complete': '?0' };
+    for (let i = 0; i < 3; i++) assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 201);
+    assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 429); // 3 uploads per scope
+    await small.close();
+  });
+
   test('DELETE cancels (§9); unknown ids and other credentials see 404 (§20.1)', async () => {
     const location = await careful({ authorization: 'Bearer alice' });
     assert.equal((await request('HEAD', location, { authorization: 'Bearer mallory' })).status, 404);
@@ -266,6 +299,25 @@ describe('upload references in op inputs', () => {
     assert.equal(other.status, 422); // same key, different payload
   });
 
+  test('the idempotency identity is the content: a re-upload (new id) with the same key replays', async () => {
+    const bytes = randomBytes(10_000);
+    const before = executions;
+    const first = await store({ name: 'c', data: { $upload: await upload(bytes) } }, { 'idempotency-key': '"content-1"' });
+    const again = await store({ name: 'c', data: { $upload: await upload(bytes) } }, { 'idempotency-key': '"content-1"' });
+    assert.equal(again.status, 200);
+    assert.equal(again.headers['apue-replayed'], '?1');
+    assert.deepEqual(json(again), json(first));
+    assert.equal(executions, before + 1);
+  });
+
+  test('a handler changing its bytes in place cannot corrupt the upload for later uses', async () => {
+    const bytes = randomBytes(5000);
+    const id = await upload(bytes);
+    const call = () => request('POST', '/files.scramble', { 'content-type': 'application/json' }, Buffer.from(JSON.stringify({ data: { $upload: id } })));
+    assert.equal(json(await call()), sha(bytes));
+    assert.equal(json(await call()), sha(bytes));
+  });
+
   test('ops with bytes in a unary input need uploads enabled', () => {
     const { key, cert } = testCert();
     assert.throws(() => createApueServer(api, handlers, { key, cert }), /files\.store has bytes in a unary input/);
@@ -296,8 +348,8 @@ describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
       const { transport: t1, log } = recording(transport);
       const client = new ApueClient(api, t1);
       assert.deepEqual(await client.call('files.store', { name: 'f', data }), { name: 'f', size: data.byteLength, sha256: sha(data) });
-      assert.deepEqual(log.map((r) => `${r.method} ${r.path.split('/').slice(0, 2).join('/')}`), ['POST /$uploads', 'PATCH /$uploads', 'POST /files.store']);
-      await client.close();
+      await client.close(); // waits for the cleanup of the call's upload
+      assert.deepEqual(log.map((r) => `${r.method} ${r.path.split('/').slice(0, 2).join('/')}`), ['POST /$uploads', 'PATCH /$uploads', 'POST /files.store', 'DELETE /$uploads']);
     }
   });
 
@@ -322,7 +374,7 @@ describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
     assert.equal(patches[1]!.headers['upload-offset'], '400000');
     assert.equal((patches[1]!.body as Uint8Array).byteLength, data.byteLength - 400_000);
     assert.equal(log.filter((r) => r.method === 'HEAD').length, 1);
-    assert.equal((await client.call('files.store', { name: 'x', data: ref as unknown as Uint8Array })).sha256, sha(data)); // a reference passes as is
+    assert.equal((await client.call('files.store', { name: 'x', data: ref })).sha256, sha(data)); // a reference passes as is (typed)
     await client.close();
   });
 
@@ -364,6 +416,48 @@ describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
     await client.close();
   });
 
+  test('creation and offset retrieval are retried after a lost connection', async () => {
+    let failedPost = false;
+    let failedHead = false;
+    const { transport, log } = recording(h2(), (req, index) => {
+      if (req.method === 'POST' && req.path === '/$uploads' && !failedPost) return (failedPost = true), Promise.reject(new Error('ECONNRESET (simulated)'));
+      if (req.method === 'HEAD' && !failedHead) return (failedHead = true), Promise.reject(new Error('ECONNRESET (simulated)'));
+      if (req.method === 'PATCH' && index === 2) return Promise.reject(new Error('ECONNRESET (simulated)')); // first PATCH lost → offset retrieval
+      return req;
+    });
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    assert.ok((await client.upload(new Uint8Array(3000))).$upload);
+    assert.deepEqual(log.map((r) => r.method), ['POST', 'POST', 'PATCH', 'HEAD', 'HEAD', 'PATCH']);
+    await client.close();
+  });
+
+  test('the same buffer at two positions is uploaded once; fields upload concurrently', async () => {
+    const { transport, log } = recording(h2());
+    const client = new ApueClient(api, transport);
+    const shared = new Uint8Array(randomBytes(2000));
+    const result = await client.call('files.store', { name: 's', data: shared, thumb: shared });
+    assert.equal(result.sha256, sha(shared));
+    await client.close();
+    assert.equal(log.filter((r) => r.method === 'POST' && r.path === '/$uploads').length, 1);
+  });
+
+  test('batches upload bytes too, and accept references', async () => {
+    const { transport, log } = recording(h2());
+    const client = new ApueClient(api, transport);
+    const a = new Uint8Array(randomBytes(3000));
+    const b = new Uint8Array(randomBytes(4000));
+    const ref = await client.upload(b);
+    const batch = client.batch();
+    const first = batch.call('files.store', { name: 'a', data: a });
+    const second = batch.call('files.store', { name: 'b', data: ref });
+    await batch.send();
+    assert.equal((await first.result).sha256, sha(a));
+    assert.equal((await second.result).sha256, sha(b));
+    await client.close();
+    // the batch's own upload is cleaned up; the caller's upload() reference is theirs to keep
+    assert.equal(log.filter((r) => r.method === 'DELETE').length, 1);
+  });
+
   test('invalid input fails on the client before anything is uploaded', async () => {
     const { transport, log } = recording(h2());
     const client = new ApueClient(api, transport);
@@ -377,7 +471,7 @@ describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
     const { transport, log } = recording(h2());
     const client = new ApueClient(api, transport, { backoffMs: 1 });
     assert.equal(await client.call('files.flaky', { data: new Uint8Array(5000) }), 5000);
-    assert.deepEqual(log.map((r) => `${r.method} ${r.path.split('/')[1]}`), ['POST $uploads', 'PATCH $uploads', 'POST files.flaky', 'POST files.flaky']);
     await client.close();
+    assert.deepEqual(log.map((r) => `${r.method} ${r.path.split('/')[1]}`), ['POST $uploads', 'PATCH $uploads', 'POST files.flaky', 'POST files.flaky', 'DELETE $uploads']);
   });
 });

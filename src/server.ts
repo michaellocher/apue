@@ -24,7 +24,7 @@ import { STATUS_CODES } from 'node:http';
 import { onExchange, WsExchange, type Exchange, type WebSocketUpgrade } from './exchange.ts';
 import { acceptKey, checkHandshake, WsClose, WsConnection } from './websocket.ts';
 import { drained } from './node-streams.ts';
-import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClientGone, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClientGone, isUploadRef, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 export { isClientGone } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
@@ -352,17 +352,25 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   }
   /** Who is asking — uploads, like idempotency keys, are scoped to the credentials. */
   const credentialScope = (req: Exchange) => hash(String(req.headers.authorization ?? ''));
-  /** Upload references → bytes at t.bytes() positions; 400 with the field path if one doesn't resolve. */
-  const resolveUploads = (def: OpDef, input: unknown, req: Exchange) =>
-    !uploads || !containsBytes(def.input)
-      ? input
-      : mapBytes(def.input, input, (value, path) => {
-          const id = (value as { $upload?: unknown } | null)?.$upload;
-          if (typeof id !== 'string' || Object.keys(value as object).length !== 1) return value; // validation reports it
-          const bytes = uploads.resolve(id, credentialScope(req));
-          if (!bytes) throw new ApueError(400, 'Validation Failed', 'input does not match the schema', { type: ProblemType.VALIDATION, fields: [{ path, message: 'unknown, incomplete or expired upload' }] });
-          return bytes;
-        });
+  /**
+   * Upload references → bytes at t.bytes() positions (400 with the field path if one doesn't
+   * resolve), plus the input's identity for idempotency and resume tokens: references replaced by
+   * the content's SHA-256 — the same bytes uploaded again (new id) are the same input.
+   */
+  const resolveUploads = async (def: OpDef, input: unknown, req: Exchange): Promise<{ input: unknown; identity: unknown }> => {
+    if (!uploads || !containsBytes(def.input)) return { input, identity: input };
+    const scope = credentialScope(req);
+    const digests = new Map<string, string>();
+    const resolved = await mapBytes(def.input, input, (value, path) => {
+      if (!isUploadRef(value)) return value; // validation reports it
+      const upload = uploads.resolve(value.$upload, scope);
+      if (!upload) throw new ApueError(400, 'Validation Failed', 'input does not match the schema', { type: ProblemType.VALIDATION, fields: [{ path, message: 'unknown, incomplete or expired upload' }] });
+      digests.set(value.$upload, upload.digest);
+      return upload.bytes;
+    });
+    const identity = await mapBytes(def.input, input, (value) => (isUploadRef(value) ? { sha256: digests.get(value.$upload) } : value));
+    return { input: resolved, identity };
+  };
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
   for (const name of Object.keys(api)) {
@@ -513,9 +521,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       // resolved bytes (canonical JSON of a 64 MiB Uint8Array would be a huge object).
       let identity: unknown;
       if (!hasRequestStream(def)) {
-        const withRefs = input;
-        input = validateInput(def, await resolveUploads(def, input, req));
-        identity = containsBytes(def.input) ? withRefs : input;
+        const resolved = await resolveUploads(def, input, req);
+        input = validateInput(def, resolved.input);
+        identity = containsBytes(def.input) ? resolved.identity : input;
       }
 
       // Resumable streams: checkpoints become signed tokens bound to this op and input.
@@ -710,10 +718,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     // Batch lanes are not resumable (a batch is one request); checkpoints are ignored there.
     const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method, checkpoint: () => {} };
     try {
-      const withRefs = resolveRefs(call.input, output);
-      const input = validateInput(call.def, await resolveUploads(call.def, withRefs, req));
+      const resolved = await resolveUploads(call.def, resolveRefs(call.input, output), req);
+      const input = validateInput(call.def, resolved.input);
       if (call.def.stream === 'none') {
-        const outcome = await runUnary(call.op, call.def, input, ctx, call.key, call.selection, containsBytes(call.def.input) ? withRefs : input);
+        const outcome = await runUnary(call.op, call.def, input, ctx, call.key, call.selection, containsBytes(call.def.input) ? resolved.identity : input);
         if (outcome.status !== 200) {
           await writer.end({ status: outcome.status, problem: outcome.payload as Problem }, lane);
           return { ok: false };

@@ -13,7 +13,7 @@ import {
   type StreamKind,
 } from './api.ts';
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
-import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
+import { ApueError, baseMediaType, Header, isUploadRef, MediaType, ProblemType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH, type UploadRef } from './protocol.ts';
 import { BlobAssembler, messageFrames } from './blobs.ts';
 import { containsBytes, mapBytes, ValidationError } from './schema.ts';
 import { canonicalSelection } from './select.ts';
@@ -45,17 +45,16 @@ export interface Transport {
   close?(): Promise<void>;
 }
 
-/** What a t.bytes() input accepts in place of the bytes once they are uploaded (`client.upload`). */
-export interface UploadRef {
-  $upload: string;
-}
+export type { UploadRef };
 
-function isUploadRef(value: unknown): value is UploadRef {
-  return typeof value === 'object' && value !== null && !(value instanceof Uint8Array) && typeof (value as UploadRef).$upload === 'string' && Object.keys(value).length === 1;
-}
-
-/** Interop version of draft-ietf-httpbis-resumable-upload-14 (Appendix B). */
-const UPLOAD_INTEROP_VERSION = '10';
+/** Client-side inputs: wherever the schema has bytes, a reference from `upload()` may stand instead. */
+export type WithUploadRefs<T> = T extends Uint8Array
+  ? T | UploadRef
+  : T extends readonly (infer E)[]
+    ? WithUploadRefs<E>[]
+    : T extends object
+      ? { [K in keyof T]: WithUploadRefs<T[K]> }
+      : T;
 
 export interface CallOptions {
   signal?: AbortSignal;
@@ -96,8 +95,8 @@ export type OpsOf<A extends Api, S extends StreamKind> = {
 }[keyof A & string];
 
 export type Args<D> = undefined extends InputOf<D>
-  ? [input?: InputOf<D>, options?: CallOptions]
-  : [input: InputOf<D>, options?: CallOptions];
+  ? [input?: WithUploadRefs<InputOf<D>>, options?: CallOptions]
+  : [input: WithUploadRefs<InputOf<D>>, options?: CallOptions];
 
 const QUERY_REJECTED = new Set([400, 403, 405, 501]);
 export const ACCEPT = `${MediaType.STREAM_JSON}, ${MediaType.JSON};q=0.9, ${MediaType.PROBLEM};q=0.8`;
@@ -115,6 +114,8 @@ export class ApueClient<A extends Api> {
   #api: A;
   #transport: Transport;
   #retries: number;
+  /** Deletes of uploads made for settled calls, still in flight (awaited by close()). */
+  #deletes = new Set<Promise<void>>();
   #backoffMs: number;
   #maxBackoffMs: number;
   /** Set once the server (or an intermediary) rejects QUERY; reads then fall back to POST. */
@@ -133,9 +134,11 @@ export class ApueClient<A extends Api> {
     const def = this.#definition(op);
     const controller = new AbortController();
     const unlink = linkSignal(options.signal, controller);
+    let created: UploadRef[] = [];
     try {
-      input = (await this.#withUploads(def, input, controller.signal)) as typeof input;
-      const res = await this.#send(op, def, input, options, controller.signal);
+      const prepared = await this.prepareUploads(def, input, controller.signal);
+      created = prepared.created;
+      const res = await this.#send(op, def, prepared.input, options, controller.signal);
       const type = baseMediaType(res.headers.get('content-type'));
       // Ops whose output contains bytes are answered framed (MSG + BLOB frames + END).
       if (type === MediaType.STREAM_JSON && res.status === 200) return (await readFramedValue(res.body)) as OutputOf<A[K]>;
@@ -151,6 +154,7 @@ export class ApueClient<A extends Api> {
       throw asProtocolError(error);
     } finally {
       unlink();
+      this.releaseUploads(created);
     }
   }
 
@@ -178,8 +182,9 @@ export class ApueClient<A extends Api> {
     return this.#run(op, inputs, options) as AsyncGenerator<OutputOf<A[K]>>;
   }
 
-  close(): Promise<void> {
-    return this.#transport.close?.() ?? Promise.resolve();
+  async close(): Promise<void> {
+    await Promise.allSettled(this.#deletes); // cleanup of call uploads, before the transport goes
+    await this.#transport.close?.();
   }
 
   /** Starts a pipelined batch: dependent calls in one round trip (SPEC-DRAFT §10). */
@@ -214,8 +219,11 @@ export class ApueClient<A extends Api> {
     // the cursor): skip exactly that many so the consumer sees every item once.
     let sinceCheckpoint = 0;
     let skip = 0;
+    let created: UploadRef[] = [];
     try {
-      input = await this.#withUploads(def, input, controller.signal);
+      const prepared = await this.prepareUploads(def, input, controller.signal);
+      input = prepared.input;
+      created = prepared.created;
       for (;;) {
         const res = await this.#send(opName, def, input, options, controller.signal, resumeToken);
         const type = baseMediaType(res.headers.get('content-type'));
@@ -286,6 +294,7 @@ export class ApueClient<A extends Api> {
     } finally {
       unlink();
       if (!finished) controller.abort();
+      this.releaseUploads(created);
     }
   }
 
@@ -299,7 +308,7 @@ export class ApueClient<A extends Api> {
       headers.incremental = '?1';
       return { method: 'POST', path: `/${opName}`, headers, body: encodeInputs(input as AsyncIterable<unknown>, def) };
     }
-    // Inputs with bytes were validated before their bytes became upload references (#withUploads).
+    // Inputs with bytes were validated before their bytes became upload references (prepareUploads).
     const value = containsBytes(def.input) ? input : validate(def, input, 'input');
     const select = options.select?.length ? `s=${encodeURIComponent(canonicalSelection(options.select))}` : '';
     if (isCacheableRead(def)) {
@@ -320,8 +329,9 @@ export class ApueClient<A extends Api> {
    * Uploads bytes resumably to `/$uploads` (draft-ietf-httpbis-resumable-upload-14, research/06)
    * and returns the reference that t.bytes() inputs accept. "Careful" creation (an empty request
    * that only returns the upload's location — fetch never exposes 104), then one PATCH with all
-   * content; after a lost connection, a 5xx/429 or an offset conflict it asks for the offset
-   * (HEAD) and sends only the rest.
+   * content. Lost connections, 5xx/429 and offset conflicts — on any of the three requests — are
+   * retried within `resumes`; after a failed PATCH the offset is retrieved (HEAD) and only the rest
+   * is sent. The upload stays on the server until it expires or `deleteUpload()` removes it.
    */
   async upload(bytes: Uint8Array, options: { signal?: AbortSignal; resumes?: number } = {}): Promise<UploadRef> {
     const controller = new AbortController();
@@ -336,22 +346,57 @@ export class ApueClient<A extends Api> {
     }
   }
 
+  /** Removes an upload from the server (best effort: it expires anyway). */
+  async deleteUpload(ref: UploadRef): Promise<void> {
+    try {
+      const res = await this.#transport.request({ method: 'DELETE', path: `${UPLOADS_PATH}/${ref.$upload}`, headers: {}, signal: new AbortController().signal });
+      await readAll(res.body);
+    } catch {
+      // expiry cleans up
+    }
+  }
+
   async #uploadBytes(bytes: Uint8Array, signal: AbortSignal, resumes = 5): Promise<UploadRef> {
     const interop = { 'upload-draft-interop-version': UPLOAD_INTEROP_VERSION };
-    const created = await this.#transport.request({
-      method: 'POST',
-      path: '/$uploads',
-      headers: { ...interop, 'upload-complete': '?0', 'upload-length': String(bytes.byteLength), 'content-type': 'application/octet-stream' },
-      body: new Uint8Array(0),
-      signal,
-    });
-    const createdBody = await readAll(created.body);
-    const location = created.headers.get('location') ?? '';
-    if (created.status !== 201) throw problemError(createdBody, created.status);
+    let attempt = 0;
+    /** One more try within the budget (after a backoff), else the last failure. */
+    const again = async (failure: unknown): Promise<void> => {
+      if (signal.aborted || attempt++ >= resumes) throw failure;
+      await sleep(this.#backoff(attempt - 1), signal);
+    };
+    const retryable = (status: number) => status >= 500 || status === 429;
+    /** Creation and offset retrieval carry no content: resent as they are on loss or 5xx/429. */
+    const exchange = async (request: () => Promise<TransportResponse>): Promise<{ res: TransportResponse; body: Uint8Array }> => {
+      for (;;) {
+        try {
+          const res = await request();
+          const body = await readAll(res.body);
+          if (!retryable(res.status)) return { res, body };
+          await again(problemError(body, res.status));
+        } catch (error) {
+          if (signal.aborted || error instanceof ApueError) throw error;
+          await again(error); // lost connection
+        }
+      }
+    };
+    const created = await exchange(() =>
+      this.#transport.request({
+        method: 'POST',
+        path: UPLOADS_PATH,
+        headers: { ...interop, 'upload-complete': '?0', 'upload-length': String(bytes.byteLength), 'content-type': 'application/octet-stream' },
+        body: new Uint8Array(0),
+        signal,
+      }),
+    );
+    if (created.res.status !== 201) throw problemError(created.body, created.res.status);
+    const location = created.res.headers.get('location') ?? '';
     // Only ever PATCH our own upload resources, never a location the response points elsewhere.
     if (!/^\/\$uploads\/[A-Za-z0-9_-]+$/.test(location)) throw new ApueError(502, 'Bad Gateway', `unexpected upload location ${JSON.stringify(location)}`);
     let offset = 0;
-    for (let attempt = 0; ; attempt++) {
+    for (;;) {
+      // The content goes once per attempt; after a failure the server says where to continue —
+      // never resend blindly from an offset it may already have passed.
+      let failure: unknown;
       try {
         const res = await this.#transport.request({
           method: 'PATCH',
@@ -362,36 +407,60 @@ export class ApueClient<A extends Api> {
         });
         const body = await readAll(res.body);
         if (res.status === 201 && res.headers.get('upload-complete') === '?1') return { $upload: (decodeJson(body) as { upload: string }).upload };
-        if (res.status !== 409 && res.status !== 429 && res.status < 500) throw problemError(body, res.status);
-        if (attempt >= resumes) throw problemError(body, res.status);
+        failure = problemError(body, res.status);
       } catch (error) {
-        if (signal.aborted || error instanceof ApueError || attempt >= resumes) throw error;
-        // a lost connection: resume below
+        failure = error; // lost connection
       }
-      await sleep(this.#backoff(attempt), signal);
-      const head = await this.#transport.request({ method: 'HEAD', path: location, headers: interop, signal });
-      await readAll(head.body);
-      const known = head.headers.get('upload-offset');
-      if (head.status >= 300 || known === null || !/^\d{1,15}$/.test(known)) throw new ApueError(head.status >= 300 ? head.status : 502, 'Upload Not Resumable', `offset retrieval answered ${head.status}`);
-      offset = Number(known); // a completed upload answers with its size: the empty PATCH then replays the reference
+      const final = failure instanceof ApueError && failure.status !== 409 && !retryable(failure.status);
+      if (signal.aborted || final) throw failure;
+      await again(failure); // outside the try: an exhausted budget must end the loop
+      // Where does the server stand? A completed upload answers with its size: the empty PATCH replays the reference.
+      const head = await exchange(() => this.#transport.request({ method: 'HEAD', path: location, headers: interop, signal }));
+      const known = head.res.headers.get('upload-offset');
+      if (head.res.status >= 300 || known === null || !/^\d{1,15}$/.test(known)) {
+        throw new ApueError(head.res.status >= 300 ? head.res.status : 502, 'Upload Not Resumable', `offset retrieval answered ${head.res.status}`);
+      }
+      offset = Number(known);
     }
   }
 
   /**
-   * Unary inputs with t.bytes(): validated here, then every Uint8Array is uploaded and replaced by
-   * its reference. References from `upload()` may be passed in their place (an upload used twice).
+   * Unary inputs with t.bytes(): every Uint8Array is uploaded (each distinct buffer once, all
+   * concurrently) and replaced by its reference; references from `upload()` stay. Validated first
+   * when `validateFirst` (batch inputs with refs to earlier calls are validated by the server).
+   * Returns the references created here, to delete once the call has settled.
    */
-  async #withUploads(def: OpDef, input: unknown, signal: AbortSignal): Promise<unknown> {
-    if (hasRequestStream(def) || !containsBytes(def.input)) return input;
-    const refs = new Map<Uint8Array, UploadRef>(); // placeholder → reference, for validation only
-    const placeheld = await mapBytes(def.input, input, (value) => {
-      if (!isUploadRef(value)) return value;
-      const placeholder = new Uint8Array(0);
-      refs.set(placeholder, { $upload: value.$upload });
-      return placeholder;
+  async prepareUploads(def: OpDef, input: unknown, signal: AbortSignal, validateFirst = true): Promise<{ input: unknown; created: UploadRef[] }> {
+    if (hasRequestStream(def) || !containsBytes(def.input)) return { input, created: [] };
+    let value = input;
+    const placeholders = new Map<Uint8Array, UploadRef>(); // upload() references, stood in for during validation
+    if (validateFirst) {
+      const placeheld = await mapBytes(def.input, input, (item) => {
+        if (!isUploadRef(item)) return item;
+        const placeholder = new Uint8Array(0);
+        placeholders.set(placeholder, { $upload: item.$upload });
+        return placeholder;
+      });
+      value = validate(def, placeheld, 'input');
+    }
+    const uploads = new Map<Uint8Array, Promise<UploadRef>>();
+    const converted = await mapBytes(def.input, value, (item) => {
+      const given = placeholders.get(item as Uint8Array);
+      if (given) return given;
+      if (!(item instanceof Uint8Array)) return item;
+      let pending = uploads.get(item);
+      if (!pending) uploads.set(item, (pending = this.#uploadBytes(item, signal)));
+      return pending;
     });
-    const value = validate(def, placeheld, 'input');
-    return mapBytes(def.input, value, (bytes) => refs.get(bytes as Uint8Array) ?? (bytes instanceof Uint8Array ? this.#uploadBytes(bytes, signal) : bytes));
+    return { input: converted, created: await Promise.all(uploads.values()) };
+  }
+
+  /** Deletes uploads made for a call once it has settled (they would otherwise fill the store until they expire). */
+  releaseUploads(created: UploadRef[]): void {
+    for (const ref of created) {
+      const pending = this.deleteUpload(ref).finally(() => this.#deletes.delete(pending));
+      this.#deletes.add(pending);
+    }
   }
 
   #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal, resumeToken?: string): Promise<TransportResponse> {

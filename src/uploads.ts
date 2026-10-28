@@ -1,12 +1,12 @@
 // Resumable uploads (draft-ietf-httpbis-resumable-upload-14, interop version 10; research/06): binary
 // values are uploaded to `/$uploads` — resumably, over plain HTTP requests — and op inputs reference
 // them as { "$upload": id } where the schema says t.bytes() (SPEC-DRAFT §6). Node-only.
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, type Hash } from 'node:crypto';
 import type { Exchange } from './exchange.ts';
-import { ApueError, MediaType } from './protocol.ts';
+import { concatBytes } from './frame.ts';
+import { ApueError, baseMediaType, MediaType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH } from './protocol.ts';
 
-export const UPLOADS_PATH = '/$uploads';
-export const UPLOAD_INTEROP_VERSION = '10';
+export { UPLOAD_INTEROP_VERSION, UPLOADS_PATH };
 export const PARTIAL_UPLOAD = 'application/partial-upload';
 const PROBLEMS = 'https://iana.org/assignments/http-problem-types';
 
@@ -17,6 +17,10 @@ export interface UploadOptions {
   storeBytes?: number;
   /** Lifetime of an upload resource from its creation (Upload-Limit max-age). Default 1 h. */
   ttlMs?: number;
+  /** Bytes one credentials scope may hold (so one client can't lock out the rest). Default storeBytes / 4. */
+  scopeBytes?: number;
+  /** Upload resources one credentials scope may hold, complete or not. Default 100. */
+  scopeUploads?: number;
   now?: () => number;
 }
 
@@ -32,6 +36,14 @@ interface Upload {
   writer: { abort(): void; done: Promise<void> } | undefined;
   /** Joined once on completion. */
   bytes: Uint8Array | undefined;
+  /** SHA-256 over the content in offset order, fed as data arrives; hex once complete. */
+  hash: Hash;
+  digest: string | undefined;
+}
+
+interface Usage {
+  bytes: number;
+  uploads: number;
 }
 
 export interface UploadResponse {
@@ -44,14 +56,19 @@ export class UploadStore {
   readonly maxBytes: number;
   readonly storeBytes: number;
   readonly ttlMs: number;
+  readonly scopeBytes: number;
+  readonly scopeUploads: number;
   #now: () => number;
   #uploads = new Map<string, Upload>(); // insertion order = creation order = expiry order
   #stored = 0;
+  #usage = new Map<string, Usage>();
 
-  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, now = Date.now }: UploadOptions = {}) {
+  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, now = Date.now }: UploadOptions = {}) {
     this.maxBytes = maxBytes;
     this.storeBytes = storeBytes;
     this.ttlMs = ttlMs;
+    this.scopeBytes = scopeBytes ?? Math.floor(storeBytes / 4);
+    this.scopeUploads = scopeUploads;
     this.#now = now;
   }
 
@@ -63,8 +80,23 @@ export class UploadStore {
   create(scope: string, length: number | undefined): Upload {
     this.#sweep();
     if (length !== undefined && length > this.maxBytes) throw tooLarge(this.maxBytes);
-    const upload: Upload = { id: randomBytes(16).toString('base64url'), scope, expires: this.#now() + this.ttlMs, chunks: [], offset: 0, length, complete: false, writer: undefined, bytes: undefined };
+    const usage = this.#usageOf(scope);
+    if (usage.uploads >= this.scopeUploads) throw quotaExceeded(`${this.scopeUploads} uploads`);
+    const upload: Upload = {
+      id: randomBytes(16).toString('base64url'),
+      scope,
+      expires: this.#now() + this.ttlMs,
+      chunks: [],
+      offset: 0,
+      length,
+      complete: false,
+      writer: undefined,
+      bytes: undefined,
+      hash: createHash('sha256'),
+      digest: undefined,
+    };
     this.#uploads.set(upload.id, upload);
+    usage.uploads++;
     return upload;
   }
 
@@ -75,13 +107,17 @@ export class UploadStore {
     return upload && upload.scope === scope ? upload : undefined;
   }
 
-  /** The complete upload's bytes for an op input reference, or undefined. */
-  resolve(id: string, scope: string): Uint8Array | undefined {
+  /**
+   * The complete upload's bytes for an op input reference — a copy, so a handler that changes its
+   * input can't corrupt later references or replays — and its SHA-256 (the reference's identity
+   * for idempotency: the same content uploaded again is the same input). Undefined if not usable.
+   */
+  resolve(id: string, scope: string): { bytes: Uint8Array; digest: string } | undefined {
     const upload = this.get(id, scope);
     if (!upload?.complete) return undefined;
-    upload.bytes ??= join(upload.chunks, upload.offset);
+    upload.bytes ??= concatBytes(upload.chunks, upload.offset);
     upload.chunks = [upload.bytes];
-    return upload.bytes;
+    return { bytes: upload.bytes.slice(), digest: upload.digest! };
   }
 
   append(upload: Upload, chunk: Uint8Array): void {
@@ -93,19 +129,39 @@ export class UploadStore {
       this.delete(upload);
       throw tooLarge(this.maxBytes);
     }
+    const usage = this.#usageOf(upload.scope);
+    if (usage.bytes + chunk.byteLength > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
     if (this.#stored + chunk.byteLength > this.storeBytes) {
       throw new ApueError(503, 'Service Unavailable', 'upload storage is full', { retryable: true }, { 'retry-after': '60' });
     }
     upload.chunks.push(chunk);
+    upload.hash.update(chunk);
     upload.offset += chunk.byteLength;
     this.#stored += chunk.byteLength;
+    usage.bytes += chunk.byteLength;
+  }
+
+  /** Marks the upload complete: its content and digest are final. */
+  seal(upload: Upload): void {
+    upload.complete = true;
+    upload.length = upload.offset;
+    upload.digest ??= upload.hash.digest('hex');
   }
 
   delete(upload: Upload): void {
     if (this.#uploads.get(upload.id) !== upload) return;
     this.#uploads.delete(upload.id);
     this.#stored -= upload.offset;
+    const usage = this.#usageOf(upload.scope);
+    usage.bytes -= upload.offset;
+    if (--usage.uploads === 0) this.#usage.delete(upload.scope);
     upload.writer?.abort();
+  }
+
+  #usageOf(scope: string): Usage {
+    let usage = this.#usage.get(scope);
+    if (!usage) this.#usage.set(scope, (usage = { bytes: 0, uploads: 0 }));
+    return usage;
   }
 
   limits(upload?: Upload): string {
@@ -170,17 +226,19 @@ async function create(req: Exchange, store: UploadStore, scope: string): Promise
 }
 
 async function append(req: Exchange, store: UploadStore, upload: Upload): Promise<UploadResponse> {
-  if (baseOf(req.headers['content-type']) !== PARTIAL_UPLOAD) {
+  if (baseMediaType(req.headers['content-type'] as string | undefined) !== PARTIAL_UPLOAD) {
     throw new ApueError(415, 'Unsupported Media Type', `appends need Content-Type: ${PARTIAL_UPLOAD}`);
   }
   const offset = parseInteger(req.headers['upload-offset'], 'Upload-Offset');
   const complete = parseBoolean(req.headers['upload-complete'], 'Upload-Complete');
   if (offset === undefined || complete === undefined) throw new ApueError(400, 'Bad Request', 'appends need Upload-Offset and Upload-Complete');
   // A newer append wins over one still in flight (its connection may be dead but not yet noticed).
-  if (upload.writer) {
+  // Loop: another request may have taken over while we waited; and the upload may be gone.
+  while (upload.writer) {
     upload.writer.abort();
     await upload.writer.done;
   }
+  if (store.get(upload.id, upload.scope) !== upload) throw notFound();
   const location = `${UPLOADS_PATH}/${upload.id}`;
   if (upload.complete) {
     // Replay the final response for a repeated, empty completing append (§8.2). Emptiness is judged
@@ -239,8 +297,7 @@ function finish(store: UploadStore, upload: Upload, location: string): UploadRes
     store.delete(upload);
     throw inconsistentLength(`completed at ${upload.offset} bytes, Upload-Length was ${upload.length}`);
   }
-  upload.complete = true;
-  upload.length = upload.offset;
+  store.seal(upload);
   // The target resource's response (§8.2): a reference for op inputs.
   const body = new TextEncoder().encode(JSON.stringify({ upload: upload.id, size: upload.offset }));
   return { status: 201, headers: { location, 'upload-complete': '?1', 'content-type': MediaType.JSON, 'cache-control': 'no-store' }, body };
@@ -269,6 +326,8 @@ const inconsistentLength = (detail: string) => new ApueError(400, 'Bad Request',
 const tooLarge = (max: number) => new ApueError(413, 'Content Too Large', `uploads are limited to ${max} bytes`);
 const notFound = () => new ApueError(404, 'Not Found', 'no such upload (unknown, expired or not yours)');
 const notAllowed = (allow: string) => new ApueError(405, 'Method Not Allowed', undefined, {}, { allow });
+const quotaExceeded = (what: string) =>
+  new ApueError(429, 'Too Many Requests', `this client's uploads are limited to ${what}; finished uploads expire or can be deleted`, {}, { 'retry-after': '60' });
 
 function parseBoolean(value: string | string[] | undefined, name: string): boolean | undefined {
   if (value === undefined) return undefined;
@@ -284,17 +343,3 @@ function parseInteger(value: string | string[] | undefined, name: string): numbe
   return Number(value);
 }
 
-function baseOf(contentType: string | string[] | undefined): string {
-  return String(contentType ?? '').split(';', 1)[0]!.trim().toLowerCase();
-}
-
-function join(parts: Uint8Array[], length: number): Uint8Array {
-  if (parts.length === 1) return parts[0]!;
-  const out = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.byteLength;
-  }
-  return out;
-}

@@ -40,13 +40,14 @@ export async function mapBytes(schema: Schema<unknown>, value: unknown, fn: (val
     return items.every((item, i) => item === value[i]) ? value : items;
   }
   if (schema.fields && typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(schema.fields).filter((key) => Object.hasOwn(record, key));
+    // Fields concurrently, like array elements (on the client each may be an upload).
+    const after = await Promise.all(keys.map((key) => mapBytes(schema.fields![key]!, record[key], fn, path ? `${path}.${key}` : key)));
     let out: Record<string, unknown> | undefined;
-    for (const [key, field] of Object.entries(schema.fields)) {
-      if (!Object.hasOwn(value, key)) continue;
-      const before = (value as Record<string, unknown>)[key];
-      const after = await mapBytes(field, before, fn, path ? `${path}.${key}` : key);
-      if (after !== before) (out ??= { ...(value as Record<string, unknown>) })[key] = after;
-    }
+    keys.forEach((key, i) => {
+      if (after[i] !== record[key]) (out ??= { ...record })[key] = after[i];
+    });
     return out ?? value;
   }
   return value; // shape mismatch: validation reports it

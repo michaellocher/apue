@@ -1,8 +1,8 @@
 //-hide
-import { t } from '../../src/schema.ts';
+import { t } from '../../src/index.ts';
 const Product = t.object({ id: t.string(), name: t.string(), price: t.number() });
 //-show
-import { defineApi, op } from '../../src/api.ts';
+import { defineApi, op } from '../../src/index.ts';
 
 export const api = defineApi({
   'products.get': op({

@@ -1,6 +1,5 @@
 //-hide
-import { defineApi, op } from '../../src/api.ts';
-import { t } from '../../src/schema.ts';
+import { defineApi, op, t } from '../../src/index.ts';
 import type { Handlers } from '../../src/server.ts';
 const Todo = t.object({ id: t.number({ int: true }), title: t.string({ min: 1, max: 200 }), done: t.boolean() });
 type Todo = { id: number; title: string; done: boolean };

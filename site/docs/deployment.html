@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deployment — apü</title>
+<meta name="description" content="Running apü in production: TLS, proxies and load balancers, several replicas (resume secret, shared idempotency store, routing uploads and downloads by instance), limits, shutdown, health checks and logging, with a verified nginx configuration.">
+<link rel="canonical" href="https://apue.dev/docs/deployment.html">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#090b14" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="../assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/site.js" defer></script>
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="apü">
+<meta property="og:locale" content="en">
+<meta property="og:title" content="Deployment — apü">
+<meta property="og:description" content="Running apü in production: TLS, proxies and load balancers, several replicas (resume secret, shared idempotency store, routing uploads and downloads by instance), limits, shutdown, health checks and logging, with a verified nginx configuration.">
+<meta property="og:url" content="https://apue.dev/docs/deployment.html">
+<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
+  </div>
+</header>
+<div class="wrap docs-layout has-toc">
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html" aria-current="page">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<main id="main" class="prose" tabindex="-1">
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html" aria-current="page">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Deployment</h1>
+<p class="page-intro">What a production deployment needs, with the settings that matter. Most of apü is stateless; the four things that aren’t each have a setting, and the routing for several replicas is verified end to end through a real nginx.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#runtime">Runtime</a></li><li><a href="#a-production-server">A production server</a></li><li><a href="#behind-a-proxy-or-load-balancer">Behind a proxy or load balancer</a></li><li><a href="#several-replicas">Several replicas</a></li><li><a href="#callers-limits-security">Callers, limits, security</a></li><li><a href="#shutdown-health-logging">Shutdown, health, logging</a></li></ul></nav>
+
+<h2 id="runtime">Runtime</h2>
+<ul>
+  <li><strong>Node ≥ 26.11</strong> and <code>npm install apue@beta</code>. The package ships JavaScript, so no type stripping is needed inside <code>node_modules</code>.</li>
+  <li><strong>TLS is required</strong>: the server speaks HTTP/2 over TLS with HTTP/1.1 fallback (<code>key</code>, <code>cert</code>). Terminating TLS at a proxy is fine; the proxy then talks to the replica over TLS as well.</li>
+  <li>One process per CPU core is the usual layout; the server is single-threaded like any Node server.</li>
+</ul>
+
+<h2 id="a-production-server">A production server</h2>
+<p>The repository’s template (<code>examples/production/server.ts</code>, typechecked with the project) with package imports. Configuration comes from the environment; plug in your handlers, authentication and a shared idempotency store.</p>
+<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
+<span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'apue/server'</span>;
+
+<span class="tok-k">const</span> server = createApueServer(api, handlers, {
+  key: readFileSync(env(<span class="tok-s">'TLS_KEY'</span>)),
+  cert: readFileSync(env(<span class="tok-s">'TLS_CERT'</span>)),
+  instance: env(<span class="tok-s">'INSTANCE'</span>),                  <span class="tok-c">// e.g. eu-1: routes uploads and downloads to this replica</span>
+  resume: { secret: env(<span class="tok-s">'RESUME_SECRET'</span>) },  <span class="tok-c">// ≥ 16 bytes, the same on every replica</span>
+  idempotency: sharedIdempotencyStore,        <span class="tok-c">// retries that reach another replica are replayed</span>
+  uploads: { directory: env(<span class="tok-s">'UPLOAD_DIR'</span>), persistent: <span class="tok-k">true</span> },  <span class="tok-c">// a directory per replica</span>
+  cors: { origins: env(<span class="tok-s">'ALLOWED_ORIGINS'</span>).split(<span class="tok-s">','</span>), credentials: <span class="tok-k">true</span> },
+  <span class="tok-c">// Who is calling: quotas and idempotency keys per user, not per proxy address or raw token.</span>
+  principal: ({ headers }) =&gt; {
+    <span class="tok-k">const</span> token = headers.authorization;
+    <span class="tok-k">if</span> (token === <span class="tok-k">undefined</span>) <span class="tok-k">return</span> <span class="tok-k">undefined</span>; <span class="tok-c">// anonymous</span>
+    <span class="tok-k">const</span> user = verifyToken(String(token));   <span class="tok-c">// your authentication</span>
+    <span class="tok-k">if</span> (!user) <span class="tok-k">throw</span> <span class="tok-k">new</span> ApueError(<span class="tok-n">401</span>, <span class="tok-s">'Unauthorized'</span>, <span class="tok-s">'invalid token'</span>, {}, { <span class="tok-s">'www-authenticate'</span>: <span class="tok-s">'Bearer'</span> });
+    <span class="tok-k">return</span> user;
+  },
+  shutdownGraceMs: <span class="tok-n">20_000</span>, <span class="tok-c">// below the orchestrator's grace period (Kubernetes: 30 s by default)</span>
+  logger: { error: (message, detail) =&gt; console.error(JSON.stringify({ level: <span class="tok-s">'error'</span>, message, detail: String(detail) })) },
+  fallback: (exchange) =&gt; { <span class="tok-c">// health check for the load balancer</span>
+    <span class="tok-k">if</span> (exchange.url !== <span class="tok-s">'/healthz'</span>) <span class="tok-k">return</span> <span class="tok-k">false</span>;
+    exchange.send(<span class="tok-n">200</span>, { <span class="tok-s">'content-type'</span>: <span class="tok-s">'text/plain'</span>, <span class="tok-s">'cache-control'</span>: <span class="tok-s">'no-store'</span> }, <span class="tok-k">new</span> TextEncoder().encode(<span class="tok-s">'ok'</span>));
+    <span class="tok-k">return</span> <span class="tok-k">true</span>;
+  },
+});
+
+<span class="tok-k">await</span> server.listen(Number(env(<span class="tok-s">'PORT'</span>, <span class="tok-s">'8443'</span>)), <span class="tok-s">'0.0.0.0'</span>);
+process.on(<span class="tok-s">'SIGTERM'</span>, () =&gt; <span class="tok-k">void</span> server.close().then(() =&gt; process.exit(<span class="tok-n">0</span>)));</code></pre></figure>
+
+<h2 id="behind-a-proxy-or-load-balancer">Behind a proxy or load balancer</h2>
+<ul>
+  <li><strong>Streaming</strong>: turn request and response buffering off (<code>proxy_request_buffering off</code> and <code>proxy_buffering off</code> in nginx), so client streams, uploads, frames and SSE flow without delay, and allow long reads (<code>proxy_read_timeout</code>). apü sends a heartbeat after 15 s without other frames.</li>
+  <li><strong>WebSockets</strong> (tier T3, browsers’ streaming uploads where fetch can’t stream them): forward <code>Upgrade</code> and <code>Connection</code>, or HTTP/2 extended CONNECT where the proxy supports it.</li>
+  <li>How nginx, Caddy, HAProxy and Envoy behave with apü traffic, measured: <a href="caching.html">Caching, CDNs &amp; proxies</a> and <a href="measurements.html">Measurements</a>.</li>
+</ul>
+
+<h2 id="several-replicas">Several replicas</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="State across replicas"><table>
+  <thead><tr><th scope="col">State</th><th scope="col">Setting</th><th scope="col">Why</th></tr></thead>
+  <tbody>
+    <tr><td>Resume tokens</td><td><code>resume: { secret }</code>, the same on every replica</td><td>A stream resumes on whichever replica the reconnect reaches</td></tr>
+    <tr><td>Idempotency keys</td><td><code>idempotency</code>: a store over shared storage</td><td>A retry that reaches another replica is replayed, not run twice</td></tr>
+    <tr><td>Uploads</td><td><code>instance</code> per replica, and route by it</td><td>An upload’s content lives on the replica that received it</td></tr>
+    <tr><td>Download resources (<code>t.download()</code>)</td><td>the same <code>instance</code> routing</td><td>A download URL is served by the replica that created it</td></tr>
+  </tbody>
+</table></div>
+
+<h3 id="a-shared-idempotency-store">A shared idempotency store</h3>
+<p>The built-in store is per process. For several replicas, pass an object with three methods over shared storage (for Redis, <code>SET key … NX PX</code> fits <code>begin</code>). Each may return a promise:</p>
+<figure class="code"><figcaption>the shape the server expects</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">interface</span> IdempotencyStore {
+  /** Atomically claims the key <span class="tok-k">for</span> this fingerprint, or reports why it cannot be claimed. */
+  begin(key: string, fingerprint: string): BeginResult | Promise&lt;BeginResult&gt;;
+  /** Stores the final response <span class="tok-k">of</span> a claimed key. */
+  complete(key: string, response: StoredResponse): <span class="tok-k">void</span> | Promise&lt;<span class="tok-k">void</span>&gt;;
+  /** Releases a claimed key without storing (e.g. on <span class="tok-n">5xx</span>), so a retry can execute again. */
+  release(key: string): <span class="tok-k">void</span> | Promise&lt;<span class="tok-k">void</span>&gt;;
+}
+<span class="tok-k">type</span> BeginResult =
+  | { state: <span class="tok-s">'new'</span> }
+  | { state: <span class="tok-s">'replay'</span>; response: StoredResponse }
+  | { state: <span class="tok-s">'in-progress'</span> }
+  | { state: <span class="tok-s">'mismatch'</span> };
+<span class="tok-k">interface</span> StoredResponse { status: number; headers: Record&lt;string, string&gt;; body: Uint8Array }</code></pre></figure>
+<p>A store that fails to record a result is reported to the <code>logger</code>; the response stands.</p>
+
+<h3 id="routing-by-replica">Routing by replica</h3>
+<p>With <code>instance: 'eu-1'</code>, upload and download ids are <code>eu-1.&lt;random&gt;</code>. Route <code>/$uploads/eu-1.…</code> and <code>/$downloads/eu-1.…</code> by path, and calls that reference uploads by the <code>apue-replica</code> header that <code>ApueClient</code> sends. The configuration, as verified (<code>docs/deployment/nginx.conf</code> in the repository):</p>
+<figure class="code"><figcaption>nginx.conf</figcaption><pre tabindex="0"><code class="language-sh"><span class="tok-c"># nginx in front of several apü replicas (docs/deployment.md). Uploads and download resources live</span>
+<span class="tok-c"># in the replica that created them; their ids carry its name (server option `instance`):</span>
+<span class="tok-c">#   /$uploads/eu-1.&lt;id&gt;, /$downloads/eu-1.&lt;id&gt;   → routed by path</span>
+<span class="tok-c">#   a call referencing uploads: header apue-replica: eu-1 (sent by ApueClient)  → routed by header</span>
+<span class="tok-c"># Everything else is stateless across replicas (shared resume secret, shared idempotency store) and</span>
+<span class="tok-c"># is balanced freely. Verified end to end by scripts/verify-deployment.ts (nginx 1.29).</span>
+events {}
+
+http {
+  map $uri $apue_by_path {
+    "~^/\$(uploads|downloads)/(?&lt;replica&gt;[A-Za-z0-9-]+)\." $replica;
+    default "";
+  }
+  map "$apue_by_path:$http_apue_replica" $apue_upstream {
+    "~^(?&lt;p&gt;[A-Za-z0-9-]+):" apue_$p;  <span class="tok-c"> # path first</span>
+    "~^:(?&lt;h&gt;[A-Za-z0-9-]+)$" apue_$h; <span class="tok-c"> # then the header</span>
+    default apue_all;
+  }
+  map $http_upgrade $connection_upgrade {
+    default upgrade;
+    "" "";
+  }
+
+ <span class="tok-c"> # One group per replica (named after its `instance`) plus one with all of them.</span>
+  upstream apue_all { server REPLICA_1; server REPLICA_2; }
+  upstream apue_eu-1 { server REPLICA_1; }
+  upstream apue_eu-2 { server REPLICA_2; }
+
+  server {
+    listen 8443 ssl;
+    http2 on;
+    ssl_certificate /etc/nginx/cert.pem;
+    ssl_certificate_key /etc/nginx/key.pem;
+
+    client_max_body_size 0;         <span class="tok-c"> # uploads are limited by the apü server (uploads.maxBytes)</span>
+    proxy_request_buffering off;    <span class="tok-c"> # stream request bodies (client streams, uploads)</span>
+    proxy_buffering off;            <span class="tok-c"> # stream responses (frames, SSE) without delay</span>
+    proxy_read_timeout 1h;          <span class="tok-c"> # long-lived streams; apü sends heartbeats</span>
+
+    location / {
+      proxy_pass https://$apue_upstream;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header Upgrade $http_upgrade;         <span class="tok-c"> # WebSocket tier (T3)</span>
+      proxy_set_header Connection $connection_upgrade;
+    }
+  }
+}</code></pre></figure>
+<p><strong>Verified</strong> with <code>scripts/verify-deployment.ts</code> (Docker): 30 of 30 calls with automatic uploads and downloads succeed through nginx across two replicas; with plain round robin, 0 of 30 do. Clients that don’t send the header (the generated Python, Go and Java clients) still work behind connection-affine balancing — L4, or HTTP/2 connections pinned to a replica — because an upload and the call that uses it travel on the same connection.</p>
+<p>Persistent uploads (<code>uploads.persistent</code>) survive a restart of the same replica; give every replica its own <code>uploads.directory</code> (a lock refuses a second process). An idempotent replay refreshes the stored response’s download URLs, or answers <code>410</code> <a href="../problems/download-expired.html">download-expired</a> if one has already expired — never a dead link, never a second run.</p>
+
+<h2 id="callers-limits-security">Callers, limits, security</h2>
+<ul>
+  <li><strong><code>principal</code></strong>: name the caller (a user id) from your authentication. Quotas, idempotency keys, uploads and resume tokens are scoped to it. Without it, upload quotas count per client address — behind a proxy that is the proxy’s address for everyone. See <a href="auth.html">Callers &amp; auth</a>.</li>
+  <li><strong>CORS</strong>: list origins explicitly; <code>credentials: true</code> only with a list. Cross-origin WebSocket handshakes lose cookies unless CORS allows credentials (cross-site WebSocket hijacking).</li>
+  <li><strong>Limits</strong> (defaults in parentheses): <code>maxBodyBytes</code> (1 MiB, JSON bodies), <code>maxJsonDepth</code> (64), <code>maxBatchCalls</code> (64), <code>maxConcurrentStreams</code> (256), <code>idleTimeoutMs</code> (120 s), <code>bodyTimeoutMs</code> (30 s), <code>uploads.maxBytes</code> / <code>storeBytes</code> / <code>scopeBytes</code> / <code>scopeUploads</code>, <code>downloads.ttlMs</code>. All options: <a href="server.html">Server reference</a>.</li>
+  <li>The manifest (<code>/.well-known/apue</code>) and the OpenAPI document (<code>/.well-known/openapi.json</code>) are public by design; <code>openapi: false</code> drops the latter.</li>
+</ul>
+
+<h2 id="shutdown-health-logging">Shutdown, health, logging</h2>
+<ul>
+  <li>On <code>SIGTERM</code> call <code>server.close()</code>: it stops accepting, lets calls finish for <code>shutdownGraceMs</code> (10 s by default), then ends the rest with a retryable <code>503</code> — clients retry or resume elsewhere. Keep the grace period below the orchestrator’s (Kubernetes: 30 s).</li>
+  <li>Health checks: answer a path such as <code>/healthz</code> in the <code>fallback</code> hook.</li>
+  <li><code>logger: { error(message, detail) }</code> receives server-side failures — handler errors, output that doesn’t match its schema, an idempotency store failing to record. Client mistakes and disconnects are not logged.</li>
+</ul>
+
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/manifest.html" rel="prev"><span>Previous</span><b>Clients, manifest &amp; OpenAPI</b></a><a class="next" href="../docs/server.html" rel="next"><span>Next</span><b>Server reference</b></a></nav>
+</main>
+<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#runtime">Runtime</a></li><li><a href="#a-production-server">A production server</a></li><li><a href="#behind-a-proxy-or-load-balancer">Behind a proxy or load balancer</a></li><li><a href="#several-replicas">Several replicas</a></li><li><a href="#callers-limits-security">Callers, limits, security</a></li><li><a href="#shutdown-health-logging">Shutdown, health, logging</a></li></ul></nav></aside>
+</div>
+<footer class="site-footer">
+  <div class="wrap">
+    <div>
+      <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
+      <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
+    </div>
+    <nav aria-label="Footer: learn">
+      <h2>Learn</h2>
+      <ul>
+        <li><a href="../docs/getting-started.html">Getting started</a></li>
+        <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="../docs/streaming.html">Streaming</a></li>
+        <li><a href="../docs/errors.html">Errors</a></li>
+        <li><a href="../docs/manifest.html">Clients &amp; OpenAPI</a></li>
+        <li><a href="../docs/deployment.html">Deployment</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: reference">
+      <h2>Reference</h2>
+      <ul>
+        <li><a href="../docs/server.html">Server reference</a></li>
+        <li><a href="../docs/client.html">Client reference</a></li>
+        <li><a href="../docs/wire-format.html">Wire format</a></li>
+        <li><a href="../problems/index.html">Problem types</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="Footer: project">
+      <h2>Project</h2>
+      <ul>
+        <li><a href="../docs/spec.html">Spec &amp; research</a></li>
+        <li><a href="../docs/measurements.html">Measurements</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

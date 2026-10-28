@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manifest &amp; codegen — apü</title>
-<meta name="description" content="The apü manifest at /.well-known/apue with JSON Schema and derived docs, the RFC 9727 API catalog, and apue-types: typed TypeScript and standard-library Python clients generated from a running server.">
+<title>Clients, manifest &amp; OpenAPI — apü</title>
+<meta name="description" content="The apü manifest at /.well-known/apue, the RFC 9727 API catalog, OpenAPI 3.2 at /.well-known/openapi.json, and apue-types: TypeScript modules and standard-library Python, Go and Java clients generated from a running server.">
 <link rel="canonical" href="https://apue.dev/docs/manifest.html">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -15,8 +15,8 @@
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="apü">
 <meta property="og:locale" content="en">
-<meta property="og:title" content="Manifest &amp; codegen — apü">
-<meta property="og:description" content="The apü manifest at /.well-known/apue with JSON Schema and derived docs, the RFC 9727 API catalog, and apue-types: typed TypeScript and standard-library Python clients generated from a running server.">
+<meta property="og:title" content="Clients, manifest &amp; OpenAPI — apü">
+<meta property="og:description" content="The apü manifest at /.well-known/apue, the RFC 9727 API catalog, OpenAPI 3.2 at /.well-known/openapi.json, and apue-types: TypeScript modules and standard-library Python, Go and Java clients generated from a running server.">
 <meta property="og:url" content="https://apue.dev/docs/manifest.html">
 <meta property="og:image" content="https://apue.dev/assets/og.png">
 <meta property="og:image:width" content="1200">
@@ -28,18 +28,18 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">draft 01</span></a>
-    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private beta</span></a></li></ul></nav>
+    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
   </div>
 </header>
 <div class="wrap docs-layout has-toc">
-<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html" aria-current="page">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html" aria-current="page">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
 <main id="main" class="prose" tabindex="-1">
-<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html" aria-current="page">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html" aria-current="page">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
 <p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
-<h1>Manifest &amp; codegen</h1>
-<p class="page-intro">Every apü server describes itself at <code>/.well-known/apue</code>. TypeScript clients that can import the API definition need nothing else; for everyone else, <code>apue-types</code> turns the manifest into a typed client module — TypeScript or Python.</p>
-<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#the-manifest">The manifest</a></li><li><a href="#api-catalog">API catalog</a></li><li><a href="#typescript">TypeScript</a></li><li><a href="#python">Python</a></li><li><a href="#other-languages-and-formats">Other languages and formats</a></li></ul></nav>
+<h1>Clients, manifest &amp; OpenAPI</h1>
+<p class="page-intro">Every apü server describes itself at <code>/.well-known/apue</code> and, as OpenAPI 3.2, at <code>/.well-known/openapi.json</code>. TypeScript clients that can import the API definition need nothing else; for everyone else, <code>apue-types</code> turns the manifest into a client — TypeScript, Python, Go or Java.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#the-manifest">The manifest</a></li><li><a href="#api-catalog">API catalog</a></li><li><a href="#typescript">TypeScript</a></li><li><a href="#openapi-3-2">OpenAPI 3.2</a></li><li><a href="#generated-clients">Generated clients</a></li></ul></nav>
 
 <h2 id="the-manifest">The manifest</h2>
 <p><code>GET {base}/.well-known/apue</code> returns the operations with their effect, stream kind, JSON Schema for input and output, cache policy, deprecation and resumability. It is built once at startup (measured: 0.2–0.6 ms) and served with an ETag (its hash) and <code>no-cache</code>, so tools revalidate cheaply.</p>
@@ -86,59 +86,173 @@
 {"linkset":[{"anchor":"https://localhost:18443/","service-desc":[{"href":"https://localhost:18443/.well-known/apue","type":"application/json"}]}]}</code></pre></figure>
 
 <h2 id="typescript">TypeScript</h2>
-<p>A TypeScript client that can import the API definition is typed directly from it — no code generation. For code that can’t (another repository, another team), generate the same definition from a running server:</p>
-<figure class="code"><pre tabindex="0"><code class="language-sh">node bin/apue-types.ts https://api.example --runtime ./apue/src --out api.ts  <span class="tok-c"> # optional: --ca cert.pem, --name api</span></code></pre></figure>
-<p>The output is a <code>defineApi(…)</code> module with the same <code>t.*</code> schemas, importing <code>api.ts</code> and <code>schema.ts</code> from the <code>--runtime</code> directory. Generated for the todo example:</p>
-<figure class="code"><figcaption>generated (excerpt)</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// Generated by apue-types from https://localhost:18556/.well-known/apue (draft-00). Do not edit.</span>
-<span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'../../src/api.ts'</span>;
-<span class="tok-k">import</span> { t } <span class="tok-k">from</span> <span class="tok-s">'../../src/schema.ts'</span>;
+<h2 id="openapi-3-2">OpenAPI 3.2</h2>
+<p><code>GET</code> or <code>HEAD /.well-known/openapi.json</code> answers an OpenAPI 3.2 document (<code>application/openapi+json; version=3.2.0</code>, ETag/304, <code>no-cache</code>), linked as a second <code>service-desc</code> from the API catalog. It is derived from the operation definitions only, built on the first request and cached — nothing is spent if nobody asks (the todo example: 29 KB raw, 4.2 KB gzipped, 0.3 ms).</p>
+<ul>
+  <li>On by default: it says nothing the public manifest doesn’t. <code>openapi: false</code> turns it off; <code>openapi: { title, version, description, servers }</code> fills <code>info</code> and <code>servers</code>.</li>
+  <li>Each operation as the server routes it: reads as <code>get</code> (input in the <code>i</code> query parameter), <code>head</code>, <code>query</code> and <code>post</code>; everything else <code>post</code>. <code>Idempotency-Key</code> where honoured, <code>apue-timeout</code>, <code>apue-resume</code>, <code>?s=</code>, ETag/304.</li>
+  <li>Responses: JSON outputs; framed bodies as opaque binary with the per-message schema in <code>x-apue-message-schema</code>; <code>text/event-stream</code> with an <code>itemSchema</code> for response streams; RFC 9457 problem responses per status from the protocol errors; placeholder examples; upload, blob and download references.</li>
+  <li>Not described: <code>/$batch</code> and the WebSocket tier.</li>
+  <li>The tests validate the documents against the official OAS 3.2 JSON Schemas.</li>
+</ul>
+<figure class="code"><figcaption>openapi.json (excerpt: the quick start’s todos.create)</figcaption><pre tabindex="0"><code class="language-json">{
+  <span class="tok-k">"openapi"</span>: <span class="tok-s">"3.2.0"</span>,
+  <span class="tok-k">"paths"</span>: {
+    <span class="tok-k">"/todos.create"</span>: {
+      <span class="tok-k">"post"</span>: {
+        <span class="tok-k">"operationId"</span>: <span class="tok-s">"todos.create"</span>,
+        <span class="tok-k">"summary"</span>: <span class="tok-s">"unsafe unary, input as body"</span>,
+        <span class="tok-k">"parameters"</span>: [{ <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/parameters/IdempotencyKey"</span> }],
+        <span class="tok-k">"requestBody"</span>: {
+          <span class="tok-k">"required"</span>: <span class="tok-n">true</span>,
+          <span class="tok-k">"content"</span>: { <span class="tok-k">"application/json"</span>: { <span class="tok-k">"schema"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/schemas/todos.create.Input"</span> } } }
+        },
+        <span class="tok-k">"responses"</span>: {
+          <span class="tok-k">"200"</span>: { <span class="tok-k">"description"</span>: <span class="tok-s">"The output"</span>, <span class="tok-k">"headers"</span>: { <span class="tok-k">"apue-replayed"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/headers/Replayed"</span> } }, <span class="tok-k">"…"</span>: <span class="tok-s">"…"</span> },
+          <span class="tok-k">"400"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/responses/Problem400"</span> },
+          <span class="tok-k">"409"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/responses/Problem409.idempotency-key-in-progress"</span> },
+          <span class="tok-k">"422"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/responses/Problem422.idempotency-key-reused"</span> },
+          <span class="tok-k">"504"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/responses/Problem504"</span> },
+          <span class="tok-k">"default"</span>: { <span class="tok-k">"$ref"</span>: <span class="tok-s">"#/components/responses/Error"</span> }
+        }
+      }
+    }
+  }
+}</code></pre></figure>
+
+<h2 id="generated-clients">Generated clients</h2>
+<p>A TypeScript client that can import the API definition is typed directly from it — no code generation. For everything else, <code>apue-types</code> reads a running server’s manifest and writes one self-contained file:</p>
+<figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> npx apue-types https://api.example --out api.ts                                         # TypeScript
+<span class="tok-p">$</span> npx apue-types https://api.example --lang python --out api.py                           # Python ≥ 3.11
+<span class="tok-p">$</span> npx apue-types https://api.example --lang go --package api --out api.go                 # Go ≥ 1.24
+<span class="tok-p">$</span> npx apue-types https://api.example --lang java --package com.example.api --out Api.java # Java 17</code></pre></figure>
+<p>Options: <code>--ca cert.pem</code> for a private certificate authority; for TypeScript <code>--runtime</code> (default <code>apue</code>) and <code>--name</code> (default <code>api</code>). The generator rejects JSON Schema keywords it can’t express instead of silently dropping constraints. The same generators are a library: <code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code> and <code>generateJava</code> from <code>apue/codegen</code>.</p>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Generated clients compared"><table>
+  <thead><tr><th scope="col"></th><th scope="col">TypeScript</th><th scope="col">Python</th><th scope="col">Go</th><th scope="col">Java</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">Runtime</th><td>the <code>apue</code> package</td><td>standard library</td><td>standard library</td><td>JDK only</td></tr>
+    <tr><th scope="row">Unary calls, retries, idempotency keys</th><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><th scope="row">Server streams</th><td>resumable</td><td>resumable</td><td>yes (not resumed)</td><td>yes (not resumed)</td></tr>
+    <tr><th scope="row">Client and bidi streams</th><td>full duplex (HTTP/2, WebSocket)</td><td>half duplex</td><td>full duplex (HTTP/2)</td><td>half duplex</td></tr>
+    <tr><th scope="row">Pipelined batches</th><td>yes</td><td>yes</td><td>—</td><td>—</td></tr>
+    <tr><th scope="row">Compressed responses</th><td>yes (zstd, br, gzip)</td><td>zstd (Python ≥ 3.14), gzip</td><td>—</td><td>—</td></tr>
+    <tr><th scope="row">Client-side validation</th><td>yes</td><td>yes</td><td>— (the server validates)</td><td>— (the server validates)</td></tr>
+    <tr><th scope="row">Problems, deadlines, bytes, uploads, downloads</th><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+  </tbody>
+</table></div>
+<p class="source">“—” means not covered by that generator yet (SPEC-DRAFT §11). Each generator is tested end to end against a live server, and the release check generates Python, Go and Java clients with the installed CLI and compiles them.</p>
+
+<h3 id="typescript-2">TypeScript</h3>
+<p>The output is a <code>defineApi(…)</code> module with the same <code>t.*</code> schemas, importing from <code>apue</code>; use it with <code>ApueClient</code> like a hand-written definition. Verified by a round trip: API → manifest → generated code → identical manifest. Generated from the quick start’s server:</p>
+<figure class="code"><figcaption>api.ts (generated)</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// Generated by apue-types from https://api.example/.well-known/apue (draft-00). Do not edit.</span>
+<span class="tok-k">import</span> { defineApi, op, t } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
 
 <span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
-  <span class="tok-s">"todos.list"</span>: op({ effect: <span class="tok-s">"safe"</span>, input: t.void(), output: t.array(t.object({ <span class="tok-s">"id"</span>: t.number({ int: <span class="tok-k">true</span> }), <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }), <span class="tok-s">"done"</span>: t.boolean() })), cache: {<span class="tok-s">"maxAge"</span>:<span class="tok-n">0</span>} }),
-  <span class="tok-s">"todos.create"</span>: op({ effect: <span class="tok-s">"unsafe"</span>, input: t.object({ <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }) }), output: t.object({ <span class="tok-s">"id"</span>: t.number({ int: <span class="tok-k">true</span> }), <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }), <span class="tok-s">"done"</span>: t.boolean() }) }),
-  <span class="tok-s">"todos.changes"</span>: op({ effect: <span class="tok-s">"safe"</span>, stream: <span class="tok-s">"server"</span>, resumable: <span class="tok-k">true</span>, input: t.void(), output: t.object({ <span class="tok-s">"seq"</span>: t.number(), <span class="tok-s">"todo"</span>: t.object({ <span class="tok-s">"id"</span>: t.number({ int: <span class="tok-k">true</span> }), <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }), <span class="tok-s">"done"</span>: t.boolean() }) }) }),
-  <span class="tok-c">// …</span>
+  <span class="tok-s">"todos.list"</span>: op({ effect: <span class="tok-s">"safe"</span>, input: t.void(), output: t.array(t.object({ <span class="tok-s">"id"</span>: t.number({ int: <span class="tok-k">true</span> }), <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }), <span class="tok-s">"done"</span>: t.boolean() })) }),
+  <span class="tok-s">"todos.create"</span>: op({ effect: <span class="tok-s">"unsafe"</span>, input: t.object({ <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span> }) }), output: t.object({ <span class="tok-s">"id"</span>: t.number({ int: <span class="tok-k">true</span> }), <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }), <span class="tok-s">"done"</span>: t.boolean() }) }),
+  <span class="tok-s">"todos.watch"</span>: op({ effect: <span class="tok-s">"safe"</span>, stream: <span class="tok-s">"server"</span>, resumable: <span class="tok-k">true</span>, input: t.void(), output: t.object({ <span class="tok-s">"id"</span>: t.number({ int: <span class="tok-k">true</span> }), <span class="tok-s">"title"</span>: t.string({ min: <span class="tok-n">1</span>, max: <span class="tok-n">200</span> }), <span class="tok-s">"done"</span>: t.boolean() }) }),
 });</code></pre></figure>
-<ul>
-  <li>Verified by a round trip: API → manifest → generated code → identical manifest.</li>
-  <li>The generator rejects JSON Schema keywords it can’t express instead of silently dropping constraints.</li>
-  <li>String patterns: JSON Schema <code>pattern</code> has no flags, so flags travel as <code>x-apue-flags</code>. Other validators see the unflagged pattern, so prefer patterns without <code>i</code>/<code>m</code>/<code>s</code> in public APIs.</li>
-</ul>
+<p>String patterns: JSON Schema <code>pattern</code> has no flags, so flags travel as <code>x-apue-flags</code>. Other validators see the unflagged pattern, so prefer patterns without <code>i</code>/<code>m</code>/<code>s</code> in public APIs.</p>
 
-<h2 id="python">Python</h2>
-<p><code>--lang python</code> writes one self-contained module: a standard-library runtime (Python ≥ 3.11, HTTP/1.1 over TLS with keep-alive), the API’s types as <code>TypedDict</code>s and a <code>Client</code> with one method per operation (<code>todos.get</code> → <code>todos_get</code>, Python keywords escaped).</p>
-<figure class="code"><pre tabindex="0"><code class="language-sh">node bin/apue-types.ts https://api.example --lang python --out api.py</code></pre></figure>
-<figure class="code"><figcaption>using the generated module</figcaption><pre tabindex="0"><code class="language-py"><span class="tok-k">from</span> api <span class="tok-k">import</span> ApueError, Client
+<h3 id="python">Python</h3>
+<p>One module: a standard-library runtime (Python ≥ 3.11, HTTP/1.1 over TLS with keep-alive, one call at a time per client), the types as <code>TypedDict</code>s, a <code>Client</code> with one method per operation (<code>todos.create</code> → <code>todos_create</code>; Python keywords and client members get a trailing <code>_</code>) and a <code>Batch</code> with the same methods.</p>
+<figure class="code"><figcaption>use.py — against the quick start’s server</figcaption><pre tabindex="0"><code class="language-py"><span class="tok-k">from</span> api <span class="tok-k">import</span> ApueError, Client
 
-<span class="tok-k">with</span> Client(<span class="tok-s">"https://localhost:8443"</span>, cafile=<span class="tok-s">"certs/cert.pem"</span>) <span class="tok-k">as</span> c:
-    todo = c.todos_create({<span class="tok-s">"title"</span>: <span class="tok-s">"buy milk"</span>})       <span class="tok-c"># POST + Idempotency-Key</span>
-    print(c.todos_get({<span class="tok-s">"id"</span>: todo[<span class="tok-s">"id"</span>]}))            <span class="tok-c"># GET /todos.get?i=...</span>
+<span class="tok-k">with</span> Client(<span class="tok-s">"https://localhost:8443"</span>, cafile=<span class="tok-s">"cert.pem"</span>) <span class="tok-k">as</span> client:
+    todo = client.todos_create({<span class="tok-s">"title"</span>: <span class="tok-s">"buy milk"</span>})  <span class="tok-c"># POST + Idempotency-Key, retried safely</span>
+    print(len(client.todos_list()))                    <span class="tok-c"># GET /todos.list?i=…</span>
     <span class="tok-k">try</span>:
-        c.todos_create({<span class="tok-s">"title"</span>: <span class="tok-s">""</span>})
+        client.todos_create({<span class="tok-s">"title"</span>: <span class="tok-s">""</span>})             <span class="tok-c"># validated before it is sent</span>
     <span class="tok-k">except</span> ApueError <span class="tok-k">as</span> e:
-        print(e.status, e.type, e.detail)             <span class="tok-c"># 400 https://apue.dev/problems/validation-failed …</span>
-    <span class="tok-k">for</span> change <span class="tok-k">in</span> c.todos_changes():                  <span class="tok-c"># a server stream</span>
-        print(change[<span class="tok-s">"seq"</span>], change[<span class="tok-s">"todo"</span>][<span class="tok-s">"title"</span>])
-        <span class="tok-k">break</span></code></pre></figure>
-<p class="source">Run against the todo example; it printed the todo, <code>400 https://apue.dev/problems/validation-failed input does not match the schema</code> and <code>0 buy milk</code>.</p>
-<p>Covered: unary calls (<code>GET ?i=</code> for cacheable reads with near-canonical JSON, <code>POST</code> otherwise), <code>Idempotency-Key</code> for non-safe calls (<code>idempotency_key=</code> to set your own), retries for safe and keyed calls on connection loss and on <code>429</code>/<code>503</code> honouring <code>Retry-After</code>, server streams, client and bidi streams (half duplex), RFC 9457 problems including END-frame errors, deadlines (<code>timeout_ms=</code>), bytes in messages, uploads for bytes and file inputs (file objects streamed chunked) and <code>t.download()</code> outputs (resumed with <code>Range</code> + <code>If-Range</code>, SHA-256 verified).</p>
-<p>Not covered: resuming broken streams, batches, full duplex, compression and client-side validation (the server validates).</p>
+        print(e.status, e.type)                        <span class="tok-c"># 400 https://apue.dev/problems/validation-failed</span>
+    <span class="tok-k">for</span> t <span class="tok-k">in</span> client.todos_watch():                     <span class="tok-c"># resumes after a lost connection</span>
+        print(t[<span class="tok-s">"title"</span>])</code></pre></figure>
+<p>Covered: unary calls (<code>GET ?i=</code> with canonical JSON, <code>QUERY</code> above 2 KiB with the <code>POST</code> fallback), <code>Idempotency-Key</code> (<code>idempotency_key=</code> to set your own), retries on connection loss, on <code>429</code>/<code>503</code> honouring <code>Retry-After</code> and on retryable <code>409</code>s, resumable server streams, client and bidi streams (half duplex: <code>http.client</code> sends the whole body before reading), pipelined batches, compressed responses, client-side validation against the manifest’s JSON Schema with JavaScript regex semantics, RFC 9457 problems including END frames, deadlines (<code>timeout_ms=</code>), bytes, uploads for bytes and file inputs, and <code>t.download()</code> outputs (resumed with <code>Range</code>, SHA-256 verified).</p>
 
-<h2 id="other-languages-and-formats">Other languages and formats</h2>
+<h3 id="go">Go</h3>
+<p>One gofmt-clean file: a standard-library runtime (Go ≥ 1.24, <code>net/http</code>, HTTP/2 over TLS), structs with JSON tags (optional fields as pointers, named string types for enums, <code>[]byte</code> for bytes) and a <code>Client</code> with one method per operation taking a <code>context.Context</code> (<code>todos.create</code> → <code>TodosCreate</code>). Schemas Go can’t express are refused, not weakened.</p>
+<figure class="code"><figcaption>main.go — against the quick start’s server</figcaption><pre tabindex="0"><code class="language-go"><span class="tok-k">package</span> main
+
+<span class="tok-k">import</span> (
+	<span class="tok-s">"context"</span>
+	<span class="tok-s">"errors"</span>
+	<span class="tok-s">"fmt"</span>
+
+	<span class="tok-s">"example.com/app/api"</span> <span class="tok-c">// apue-types … --lang go --package api --out api/api.go</span>
+)
+
+<span class="tok-k">func</span> main() {
+	ctx := context.Background()
+	c, err := api.NewClient(<span class="tok-s">"https://localhost:8443"</span>, api.WithCAFile(<span class="tok-s">"cert.pem"</span>))
+	<span class="tok-k">if</span> err != <span class="tok-k">nil</span> {
+		panic(err)
+	}
+	<span class="tok-k">defer</span> c.Close()
+
+	todo, err := c.TodosCreate(ctx, api.TodosCreateInput{Title: <span class="tok-s">"buy milk"</span>}) <span class="tok-c">// POST + Idempotency-Key</span>
+	<span class="tok-k">if</span> err != <span class="tok-k">nil</span> {
+		panic(err)
+	}
+	fmt.Println(todo.Id, todo.Title)
+
+	<span class="tok-k">var</span> problem *api.Error
+	<span class="tok-k">if</span> _, err := c.TodosCreate(ctx, api.TodosCreateInput{Title: <span class="tok-s">""</span>}); errors.As(err, &amp;problem) {
+		fmt.Println(problem.Status, problem.Type) <span class="tok-c">// 400 https://apue.dev/problems/validation-failed</span>
+	}
+
+	stream, err := c.TodosWatch(ctx) <span class="tok-c">// a server stream; leaving the loop cancels it</span>
+	<span class="tok-k">if</span> err != <span class="tok-k">nil</span> {
+		panic(err)
+	}
+	<span class="tok-k">for</span> t, err := <span class="tok-k">range</span> stream.All() {
+		<span class="tok-k">if</span> err != <span class="tok-k">nil</span> {
+			panic(err)
+		}
+		fmt.Println(t.Title)
+	}
+}</code></pre></figure>
+<p>Covered: unary calls (the same canonical <code>?i=</code> URL as the TypeScript client, <code>POST</code> above 2 KiB, <code>Idempotency-Key</code>, retries), server streams (<code>Recv</code>, or <code>range</code> over <code>All()</code> — leaving the loop cancels), client and bidi streams <strong>full duplex</strong> over HTTP/2, problems as <code>*api.Error</code> (also from END frames), deadlines and context cancellation, bytes, uploads and downloads (resumed with <code>Range</code>, SHA-256 verified). Not covered: resuming broken streams, batches, <code>QUERY</code>, compression, client-side validation.</p>
+
+<h3 id="java">Java</h3>
+<p>One Java 17 source file, JDK only and pure ASCII: records for the types (optional and nullable members as <code>Optional&lt;T&gt;</code>), enums that keep their JSON names, and a thread-safe <code>Client</code> over <code>java.net.http.HttpClient</code> (HTTP/2; a private CA via <code>Options.trustedCertificates(…)</code>). Kotlin code calls it as it is.</p>
+<figure class="code"><figcaption>Main.java — against the quick start’s server</figcaption><pre tabindex="0"><code class="language-java"><span class="tok-k">import</span> com.example.api.Api.*;
+<span class="tok-k">import</span> java.nio.file.Path;
+
+<span class="tok-k">public</span> <span class="tok-k">class</span> Main {
+  <span class="tok-k">public</span> <span class="tok-k">static</span> <span class="tok-k">void</span> main(String[] args) <span class="tok-k">throws</span> Exception {
+    Options options = <span class="tok-k">new</span> Options().trustedCertificates(Path.of(<span class="tok-s">"cert.pem"</span>));
+    <span class="tok-k">try</span> (Client client = <span class="tok-k">new</span> Client(<span class="tok-s">"https://localhost:8443"</span>, options)) {
+      TodosCreateOutput todo = client.todosCreate(<span class="tok-k">new</span> TodosCreateInput(<span class="tok-s">"buy milk"</span>)); <span class="tok-c">// POST + Idempotency-Key</span>
+      System.out.println(todo.id() + <span class="tok-s">" "</span> + todo.title());
+      <span class="tok-k">try</span> {
+        client.todosCreate(<span class="tok-k">new</span> TodosCreateInput(<span class="tok-s">""</span>));
+      } <span class="tok-k">catch</span> (ApueException e) {
+        System.out.println(e.status() + <span class="tok-s">" "</span> + e.type()); <span class="tok-c">// 400 https://apue.dev/problems/validation-failed</span>
+      }
+      <span class="tok-k">try</span> (Stream&lt;TodosWatchOutput&gt; todos = client.todosWatch()) { <span class="tok-c">// closing resets the HTTP/2 stream</span>
+        <span class="tok-k">for</span> (TodosWatchOutput t : todos) System.out.println(t.title());
+      }
+    }
+  }
+}</code></pre></figure>
+<p>Covered: unary calls, server streams as an iterable, closeable <code>Stream</code> (closing resets the HTTP/2 stream), client and bidi streams (half duplex: JDK 17’s HttpClient exposes a response only after the request body), problems as <code>ApueException</code> including END frames, deadlines, bytes, uploads (<code>byte[]</code>, <code>Path</code>, <code>InputStream</code>) and downloads (resumed with <code>Range</code>, SHA-256 verified). Not covered: resuming broken streams, batches, compression, <code>QUERY</code>, client-side validation; enums are strict.</p>
+
+<h3 id="other-languages">Other languages</h3>
 <ul>
-  <li><span class="tag tag-planned">open</span> Generators for Go, Kotlin/Java and Swift. The Python runtime (about 450 lines covering the wire contract) is the template.</li>
-  <li><span class="tag tag-planned">not done</span> OpenAPI generation was researched, not built.</li>
+  <li><span class="tag tag-planned">in progress</span> A Swift generator — not part of the beta yet.</li>
+  <li>Anything else: the manifest and the OpenAPI document describe the HTTP contract, and the <a href="wire-format.html">wire format</a> the frames.</li>
 </ul>
+<p class="source">The three usage examples above were run against the quick start’s server with clients generated from its manifest; each printed the created todo, <code>400 https://apue.dev/problems/validation-failed</code> and the titles from the stream.</p>
 
-<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/caching.html" rel="prev"><span>Previous</span><b>Caching, CDNs &amp; proxies</b></a><a class="next" href="../docs/server.html" rel="next"><span>Next</span><b>Server reference</b></a></nav>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/caching.html" rel="prev"><span>Previous</span><b>Caching, CDNs &amp; proxies</b></a><a class="next" href="../docs/deployment.html" rel="next"><span>Next</span><b>Deployment</b></a></nav>
 </main>
-<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#the-manifest">The manifest</a></li><li><a href="#api-catalog">API catalog</a></li><li><a href="#typescript">TypeScript</a></li><li><a href="#python">Python</a></li><li><a href="#other-languages-and-formats">Other languages and formats</a></li></ul></nav></aside>
+<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#the-manifest">The manifest</a></li><li><a href="#api-catalog">API catalog</a></li><li><a href="#typescript">TypeScript</a></li><li><a href="#openapi-3-2">OpenAPI 3.2</a></li><li><a href="#generated-clients">Generated clients</a></li></ul></nav></aside>
 </div>
 <footer class="site-footer">
   <div class="wrap">
     <div>
       <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
-      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -148,7 +262,8 @@
         <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
         <li><a href="../docs/streaming.html">Streaming</a></li>
         <li><a href="../docs/errors.html">Errors</a></li>
-        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+        <li><a href="../docs/manifest.html">Clients &amp; OpenAPI</a></li>
+        <li><a href="../docs/deployment.html">Deployment</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: reference">
@@ -165,7 +280,7 @@
       <ul>
         <li><a href="../docs/spec.html">Spec &amp; research</a></li>
         <li><a href="../docs/measurements.html">Measurements</a></li>
-        <li><a href="https://github.com/michaellocher/apue">GitHub (private beta)</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
       </ul>
     </nav>
   </div>

@@ -1,7 +1,6 @@
 //-hide
 import { readFileSync } from 'node:fs';
-import { defineApi, op } from '../../src/api.ts';
-import { t } from '../../src/schema.ts';
+import { defineApi, op, t } from '../../src/index.ts';
 import { createApueServer, type Handlers } from '../../src/server.ts';
 const key = readFileSync('certs/key.pem');
 const cert = readFileSync('certs/cert.pem');
@@ -10,7 +9,7 @@ async function verifyToken(token: string): Promise<{ sub: string } | undefined> 
   return token.length > 10 ? { sub: 'u-1' } : undefined;
 }
 //-show
-import { ApueError } from '../../src/protocol.ts';
+import { ApueError } from '../../src/index.ts';
 
 const handlers: Handlers<typeof api> = {
   'me.get': (_input, ctx) => ({ user: ctx.principal ?? 'anonymous' }),

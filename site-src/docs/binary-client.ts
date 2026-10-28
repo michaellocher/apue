@@ -1,5 +1,5 @@
 //-hide
-import { ApueClient } from '../../src/client.ts';
+import { ApueClient } from '../../src/index.ts';
 import { http2Transport } from '../../src/transport-http2.ts';
 import { api } from './binary.ts';
 const client = new ApueClient(api, http2Transport('https://api.example'));

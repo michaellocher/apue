@@ -1,7 +1,7 @@
-<!--{"path":"docs/client.html","layout":"docs","title":"Client reference — apü","description":"Reference for the apü TypeScript client: ApueClient methods and options, call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), downloads and uploads."}-->
+<!--{"path":"docs/client.html","layout":"docs","title":"Client reference — apü","description":"Reference for the apü TypeScript client: ApueClient methods and options (authorization, per-request headers), call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), replica routing, downloads and uploads."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
 <h1>Client reference</h1>
-<p class="page-intro"><code>ApueClient</code> is typed from the API definition — no code generation — and runs in Node and in browsers (web-platform APIs only; transports are pluggable). Source: <code>src/client.ts</code>, <code>src/transport-http2.ts</code>, <code>src/transport-ws.ts</code>.</p>
+<p class="page-intro"><code>ApueClient</code> is typed from the API definition — no code generation — and runs in Node and in browsers (web-platform APIs only; transports are pluggable). Imports: <code>ApueClient</code>, <code>fetchTransport</code>, <code>Download</code> and <code>ApueError</code> from <code>apue</code>; <code>http2Transport</code> from <code>apue/http2</code>; <code>webSocketTransport</code> and <code>autoTransport</code> from <code>apue/websocket</code>.</p>
 {{toc}}
 
 <h2>ApueClient</h2>
@@ -30,8 +30,8 @@ new ApueClient(api, transport, options?: ClientOptions)
     <tr><td><code>retries</code></td><td>2</td><td>Retries for retry-eligible calls (safe, or keyed)</td></tr>
     <tr><td><code>backoffMs</code></td><td>100</td><td>Base backoff: attempt n waits a random time in [0, base·2ⁿ] (full jitter)</td></tr>
     <tr><td><code>maxBackoffMs</code></td><td>2000</td><td>Cap for backoff and for honoured <code>Retry-After</code> values</td></tr>
-    <tr><td><code>authorization</code></td><td>none</td><td>An <code>Authorization</code> value, or a function asked before every request; over WebSocket sent as an <code>apue.auth.</code> subprotocol</td></tr>
-    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> per request, e.g. a fresh <code>DPoP</code> proof; over WebSocket only <code>dpop</code> travels</td></tr>
+    <tr><td><code>authorization</code></td><td>none</td><td>An <code>Authorization</code> value for every request (calls, batches, uploads), or a function (may be async) asked before each one — a refreshed token is used from the next request on. Over WebSocket it travels as an <code>apue.auth.</code> subprotocol</td></tr>
+    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> (may be async), asked before each request — e.g. a fresh <code>DPoP</code> proof. Over WebSocket only <code>dpop</code> travels (as an <code>apue.dpop.</code> subprotocol), and WebSocket calls report <code>POST</code></td></tr>
   </tbody>
 </table>
 <table data-label="CallOptions">
@@ -54,24 +54,17 @@ new ApueClient(api, transport, options?: ClientOptions)
     <tr><td><code>http2Transport(origin, options?)</code></td><td>Node: one multiplexed <code>node:http2</code> session per origin, full duplex (T1)</td><td><code>ca</code>; <code>streamWindow</code> (4 MiB), <code>connectionWindow</code> (32 MiB); <code>acceptEncoding</code> (<code>'zstd, br, gzip'</code>, responses decompressed); <code>windowTuning</code>: <code>'fixed'</code> (default) or <code>'bdp'</code> (experimental, measured no better)</td></tr>
     <tr><td><code>fetchTransport(baseUrl, options?)</code></td><td>Anywhere with fetch: T0, and T2 request streams where fetch can stream uploads</td><td><code>fetch</code> (your implementation); <code>credentials</code> (e.g. <code>'include'</code>, so Chrome shares the HTTP/2 connection with WebSockets)</td></tr>
     <tr><td><code>webSocketTransport(baseUrl, options?)</code></td><td>Request streams over WebSocket (T3); every other call over fetch</td><td><code>receiveWindow</code> (4 MiB: the client’s memory bound per call), <code>WebSocketImpl</code>, <code>http</code> (transport for non-stream calls)</td></tr>
-    <tr><td><code>autoTransport(baseUrl)</code></td><td>Browsers: fetch for everything; request streams via fetch if supported, else WebSocket</td><td>—</td></tr>
+    <tr><td><code>autoTransport(baseUrl)</code></td><td>Browsers: fetch for everything; request streams via fetch where it can stream uploads to this server, else WebSocket. Probed once, on the first request stream: a one-byte streaming <code>POST</code> to the manifest URL (answered <code>405</code>) — feature detection alone is fooled by WebKit on Linux, and Chrome streams uploads only over HTTP/2</td><td>—</td></tr>
   </tbody>
 </table>
 <p>A transport is a small interface — <code>request({ method, path, headers, body, signal })</code> returning status, headers and a body iterable, plus optional <code>close()</code> and <code>baseUrl</code> — so you can supply your own.</p>
 
 <h2>In the browser</h2>
-<p>There is no bundle yet. The todo example’s server type-strips <code>src/*.ts</code> on request, and its page imports them directly:</p>
-{{pre:ts|examples/todo/index.html (excerpt)}}
-import { ApueClient, fetchTransport } from '/src/client.ts';
-import { autoTransport } from '/src/transport-ws.ts';
-import { todoApi } from '/examples/todo/api.ts';
+<p><code>apue</code> and <code>apue/websocket</code> are ES modules without dependencies and use web-platform APIs only. Serving the page and the API from one origin (the server’s <code>fallback</code> hook) needs no CORS:</p>
+{{code:docs/client-browser.ts|app.ts}}
 
-const client = new ApueClient(todoApi, fetchTransport(location.origin));
-const uploads = new ApueClient(todoApi, autoTransport(location.origin));
-
-await client.call('todos.create', { title }); // validated before sending, retried safely (Idempotency-Key)
-const [count] = await Array.fromAsync(uploads.duplex('todos.import', titles()));
-{{/pre}}
+<h2>Several replicas</h2>
+<p>An upload lives on the replica that received it. When a server sets <code>instance</code>, upload ids carry the replica’s name (<code>eu-1.&lt;random&gt;</code>), and the client sends <code>apue-replica: eu-1</code> with a unary call or batch whose input references uploads from that one replica — so a load balancer can route the call to them. The uploads themselves (<code>/$uploads/eu-1.…</code>) and download URLs (<code>/$downloads/eu-1.…</code>) are routed by path. See <a href="deployment.html#routing-by-replica">Deployment</a>.</p>
 
 <h2>Downloads</h2>
 <table data-label="Download object">
@@ -83,6 +76,7 @@ const [count] = await Array.fromAsync(uploads.duplex('todos.import', titles()));
     <tr><td><code>bytes({ signal? })</code>, <code>blob({ signal? })</code></td><td>The whole content; <code>bytes()</code> verifies the SHA-256 with WebCrypto everywhere</td></tr>
   </tbody>
 </table>
+<p>A download URL works for <code>downloads.ttlMs</code> (15 minutes by default). An idempotent replay of the call that created it refreshes the URL, or answers <code>410</code> <a href="../problems/download-expired.html">download-expired</a> if it has already expired — the operation is not run again.</p>
 
 <h2>Errors</h2>
 <p>Every failure is thrown as an <code>ApueError</code> with <code>status</code> and <code>problem</code> (RFC 9457 fields plus extensions). Client-side validation failures are <code>400</code> <code>validation-failed</code> without a request being sent; an unknown operation name is <code>404</code>; undecodable or truncated responses are <code>502</code>. A cancelled call rejects with your signal’s reason. See <a href="errors.html">Errors</a>.</p>

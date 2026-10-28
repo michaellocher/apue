@@ -1,8 +1,7 @@
 //-hide
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { defineApi, op } from '../../src/api.ts';
-import { t } from '../../src/schema.ts';
+import { defineApi, op, t } from '../../src/index.ts';
 import { createApueServer, type Handlers } from '../../src/server.ts';
 const key = readFileSync('certs/key.pem');
 const cert = readFileSync('certs/cert.pem');

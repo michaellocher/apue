@@ -1,0 +1,75 @@
+<!--{"path":"docs/deployment.html","layout":"docs","title":"Deployment — apü","description":"Running apü in production: TLS, proxies and load balancers, several replicas (resume secret, shared idempotency store, routing uploads and downloads by instance), limits, shutdown, health checks and logging, with a verified nginx configuration."}-->
+<p class="breadcrumb"><a href="index.html">Docs</a> / Guides</p>
+<h1>Deployment</h1>
+<p class="page-intro">What a production deployment needs, with the settings that matter. Most of apü is stateless; the four things that aren’t each have a setting, and the routing for several replicas is verified end to end through a real nginx.</p>
+{{toc}}
+
+<h2>Runtime</h2>
+<ul>
+  <li><strong>Node ≥ 26.11</strong> and <code>npm install apue@beta</code>. The package ships JavaScript, so no type stripping is needed inside <code>node_modules</code>.</li>
+  <li><strong>TLS is required</strong>: the server speaks HTTP/2 over TLS with HTTP/1.1 fallback (<code>key</code>, <code>cert</code>). Terminating TLS at a proxy is fine; the proxy then talks to the replica over TLS as well.</li>
+  <li>One process per CPU core is the usual layout; the server is single-threaded like any Node server.</li>
+</ul>
+
+<h2>A production server</h2>
+<p>The repository’s template (<code>examples/production/server.ts</code>, typechecked with the project) with package imports. Configuration comes from the environment; plug in your handlers, authentication and a shared idempotency store.</p>
+{{code:docs/deployment-server.ts|server.ts}}
+
+<h2>Behind a proxy or load balancer</h2>
+<ul>
+  <li><strong>Streaming</strong>: turn request and response buffering off (<code>proxy_request_buffering off</code> and <code>proxy_buffering off</code> in nginx), so client streams, uploads, frames and SSE flow without delay, and allow long reads (<code>proxy_read_timeout</code>). apü sends a heartbeat after 15 s without other frames.</li>
+  <li><strong>WebSockets</strong> (tier T3, browsers’ streaming uploads where fetch can’t stream them): forward <code>Upgrade</code> and <code>Connection</code>, or HTTP/2 extended CONNECT where the proxy supports it.</li>
+  <li>How nginx, Caddy, HAProxy and Envoy behave with apü traffic, measured: <a href="caching.html">Caching, CDNs &amp; proxies</a> and <a href="measurements.html">Measurements</a>.</li>
+</ul>
+
+<h2>Several replicas</h2>
+<table data-label="State across replicas">
+  <thead><tr><th scope="col">State</th><th scope="col">Setting</th><th scope="col">Why</th></tr></thead>
+  <tbody>
+    <tr><td>Resume tokens</td><td><code>resume: { secret }</code>, the same on every replica</td><td>A stream resumes on whichever replica the reconnect reaches</td></tr>
+    <tr><td>Idempotency keys</td><td><code>idempotency</code>: a store over shared storage</td><td>A retry that reaches another replica is replayed, not run twice</td></tr>
+    <tr><td>Uploads</td><td><code>instance</code> per replica, and route by it</td><td>An upload’s content lives on the replica that received it</td></tr>
+    <tr><td>Download resources (<code>t.download()</code>)</td><td>the same <code>instance</code> routing</td><td>A download URL is served by the replica that created it</td></tr>
+  </tbody>
+</table>
+
+<h3>A shared idempotency store</h3>
+<p>The built-in store is per process. For several replicas, pass an object with three methods over shared storage (for Redis, <code>SET key … NX PX</code> fits <code>begin</code>). Each may return a promise:</p>
+{{pre:ts|the shape the server expects}}
+interface IdempotencyStore {
+  /** Atomically claims the key for this fingerprint, or reports why it cannot be claimed. */
+  begin(key: string, fingerprint: string): BeginResult | Promise<BeginResult>;
+  /** Stores the final response of a claimed key. */
+  complete(key: string, response: StoredResponse): void | Promise<void>;
+  /** Releases a claimed key without storing (e.g. on 5xx), so a retry can execute again. */
+  release(key: string): void | Promise<void>;
+}
+type BeginResult =
+  | { state: 'new' }
+  | { state: 'replay'; response: StoredResponse }
+  | { state: 'in-progress' }
+  | { state: 'mismatch' };
+interface StoredResponse { status: number; headers: Record<string, string>; body: Uint8Array }
+{{/pre}}
+<p>A store that fails to record a result is reported to the <code>logger</code>; the response stands.</p>
+
+<h3>Routing by replica</h3>
+<p>With <code>instance: 'eu-1'</code>, upload and download ids are <code>eu-1.&lt;random&gt;</code>. Route <code>/$uploads/eu-1.…</code> and <code>/$downloads/eu-1.…</code> by path, and calls that reference uploads by the <code>apue-replica</code> header that <code>ApueClient</code> sends. The configuration, as verified (<code>docs/deployment/nginx.conf</code> in the repository):</p>
+{{code:../docs/deployment/nginx.conf|nginx.conf}}
+<p><strong>Verified</strong> with <code>scripts/verify-deployment.ts</code> (Docker): 30 of 30 calls with automatic uploads and downloads succeed through nginx across two replicas; with plain round robin, 0 of 30 do. Clients that don’t send the header (the generated Python, Go and Java clients) still work behind connection-affine balancing — L4, or HTTP/2 connections pinned to a replica — because an upload and the call that uses it travel on the same connection.</p>
+<p>Persistent uploads (<code>uploads.persistent</code>) survive a restart of the same replica; give every replica its own <code>uploads.directory</code> (a lock refuses a second process). An idempotent replay refreshes the stored response’s download URLs, or answers <code>410</code> <a href="../problems/download-expired.html">download-expired</a> if one has already expired — never a dead link, never a second run.</p>
+
+<h2>Callers, limits, security</h2>
+<ul>
+  <li><strong><code>principal</code></strong>: name the caller (a user id) from your authentication. Quotas, idempotency keys, uploads and resume tokens are scoped to it. Without it, upload quotas count per client address — behind a proxy that is the proxy’s address for everyone. See <a href="auth.html">Callers &amp; auth</a>.</li>
+  <li><strong>CORS</strong>: list origins explicitly; <code>credentials: true</code> only with a list. Cross-origin WebSocket handshakes lose cookies unless CORS allows credentials (cross-site WebSocket hijacking).</li>
+  <li><strong>Limits</strong> (defaults in parentheses): <code>maxBodyBytes</code> (1 MiB, JSON bodies), <code>maxJsonDepth</code> (64), <code>maxBatchCalls</code> (64), <code>maxConcurrentStreams</code> (256), <code>idleTimeoutMs</code> (120 s), <code>bodyTimeoutMs</code> (30 s), <code>uploads.maxBytes</code> / <code>storeBytes</code> / <code>scopeBytes</code> / <code>scopeUploads</code>, <code>downloads.ttlMs</code>. All options: <a href="server.html">Server reference</a>.</li>
+  <li>The manifest (<code>/.well-known/apue</code>) and the OpenAPI document (<code>/.well-known/openapi.json</code>) are public by design; <code>openapi: false</code> drops the latter.</li>
+</ul>
+
+<h2>Shutdown, health, logging</h2>
+<ul>
+  <li>On <code>SIGTERM</code> call <code>server.close()</code>: it stops accepting, lets calls finish for <code>shutdownGraceMs</code> (10 s by default), then ends the rest with a retryable <code>503</code> — clients retry or resume elsewhere. Keep the grace period below the orchestrator’s (Kubernetes: 30 s).</li>
+  <li>Health checks: answer a path such as <code>/healthz</code> in the <code>fallback</code> hook.</li>
+  <li><code>logger: { error(message, detail) }</code> receives server-side failures — handler errors, output that doesn’t match its schema, an idempotency store failing to record. Client mistakes and disconnects are not logged.</li>
+</ul>

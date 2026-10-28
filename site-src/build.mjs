@@ -25,7 +25,8 @@ const DOCS = [
     ['docs/batches.html', 'Pipelined batches'],
     ['docs/auth.html', 'Callers & auth'],
     ['docs/caching.html', 'Caching, CDNs & proxies'],
-    ['docs/manifest.html', 'Manifest & codegen'],
+    ['docs/manifest.html', 'Clients, manifest & OpenAPI'],
+    ['docs/deployment.html', 'Deployment'],
   ]],
   ['Reference', [
     ['docs/server.html', 'Server reference'],
@@ -55,6 +56,8 @@ const attr = (s) => esc(s).replace(/"/g, '&quot;');
 
 const KEYWORDS = {
   ts: new Set('import export from const let var function async await yield return if else for of in while try catch finally throw new type interface extends as typeof break continue class undefined null true false void'.split(' ')),
+  go: new Set('package import func var const type struct interface map chan go defer return if else for range switch case default break continue nil true false'.split(' ')),
+  java: new Set('package import public private protected static final class record interface extends implements new return if else for while try catch finally throw throws void var null true false this super'.split(' ')),
   py: new Set('from import with as def return if else elif for in while try except finally raise class None True False and or not lambda yield break continue pass'.split(' ')),
   sh: new Set([]),
 };
@@ -145,12 +148,48 @@ function snippet(name) {
     if (/^(\/\/|#)-show\b/.test(line)) { hidden = false; continue; }
     if (!hidden) lines.push(line);
   }
-  return lines.join('\n').replace(/^\n+/, '');
+  // Snippets typecheck against the repository's sources but show the package's entry points
+  // (package.json "exports"): every visible import of src/ must be one of them.
+  return lines
+    .join('\n')
+    .replace(/^\n+/, '')
+    .replace(/'\.\.\/\.\.\/src\/([\w/-]+)\.ts'/g, (m, file) => {
+      const entry = ENTRY_POINTS[file];
+      if (!entry) throw new Error(`${name}: imports src/${file}.ts, which is not a package entry point`);
+      return `'${entry}'`;
+    });
+}
+
+const ENTRY_POINTS = {
+  index: 'apue',
+  server: 'apue/server',
+  downloads: 'apue/downloads',
+  'transport-http2': 'apue/http2',
+  'transport-ws': 'apue/websocket',
+  'entry/codegen': 'apue/codegen',
+};
+
+// Every entry point used for display must exist in package.json "exports" (and point at that file).
+{
+  const exports = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).exports;
+  for (const [file, entry] of Object.entries(ENTRY_POINTS)) {
+    const target = exports[entry === 'apue' ? '.' : entry.replace(/^apue/, '.')]?.default;
+    if (target !== `./dist/src/${file}.js`) throw new Error(`package.json exports: ${entry} → ${target}, expected ./dist/src/${file}.js`);
+  }
+}
+
+// The README's quick start (verified verbatim by scripts/verify-package.ts), block by block.
+function readmeQuickStart(index) {
+  const readme = readFileSync(join(HERE, '..', 'README.md'), 'utf8');
+  const quick = readme.slice(readme.indexOf('## Quick start'), readme.indexOf('### Entry points'));
+  const blocks = [...quick.matchAll(/```ts\n([\s\S]*?)```/g)].map((m) => m[1].replace(/\s+$/, ''));
+  if (blocks.length !== 3) throw new Error(`README quick start: expected 3 ts blocks, found ${blocks.length}`);
+  return blocks[index];
 }
 
 function langOf(name) {
   const ext = name.split('.').pop();
-  return { ts: 'ts', py: 'py', sh: 'sh', console: 'console', json: 'json', http: 'http', hex: 'hex', txt: 'text' }[ext] ?? 'text';
+  return { ts: 'ts', py: 'py', go: 'go', java: 'java', sh: 'sh', conf: 'sh', console: 'console', json: 'json', http: 'http', hex: 'hex', txt: 'text' }[ext] ?? 'text';
 }
 
 const figure = (body, lang, caption) =>
@@ -230,8 +269,8 @@ function header(path) {
   return `<a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="${rel(path, 'index.html')}" aria-label="apü home">${WORDMARK}<span class="draft-tag">draft 01</span></a>
-    <nav class="site-nav" aria-label="Main"><ul>${nav}<li><a class="nav-gh" href="${GITHUB}">${GH_ICON}GitHub <span class="tag tag-planned">private beta</span></a></li></ul></nav>
+    <a class="brand" href="${rel(path, 'index.html')}" aria-label="apü home">${WORDMARK}<span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul>${nav}<li><a class="nav-gh" href="${GITHUB}">${GH_ICON}GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
   </div>
 </header>`;
 }
@@ -242,7 +281,7 @@ function footer(path) {
   <div class="wrap">
     <div>
       <a class="brand" href="${r('index.html')}" aria-label="apü home">${WORDMARK}</a>
-      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -252,7 +291,8 @@ function footer(path) {
         <li><a href="${r('docs/concepts.html')}">Operations &amp; HTTP mapping</a></li>
         <li><a href="${r('docs/streaming.html')}">Streaming</a></li>
         <li><a href="${r('docs/errors.html')}">Errors</a></li>
-        <li><a href="${r('docs/manifest.html')}">Manifest &amp; codegen</a></li>
+        <li><a href="${r('docs/manifest.html')}">Clients &amp; OpenAPI</a></li>
+        <li><a href="${r('docs/deployment.html')}">Deployment</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: reference">
@@ -269,7 +309,7 @@ function footer(path) {
       <ul>
         <li><a href="${r('docs/spec.html')}">Spec &amp; research</a></li>
         <li><a href="${r('docs/measurements.html')}">Measurements</a></li>
-        <li><a href="${GITHUB}">GitHub (private beta)</a></li>
+        <li><a href="${GITHUB}">GitHub (private for now)</a></li>
       </ul>
     </nav>
   </div>
@@ -342,6 +382,7 @@ ${meta.noindex ? '<meta name="robots" content="noindex">\n' : `<link rel="canoni
 
 function expand(body, path) {
   body = body.replace(/\{\{code:([^|}]+)(?:\|([^}]*))?\}\}/g, (_, name, caption) => codeBlock(name.trim(), caption?.trim()));
+  body = body.replace(/\{\{readme:(\d)(?:\|([^}]*))?\}\}/g, (_, i, caption) => figure(highlight(readmeQuickStart(Number(i)), 'ts'), 'ts', caption?.trim()));
   body = inlineBlocks(body);
   body = body.replace(/\{\{root\}\}/g, rel(path, ''));
   body = addHeadingIds(body);

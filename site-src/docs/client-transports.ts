@@ -1,10 +1,9 @@
 //-hide
 import { readFileSync } from 'node:fs';
-import { defineApi, op } from '../../src/api.ts';
-import { t } from '../../src/schema.ts';
+import { defineApi, op, t } from '../../src/index.ts';
 const api = defineApi({ 'ping.get': op({ effect: 'safe', input: t.void(), output: t.string() }) });
 //-show
-import { ApueClient, fetchTransport } from '../../src/client.ts';
+import { ApueClient, fetchTransport } from '../../src/index.ts';
 import { http2Transport } from '../../src/transport-http2.ts';
 import { autoTransport, webSocketTransport } from '../../src/transport-ws.ts';
 

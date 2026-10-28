@@ -35,7 +35,7 @@
 <table data-label="Frame flags">
   <thead><tr><th scope="col">Flag bit</th><th scope="col">Name</th><th scope="col">Meaning</th></tr></thead>
   <tbody>
-    <tr><td>0</td><td><code>compressed</code></td><td><span class="tag tag-planned">planned</span> per-frame compression with an independent context; today compression is per stream via <code>Content-Encoding</code></td></tr>
+    <tr><td>0</td><td>—</td><td>Reserved, must be 0 (was: per-frame compression — not specified, because per-stream <code>Content-Encoding</code> with a flush per frame burst already compresses streams without delaying messages)</td></tr>
     <tr><td>1</td><td><code>last</code></td><td>Last BLOB chunk of a value</td></tr>
     <tr><td>2–7</td><td>—</td><td>Reserved, must be 0</td></tr>
   </tbody>

@@ -1,9 +1,7 @@
 //-hide
-import { defineApi, op } from '../../src/api.ts';
-import { ApueClient } from '../../src/client.ts';
-import { t } from '../../src/schema.ts';
+import { defineApi, op, ApueClient, t } from '../../src/index.ts';
 import { http2Transport } from '../../src/transport-http2.ts';
-import { ApueError } from '../../src/protocol.ts';
+import { ApueError } from '../../src/index.ts';
 const Todo = t.object({ id: t.number({ int: true }), title: t.string({ min: 1, max: 200 }), done: t.boolean() });
 const api = defineApi({
   'todos.create': op({ effect: 'unsafe', input: t.object({ title: t.string({ min: 1, max: 200 }) }), output: Todo }),

@@ -1,7 +1,7 @@
-<!--{"path":"docs/server.html","layout":"docs","title":"Server reference — apü","description":"Reference for the apü Node server: createApueServer, handler types and the call context, every server option with its default, uploads, downloads, resume, CORS, listen and graceful close."}-->
+<!--{"path":"docs/server.html","layout":"docs","title":"Server reference — apü","description":"Reference for the apü Node server (apue/server): createApueServer, handler types and the call context, every server option with its default — instance, logger, openapi, idempotency stores, principal, uploads, downloads, resume, CORS — listen and graceful close."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
 <h1>Server reference</h1>
-<p class="page-intro">The reference server runs on <code>node:http2</code> (Node ≥ 26.11): HTTP/2 over TLS with HTTP/1.1 fallback, WebSockets over RFC 8441 and HTTP/1.1 Upgrade. Source: <code>src/server.ts</code>.</p>
+<p class="page-intro">The server runs on <code>node:http2</code> (Node ≥ 26.11): HTTP/2 over TLS with HTTP/1.1 fallback, WebSockets over RFC 8441 and HTTP/1.1 Upgrade. Import it from <code>apue/server</code>; <code>t.download()</code> sources come from <code>apue/downloads</code>.</p>
 {{toc}}
 
 <h2>createApueServer</h2>
@@ -39,19 +39,22 @@ interface ApueServer {
     <tr><td><code>checkpoint(cursor)</code></td><td>Resumable streams: everything yielded so far is covered by <code>cursor</code>; sends a signed CHECKPOINT frame</td></tr>
   </tbody>
 </table>
-<p>Throw <code>ApueError</code> (from <code>src/protocol.ts</code>) for an error response; anything else becomes a <code>500</code> without details.</p>
+<p>Throw <code>ApueError</code> (from <code>apue</code>) for an error response; anything else becomes a <code>500</code> without details and is reported to the <code>logger</code>.</p>
 
 <h2>Options</h2>
 <table data-label="Server options">
   <thead><tr><th scope="col">Option</th><th scope="col">Default</th><th scope="col">Meaning</th></tr></thead>
   <tbody>
     <tr><td><code>key</code>, <code>cert</code></td><td>required</td><td>TLS key and certificate</td></tr>
-    <tr><td><code>principal</code></td><td>none</td><td><code>(request) =&gt; string | undefined</code> (may be async): who is calling. See <a href="auth.html">Callers &amp; auth</a></td></tr>
+    <tr><td><code>principal</code></td><td>none</td><td><code>(request) =&gt; string | undefined</code> (may be async): who is calling — a stable identity such as a user id, not the credential. Gets <code>headers</code>, <code>remoteAddress</code>, <code>method</code> and <code>url</code>; an <code>ApueError</code> it throws (e.g. 401) is the response. Idempotency keys, uploads and resume tokens are scoped to it. See <a href="auth.html">Callers &amp; auth</a></td></tr>
+    <tr><td><code>instance</code></td><td>none</td><td>This replica’s name (1–32 letters, digits, <code>-</code>), prefixed to upload and download ids (<code>/$uploads/eu-1.&lt;id&gt;</code>) so a load balancer can route them. See <a href="deployment.html#routing-by-replica">Deployment</a></td></tr>
+    <tr><td><code>logger</code></td><td>console</td><td><code>{ error(message, detail?) }</code>: failures that aren’t the client’s — handler errors (answered <code>500</code>), output that doesn’t match its schema, an idempotency store that can’t record a result. Client disconnects and client protocol errors are not logged</td></tr>
+    <tr><td><code>openapi</code></td><td>on</td><td>OpenAPI 3.2 at <code>/.well-known/openapi.json</code>, built on the first request; <code>{ title, version, description, servers }</code> fills <code>info</code>/<code>servers</code>; <code>false</code> turns it off (404)</td></tr>
     <tr><td><code>cors</code></td><td>none (same-origin)</td><td><code>{ origins: string[] | '*', credentials?, maxAge? }</code>; <code>maxAge</code> default 7200 s; credentials need an explicit list</td></tr>
     <tr><td><code>uploads</code></td><td>off</td><td>Resumable uploads at <code>/$uploads</code>; required by APIs with bytes or files in unary inputs (below)</td></tr>
-    <tr><td><code>downloads</code></td><td>on for APIs with <code>t.download()</code></td><td><code>{ ttlMs = 15 min, maxEntries = 10,000 }</code></td></tr>
+    <tr><td><code>downloads</code></td><td>on for APIs with <code>t.download()</code></td><td><code>{ ttlMs = 15 min, maxEntries = 10,000 }</code>: how long a download URL works, and how many are held (oldest dropped first)</td></tr>
     <tr><td><code>resume</code></td><td>random secret per process</td><td><code>{ secret, ttlMs = 15 min }</code>: share <code>secret</code> (≥ 16 bytes) between replicas so any instance can resume a stream</td></tr>
-    <tr><td><code>idempotency</code></td><td>in-memory store (24 h, 10,000 entries)</td><td>An <code>IdempotencyStore</code> (<code>begin</code>, <code>complete</code>, <code>release</code>), or <code>false</code> to disable</td></tr>
+    <tr><td><code>idempotency</code></td><td>in-memory store (24 h, 10,000 entries)</td><td>A store with <code>begin</code>, <code>complete</code> and <code>release</code> — each may return a promise, so it can live in shared storage for several replicas (<a href="#idempotency-stores">below</a>) — or <code>false</code> to disable</td></tr>
     <tr><td><code>compression</code></td><td>zstd, br, gzip from 1 KiB</td><td><code>false</code>, or <code>{ codings?, minBytes? }</code></td></tr>
     <tr><td><code>fallback</code></td><td>none</td><td><code>(exchange) =&gt; boolean</code>: serve non-operation paths (the web app, health checks); return true when handled</td></tr>
     <tr><td><code>validateOutput</code></td><td><code>true</code></td><td>Validate and strip handler output (no accidental data leaks)</td></tr>
@@ -87,8 +90,20 @@ interface ApueServer {
 </table>
 <p>Limits are validated as positive integers at startup. A “client” is its principal, or its address without a <code>principal</code> hook.</p>
 
+<h2>Idempotency stores</h2>
+<p>Every non-safe unary call with an <code>Idempotency-Key</code> goes through the store. Its scope is the operation, the caller (the principal, else a hash of <code>Authorization</code>) and the key; the fingerprint is the SHA-256 of the canonical input.</p>
+<table data-label="Idempotency store methods">
+  <thead><tr><th scope="col">Method</th><th scope="col">Contract</th></tr></thead>
+  <tbody>
+    <tr><td><code>begin(key, fingerprint)</code></td><td>Atomically claims the key, or reports why it can’t: <code>{ state: 'new' }</code>, <code>'replay'</code> with the stored response, <code>'in-progress'</code> (answered <code>409</code>, retryable) or <code>'mismatch'</code> (another payload: <code>422</code>)</td></tr>
+    <tr><td><code>complete(key, response)</code></td><td>Stores the final response <code>{ status, headers, body }</code> of a claimed key. Handler 4xx are stored too</td></tr>
+    <tr><td><code>release(key)</code></td><td>Releases a claimed key without storing (5xx, client aborts), so a retry executes again</td></tr>
+  </tbody>
+</table>
+<p>Each method may return a promise. A store that fails to record a result is reported to the <code>logger</code>; the response stands. An example for several replicas: <a href="deployment.html#a-shared-idempotency-store">Deployment</a>.</p>
+
 <h2>Serving the app: <code>fallback</code> and <code>Exchange</code></h2>
-<p>Paths that are not operations or reserved paths go to <code>fallback(exchange)</code>. The <code>Exchange</code> gives you <code>method</code>, <code>url</code>, <code>headers</code>, <code>remoteAddress</code> and <code>send(status, headers, body?)</code>, among others; the todo example uses it to serve its HTML page and the type-stripped <code>src/*.ts</code> modules, so page and API share one origin and need no CORS.</p>
+<p>Paths that are not operations or reserved paths go to <code>fallback(exchange)</code>. The <code>Exchange</code> gives you <code>method</code>, <code>url</code>, <code>headers</code>, <code>remoteAddress</code> and <code>send(status, headers, body?)</code>, among others — enough to serve the web app’s page and scripts, so page and API share one origin and need no CORS, or a health check for the load balancer.</p>
 
 <h2>Shutdown</h2>
 <p><code>close()</code> waits for calls in flight at most <code>shutdownGraceMs</code>, then aborts the rest with a retryable <code>503</code> — as the response, or as an END frame for running streams — gives that one second to flush and drops the remaining connections. WebSocket calls close with 1001. It returns as soon as the last call is done; file-backed uploads in a per-process directory are removed.</p>

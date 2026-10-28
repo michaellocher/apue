@@ -2,9 +2,9 @@
 <h1>Documentation</h1>
 <p class="page-intro">apü is an API protocol in the family of REST, GraphQL and gRPC, defined purely in HTTP semantics (RFC 9110). An API is a set of named, typed <em>operations</em>; how each one travels over HTTP follows from what it declares.</p>
 
-<div class="callout planned">
-  <span class="callout-title">Research draft</span>
-  <p>These pages describe draft 01 of the spec and its Node 26 reference implementation as of 2026-10-28. Things marked <span class="tag tag-planned">planned</span> do not exist yet. The protocol may still change, and no package is published: you work from a checkout of the repository.</p>
+<div class="callout">
+  <span class="callout-title">Beta</span>
+  <p>These pages describe the toolkit <code>apue</code> 0.1.0-beta (<code>npm install apue@beta</code>) and draft 01 of the spec. Betas may still change the wire format and APIs; every change is listed in the changelog that ships with the package. Things marked <span class="tag tag-planned">in progress</span> or <span class="tag tag-planned">blocked</span> don’t exist yet.</p>
 </div>
 
 <h2>Start here</h2>
@@ -21,7 +21,8 @@
   <a class="card" href="batches.html"><h3>Pipelined batches</h3><p>Dependent calls in one round trip with <code>$ref</code>, out-of-order lanes, per-lane failures.</p></a>
   <a class="card" href="auth.html"><h3>Callers &amp; auth</h3><p>The <code>principal</code> hook, credentials on every tier, CORS and cross-site WebSocket hijacking.</p></a>
   <a class="card" href="caching.html"><h3>Caching, CDNs &amp; proxies</h3><p>ETags, <code>Cache-Control</code>, CDN headers, cache groups, and what real proxies do with apü traffic.</p></a>
-  <a class="card" href="manifest.html"><h3>Manifest &amp; codegen</h3><p>The manifest at <code>/.well-known/apue</code>, the API catalog, typed TypeScript and Python clients.</p></a>
+  <a class="card" href="manifest.html"><h3>Clients, manifest &amp; OpenAPI</h3><p>The manifest, OpenAPI 3.2, the API catalog, and generated TypeScript, Python, Go and Java clients.</p></a>
+  <a class="card" href="deployment.html"><h3>Deployment</h3><p>Proxies and load balancers, several replicas, a verified nginx configuration, limits, shutdown and logging.</p></a>
 </div>
 
 <h2>Reference</h2>

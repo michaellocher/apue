@@ -60,6 +60,6 @@ $ curl -s -X POST -H 'content-type: application/json' \
 <h2>Limits and plans</h2>
 <ul>
   <li>Request-stream operations (client, bidi) can’t be batched.</li>
-  <li>The generated Python client does not support batches.</li>
-  <li><span class="tag tag-planned">planned</span> <code>$map</code> over arrays (in the style of Cap’n Web).</li>
+  <li>Of the generated clients, Python sends batches; Go and Java don’t yet.</li>
+  <li>No <code>$map</code> over arrays (decided): fanning one call out per element is a remote loop with its own limits and failure semantics; an operation that takes an array (<code>users.getMany</code>) does the same in one call and keeps batches a plain dependency graph.</li>
 </ul>

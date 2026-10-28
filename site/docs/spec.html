@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spec &amp; research — apü</title>
-<meta name="description" content="What the apü draft spec (draft 01) covers section by section and which parts are implemented or planned, the research notes behind the decisions, the spike log S0–S27, and the open questions.">
+<meta name="description" content="What the apü draft spec (draft 01) covers section by section and what is implemented, decided or blocked, the research notes behind the decisions, and the spike log S0–S29.">
 <link rel="canonical" href="https://apue.dev/docs/spec.html">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -16,7 +16,7 @@
 <meta property="og:site_name" content="apü">
 <meta property="og:locale" content="en">
 <meta property="og:title" content="Spec &amp; research — apü">
-<meta property="og:description" content="What the apü draft spec (draft 01) covers section by section and which parts are implemented or planned, the research notes behind the decisions, the spike log S0–S27, and the open questions.">
+<meta property="og:description" content="What the apü draft spec (draft 01) covers section by section and what is implemented, decided or blocked, the research notes behind the decisions, and the spike log S0–S29.">
 <meta property="og:url" content="https://apue.dev/docs/spec.html">
 <meta property="og:image" content="https://apue.dev/assets/og.png">
 <meta property="og:image:width" content="1200">
@@ -28,17 +28,17 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">draft 01</span></a>
-    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private beta</span></a></li></ul></nav>
+    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
   </div>
 </header>
 <div class="wrap docs-layout has-toc">
-<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec &amp; research</a></li></ul></nav>
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec &amp; research</a></li></ul></nav>
 <main id="main" class="prose" tabindex="-1">
-<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec &amp; research</a></li></ul></nav></details>
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec &amp; research</a></li></ul></nav></details>
 <p class="breadcrumb"><a href="index.html">Docs</a> / Background</p>
 <h1>Spec &amp; research</h1>
-<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01, 2026-10-28) in the apü repository, next to eleven research notes and a log of every spike. The repository is private research for now; this page summarises what is in it and where to look.</p>
+<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01) in the apü repository, next to eleven research notes and a log of every spike. The toolkit implementing it is <code>apue</code> 0.1.0-beta on npm. The repository is private for now; this page summarises what is in it and where to look.</p>
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#goals-and-non-goals">Goals and non-goals</a></li><li><a href="#the-draft-section-by-section">The draft, section by section</a></li><li><a href="#open-questions">Open questions</a></li><li><a href="#research-notes">Research notes</a></li><li><a href="#spike-log">Spike log</a></li></ul></nav>
 
 <h2 id="goals-and-non-goals">Goals and non-goals</h2>
@@ -50,30 +50,31 @@
   <thead><tr><th scope="col">§</th><th scope="col">Section</th><th scope="col">Status</th><th scope="col">In these docs</th></tr></thead>
   <tbody>
     <tr><td>1</td><td>Goals and non-goals</td><td>—</td><td>above</td></tr>
-    <tr><td>2</td><td>Problems addressed (ten, from research note 01)</td><td><span class="tag tag-ok">implemented</span> except tier T4</td><td><a href="../index.html#problems-title">Home</a></td></tr>
+    <tr><td>2</td><td>Problems addressed (ten, from research note 01)</td><td><span class="tag tag-ok">implemented</span>; tier T4 blocked by the platform</td><td><a href="../index.html#problems-title">Home</a></td></tr>
     <tr><td>3</td><td>Transport rules: HTTP/1.1, 2, 3; in-band final status; stream headers; heartbeats; resource limits</td><td><span class="tag tag-ok">implemented</span></td><td><a href="streaming.html">Streaming</a></td></tr>
     <tr><td>4</td><td>Operations</td><td><span class="tag tag-ok">implemented</span></td><td><a href="concepts.html">Operations</a></td></tr>
-    <tr><td>5</td><td>HTTP mapping, field selection, deadlines, callers, idempotency keys, retries, CORS</td><td><span class="tag tag-ok">implemented</span>; CBOR not specified</td><td><a href="concepts.html">Operations</a>, <a href="auth.html">Callers</a></td></tr>
-    <tr><td>6</td><td>Framing, binary values, resumable uploads, file inputs, download outputs, SSE rendering</td><td><span class="tag tag-ok">implemented</span>; per-frame compression <span class="tag tag-planned">planned</span></td><td><a href="wire-format.html">Wire format</a>, <a href="binary-data.html">Binary data</a></td></tr>
+    <tr><td>5</td><td>HTTP mapping, field selection, deadlines, callers, idempotency keys (shared stores for replicas), retries, CORS</td><td><span class="tag tag-ok">implemented</span>; CBOR not specified</td><td><a href="concepts.html">Operations</a>, <a href="auth.html">Callers</a>, <a href="deployment.html">Deployment</a></td></tr>
+    <tr><td>6</td><td>Framing, binary values, resumable uploads, file inputs, download outputs (replay refresh, <code>410</code>), instance prefixes, SSE rendering</td><td><span class="tag tag-ok">implemented</span>; per-frame compression decided against (flag bit reserved)</td><td><a href="wire-format.html">Wire format</a>, <a href="binary-data.html">Binary data</a></td></tr>
     <tr><td>7</td><td>Errors</td><td><span class="tag tag-ok">implemented</span></td><td><a href="errors.html">Errors</a></td></tr>
-    <tr><td>8</td><td>Streaming tiers, T3 flow control, consumer pacing, resume, long-running operations</td><td><span class="tag tag-ok">implemented</span> T0–T3; T4 <span class="tag tag-planned">planned</span></td><td><a href="streaming.html">Streaming</a></td></tr>
-    <tr><td>9</td><td>Caching, CDN headers, cache groups</td><td><span class="tag tag-ok">implemented</span>; QUERY <code>Location</code> <span class="tag tag-planned">planned</span></td><td><a href="caching.html">Caching</a></td></tr>
-    <tr><td>10</td><td>Pipelined batches</td><td><span class="tag tag-ok">implemented</span>; <code>$map</code> <span class="tag tag-planned">later</span></td><td><a href="batches.html">Batches</a></td></tr>
-    <tr><td>11</td><td>Schemas, manifest, derived docs, API catalog, codegen (TypeScript, Python), evolution</td><td><span class="tag tag-ok">implemented</span></td><td><a href="manifest.html">Manifest</a></td></tr>
+    <tr><td>8</td><td>Streaming tiers (with the <code>autoTransport</code> probe), T3 flow control, consumer pacing, resume, long-running operations</td><td><span class="tag tag-ok">implemented</span> T0–T3; T4 <span class="tag tag-planned">blocked</span> (no QUIC in Node)</td><td><a href="streaming.html">Streaming</a></td></tr>
+    <tr><td>9</td><td>Caching, CDN headers, cache groups</td><td><span class="tag tag-ok">implemented</span>; no <code>Location</code> on QUERY responses (decided)</td><td><a href="caching.html">Caching</a></td></tr>
+    <tr><td>10</td><td>Pipelined batches</td><td><span class="tag tag-ok">implemented</span>; no <code>$map</code> (decided)</td><td><a href="batches.html">Batches</a></td></tr>
+    <tr><td>11</td><td>Schemas, manifest, derived docs, API catalog, OpenAPI 3.2, generated clients (TypeScript, Python, Go, Java), evolution</td><td><span class="tag tag-ok">implemented</span>; Swift <span class="tag tag-planned">in progress</span></td><td><a href="manifest.html">Clients &amp; OpenAPI</a></td></tr>
     <tr><td>12</td><td>Data plane and performance guidance</td><td>guidance, measured</td><td><a href="measurements.html">Measurements</a></td></tr>
     <tr><td>13</td><td>Open questions</td><td>see below</td><td>below</td></tr>
-    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S27 done</td><td>below</td></tr>
+    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S29 done</td><td>below</td></tr>
   </tbody>
 </table></div>
 
 <h2 id="open-questions">Open questions</h2>
-<p>Resolved during the drafting: idempotent operations use <code>POST</code> + key, not <code>PUT</code>; <code>QUERY</code> through CDNs (rejected by CloudFront and Akamai → POST fallback); browser duplex via the WebSocket tier; compression per stream with per-burst flush; projection syntax as dotted paths; CBOR closed with measurements; resumable uploads implemented; message-level CREDIT frames not specified (pacing by patterns); callers and auth via the <code>principal</code> hook; long-running operations as a pattern.</p>
-<p>Still open in draft 01:</p>
+<p>Every open question of draft 01 is now decided, or blocked by the platform:</p>
 <ul>
-  <li><strong>WebTransport (T4) and HTTP/3 in Node.</strong> The official Node 26.12.1 build is compiled without QUIC (<code>node_use_quic: false</code>); <code>node:quic</code> needs a custom build. HTTP/3 today means an HTTP/3-terminating proxy or CDN in front.</li>
-  <li><strong>Generators for more languages.</strong> TypeScript and Python exist; Go, Kotlin/Java and Swift are open.</li>
+  <li><strong>Resolved while drafting</strong>: idempotent operations use <code>POST</code> + key, not <code>PUT</code>; <code>QUERY</code> through CDNs (rejected by CloudFront and Akamai → POST fallback); browser duplex via the WebSocket tier; compression per stream with per-burst flush; projection syntax as dotted paths; resumable uploads; callers and auth via the <code>principal</code> hook; long-running operations as a pattern.</li>
+  <li><strong>Decided against</strong>, with measurements or reasons: CBOR (codec and validation are about 11 % of server CPU in a unary call; generic CBOR was slower to encode than JSON and often larger after compression); message-level CREDIT frames (consumer pacing by patterns); per-frame compression (the flag bit stays reserved); <code>Location</code> on <code>QUERY</code> responses; <code>$map</code> in batches.</li>
+  <li><strong>Blocked by the platform</strong>: WebTransport (T4) and HTTP/3 in Node. The official Node 26.12.1 build is compiled without QUIC (<code>node_use_quic: false</code>). apü works behind an HTTP/3-terminating proxy; native T4 follows once Node ships a QUIC server.</li>
+  <li><strong>Generators</strong>: TypeScript, Python, Go and Java exist; Swift is in progress. Kotlin code calls the Java client.</li>
   <li><strong>A full DPoP profile</strong> — deferred until a DPoP authorization server is in play; the groundwork exists.</li>
-  <li><strong>Problem type namespace</strong>: <code>https://apue.dev/problems/</code> is kept; the URIs are identifiers and don’t resolve to documents yet.</li>
+  <li><strong>Problem type namespace</strong>: <code>https://apue.dev/problems/&lt;type&gt;</code>; every type has a <a href="../problems/index.html">page on this site</a>.</li>
 </ul>
 
 <h2 id="research-notes">Research notes</h2>
@@ -112,9 +113,11 @@
     <tr><td>S18–S20</td><td>Resumable uploads; derived documentation in the manifest; <code>t.file()</code> and a file-backed store</td></tr>
     <tr><td>S21–S23</td><td>Callers: principal hook, credentials over WebSocket, no ambient credentials cross-origin; bounded shutdown; in-band credential errors</td></tr>
     <tr><td>S24–S27</td><td>Uploads that survive a restart; consumer pacing and DPoP groundwork; downloads and CBOR closed; Python clients</td></tr>
+    <tr><td>S28</td><td>Production readiness: the npm package and release pipeline, replicas (shared idempotency stores, <code>instance</code> routing verified through nginx), OpenAPI 3.2, a <code>logger</code> option, decisions on every remaining item</td></tr>
+    <tr><td>S29</td><td>Clients: Python complete (resume, batches, compression, validation), Go (full duplex) and Java</td></tr>
   </tbody>
 </table></div>
-<p>The suite stood at 348 tests after S27, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in <code>docs/status.md</code>.</p>
+<p>The suite stood at 387 tests after S29, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in the spike log and in <code>docs/status.md</code>.</p>
 
 <nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/measurements.html" rel="prev"><span>Previous</span><b>Measurements</b></a></nav>
 </main>
@@ -124,7 +127,7 @@
   <div class="wrap">
     <div>
       <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
-      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -134,7 +137,8 @@
         <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
         <li><a href="../docs/streaming.html">Streaming</a></li>
         <li><a href="../docs/errors.html">Errors</a></li>
-        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+        <li><a href="../docs/manifest.html">Clients &amp; OpenAPI</a></li>
+        <li><a href="../docs/deployment.html">Deployment</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: reference">
@@ -151,7 +155,7 @@
       <ul>
         <li><a href="../docs/spec.html">Spec &amp; research</a></li>
         <li><a href="../docs/measurements.html">Measurements</a></li>
-        <li><a href="https://github.com/michaellocher/apue">GitHub (private beta)</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
       </ul>
     </nav>
   </div>

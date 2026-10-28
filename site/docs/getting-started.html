@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting started — apü</title>
-<meta name="description" content="Run the apü example app, then write a first API: a contract, a server, a typed client, and the same calls with curl.">
+<meta name="description" content="Install apü from npm (npm install apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers.">
 <link rel="canonical" href="https://apue.dev/docs/getting-started.html">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -16,7 +16,7 @@
 <meta property="og:site_name" content="apü">
 <meta property="og:locale" content="en">
 <meta property="og:title" content="Getting started — apü">
-<meta property="og:description" content="Run the apü example app, then write a first API: a contract, a server, a typed client, and the same calls with curl.">
+<meta property="og:description" content="Install apü from npm (npm install apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers.">
 <meta property="og:url" content="https://apue.dev/docs/getting-started.html">
 <meta property="og:image" content="https://apue.dev/assets/og.png">
 <meta property="og:image:width" content="1200">
@@ -28,53 +28,56 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">draft 01</span></a>
-    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private beta</span></a></li></ul></nav>
+    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
   </div>
 </header>
 <div class="wrap docs-layout has-toc">
-<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html" aria-current="page">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html" aria-current="page">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
 <main id="main" class="prose" tabindex="-1">
-<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html" aria-current="page">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html" aria-current="page">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
 <p class="breadcrumb"><a href="index.html">Docs</a> / Start</p>
 <h1>Getting started</h1>
-<p class="page-intro">Run the example app, then build a small API of your own: one cacheable read and one server stream, called from a typed client and from curl.</p>
-<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#requirements">Requirements</a></li><li><a href="#run-the-example">Run the example</a></li><li><a href="#develop-and-test">Develop and test</a></li><li><a href="#a-first-api">A first API</a></li><li><a href="#the-same-calls-with-curl">The same calls with curl</a></li><li><a href="#next-steps">Next steps</a></li></ul></nav>
+<p class="page-intro">Install the package, then build a small API: one cacheable read and one server stream, called from a typed client and from curl.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#install">Install</a></li><li><a href="#entry-points">Entry points</a></li><li><a href="#a-first-api">A first API</a></li><li><a href="#the-same-calls-with-curl">The same calls with curl</a></li><li><a href="#next-steps">Next steps</a></li></ul></nav>
 
-<h2 id="requirements">Requirements</h2>
+<h2 id="install">Install</h2>
+<figure class="code"><figcaption>a new project</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> npm init -y &amp;&amp; npm pkg set type=module
+<span class="tok-p">$</span> npm install apue@beta</code></pre></figure>
 <ul>
-  <li><strong>Node ≥ 26.11</strong>. The implementation is TypeScript run natively by Node (type stripping) — there is no build step.</li>
-  <li><strong>openssl</strong>: apü servers speak TLS (HTTP/2 with HTTP/1.1 fallback), and the tests and example generate a throwaway self-signed certificate.</li>
-  <li>Optional: Chrome or Firefox (and <code>npx playwright-core install webkit</code> for WebKit) for the real-browser tests; Docker for the constrained benchmarks and the proxy probes.</li>
+  <li><strong>Node ≥ 26.11</strong> for the server and the Node client. Node runs your <code>.ts</code> files directly (type stripping) — no build step. The package itself ships JavaScript and type declarations.</li>
+  <li>The web-safe core (<code>apue</code>, <code>apue/websocket</code>) runs in browsers too. No runtime dependencies.</li>
+  <li>A TLS certificate: apü servers speak HTTP/2 over TLS (with HTTP/1.1 fallback). For local development, a self-signed one will do (below).</li>
 </ul>
 <div class="callout">
-  <span class="callout-title">No package yet</span>
-  <p>apü is not published to npm. Everything runs from a checkout of the (currently private) research repository; your code imports the modules under <code>src/</code> directly, the way <code>examples/todo</code> does.</p>
+  <span class="callout-title">Beta</span>
+  <p><code>0.1.0-beta</code> releases may still change the wire format and APIs. Every change is listed in the changelog that ships with the package (<code>node_modules/apue/CHANGELOG.md</code>).</p>
 </div>
 
-<h2 id="run-the-example">Run the example</h2>
-<p>The todo example serves a web page and its API from one origin. The browser imports <code>src/*.ts</code>, type-stripped by the example server — no bundler.</p>
-<figure class="code"><figcaption>repository root</figcaption><pre tabindex="0"><code class="language-sh">node examples/todo/server.ts    <span class="tok-c"> # https://localhost:8443 — open it in a browser (self-signed cert)</span>
-node examples/todo/cli.ts       <span class="tok-c"> # typed calls, a pipelined batch, a resumable change stream</span></code></pre></figure>
-<p>The first start writes a certificate to <code>certs/</code> (git-ignored); bring your own with mkcert if your browser should trust it. <code>npm run certs</code> creates one with openssl as well.</p>
-
-<h2 id="develop-and-test">Develop and test</h2>
-<figure class="code"><pre tabindex="0"><code class="language-sh">npm install         <span class="tok-c"> # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)</span>
-npm test            <span class="tok-c"> # node --test, incl. headless Chrome, Firefox, WebKit (skipped if absent)</span>
-npm run typecheck   <span class="tok-c"> # tsc (noEmit, erasableSyntaxOnly)</span>
-node bench/run.ts   <span class="tok-c"> # benchmarks vs raw node:http2 baselines (separate processes)</span>
-bench/docker.sh     <span class="tok-c"> # same on CPU/RAM-limited containers, incl. emulated WAN (netem)</span>
-bench/proxy/run.sh  <span class="tok-c"> # behaviour through real nginx, Caddy, HAProxy and Envoy (Docker)</span></code></pre></figure>
-<p>At draft 01 the suite has 348 tests and runs in about 20 seconds.</p>
+<h2 id="entry-points">Entry points</h2>
+<div class="table-wrap" role="region" tabindex="0" aria-label="Entry points"><table>
+  <thead><tr><th scope="col">Import</th><th scope="col">What</th><th scope="col">Runs in</th></tr></thead>
+  <tbody>
+    <tr><td><code>apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code></td><td>browsers, Node</td></tr>
+    <tr><td><code>apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options</td><td>Node</td></tr>
+    <tr><td><code>apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
+    <tr><td><code>apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
+    <tr><td><code>apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
+    <tr><td><code>apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code></td><td>Node</td></tr>
+    <tr><td><code>apue-types</code> (CLI)</td><td>typed TypeScript modules, or Python, Go and Java clients, from a server’s manifest</td><td>Node</td></tr>
+  </tbody>
+</table></div>
 
 <h2 id="a-first-api">A first API</h2>
-<p>Create <code>examples/hello/</code> in your checkout, so that the imports below resolve to <code>src/</code> like the todo example’s do.</p>
+<p>Three files in your project: a contract shared by server and clients, a server, and a client. Create a certificate for <code>localhost</code> first:</p>
+<figure class="code"><figcaption>certs/</figcaption><pre tabindex="0"><code class="language-sh">mkdir -p certs &amp;&amp; openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj /CN=localhost \
+  -addext subjectAltName=DNS:localhost,IP:127.0.0.1</code></pre></figure>
 
 <h3 id="1-the-contract">1. The contract</h3>
 <p>An operation has a dotted name, an <code>effect</code>, an optional <code>stream</code> kind, and schemas for input and output. The file is plain TypeScript, shared by server and clients.</p>
-<figure class="code"><figcaption>examples/hello/api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// examples/hello/api.ts — the contract, shared by server and clients</span>
-<span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'../../src/api.ts'</span>;
-<span class="tok-k">import</span> { t } <span class="tok-k">from</span> <span class="tok-s">'../../src/schema.ts'</span>;
+<figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// api.ts — the contract, shared by server and clients</span>
+<span class="tok-k">import</span> { defineApi, op, t } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
 
 <span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
   <span class="tok-s">'greetings.get'</span>: op({
@@ -93,9 +96,9 @@ bench/proxy/run.sh  <span class="tok-c"> # behaviour through real nginx, Caddy, 
 
 <h3 id="2-the-server">2. The server</h3>
 <p><code>Handlers&lt;typeof api&gt;</code> types every handler from the contract: unary handlers return a value (or a promise), streaming handlers return an async iterable. <code>ctx.signal</code> fires when the client goes away or the deadline passes.</p>
-<figure class="code"><figcaption>examples/hello/server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// examples/hello/server.ts — run from the repository root</span>
+<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// server.ts — node server.ts</span>
 <span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
-<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'../../src/server.ts'</span>;
+<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'apue/server'</span>;
 <span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
 
 <span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
@@ -116,11 +119,11 @@ bench/proxy/run.sh  <span class="tok-c"> # behaviour through real nginx, Caddy, 
 console.log(<span class="tok-s">`listening on https://localhost:${port}`</span>);</code></pre></figure>
 
 <h3 id="3-a-typed-client">3. A typed client</h3>
-<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving.</p>
-<figure class="code"><figcaption>examples/hello/client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// examples/hello/client.ts — node examples/hello/client.ts</span>
+<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving. In browsers, use <code>fetchTransport</code> from <code>apue</code> or <code>autoTransport</code> from <code>apue/websocket</code> — see the <a href="client.html">client reference</a>.</p>
+<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// client.ts — node client.ts</span>
 <span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
-<span class="tok-k">import</span> { ApueClient } <span class="tok-k">from</span> <span class="tok-s">'../../src/client.ts'</span>;
-<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-http2.ts'</span>;
+<span class="tok-k">import</span> { ApueClient } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'apue/http2'</span>;
 <span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
 
 <span class="tok-k">const</span> url = process.env.URL ?? <span class="tok-s">'https://localhost:8443'</span>;
@@ -133,9 +136,9 @@ console.log(text);
 <span class="tok-k">for</span> <span class="tok-k">await</span> (<span class="tok-k">const</span> { n } <span class="tok-k">of</span> client.stream(<span class="tok-s">'greetings.count'</span>, { to: <span class="tok-n">3</span> })) console.log(n);
 
 <span class="tok-k">await</span> client.close();</code></pre></figure>
-<figure class="code"><figcaption>run it</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> node examples/hello/server.ts &amp;
+<figure class="code"><figcaption>run it</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> node server.ts &amp;
 listening on https://localhost:8443
-<span class="tok-p">$</span> node examples/hello/client.ts
+<span class="tok-p">$</span> node client.ts
 Hello, Ada!
 1
 2
@@ -172,25 +175,25 @@ data: {"n":3}
 
 event: end
 data: {"status":200}</code></pre></figure>
-<p class="source">These outputs are from running the files above against the reference implementation (some response headers omitted).</p>
+<p class="source">These outputs are from running the files above (some response headers omitted).</p>
 
 <h2 id="next-steps">Next steps</h2>
 <ul>
   <li><a href="concepts.html">Operations &amp; HTTP mapping</a> — effects, methods, idempotency keys, field selection, schema types.</li>
   <li><a href="streaming.html">Streaming</a> — client and bidi streams, browsers, resumable streams.</li>
-  <li><a href="client.html">Client reference</a> — browser transports and call options.</li>
-  <li><a href="manifest.html">Manifest &amp; codegen</a> — clients for code that can’t import your TypeScript, including Python.</li>
+  <li><a href="manifest.html">Clients, manifest &amp; OpenAPI</a> — Python, Go and Java clients for code that can’t import your TypeScript.</li>
+  <li><a href="deployment.html">Deployment</a> — proxies, several replicas, shutdown and logging.</li>
 </ul>
 
 <nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/index.html" rel="prev"><span>Previous</span><b>Overview</b></a><a class="next" href="../docs/concepts.html" rel="next"><span>Next</span><b>Operations &amp; HTTP mapping</b></a></nav>
 </main>
-<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#requirements">Requirements</a></li><li><a href="#run-the-example">Run the example</a></li><li><a href="#develop-and-test">Develop and test</a></li><li><a href="#a-first-api">A first API</a></li><li><a href="#the-same-calls-with-curl">The same calls with curl</a></li><li><a href="#next-steps">Next steps</a></li></ul></nav></aside>
+<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#install">Install</a></li><li><a href="#entry-points">Entry points</a></li><li><a href="#a-first-api">A first API</a></li><li><a href="#the-same-calls-with-curl">The same calls with curl</a></li><li><a href="#next-steps">Next steps</a></li></ul></nav></aside>
 </div>
 <footer class="site-footer">
   <div class="wrap">
     <div>
       <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
-      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -200,7 +203,8 @@ data: {"status":200}</code></pre></figure>
         <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
         <li><a href="../docs/streaming.html">Streaming</a></li>
         <li><a href="../docs/errors.html">Errors</a></li>
-        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+        <li><a href="../docs/manifest.html">Clients &amp; OpenAPI</a></li>
+        <li><a href="../docs/deployment.html">Deployment</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: reference">
@@ -217,7 +221,7 @@ data: {"status":200}</code></pre></figure>
       <ul>
         <li><a href="../docs/spec.html">Spec &amp; research</a></li>
         <li><a href="../docs/measurements.html">Measurements</a></li>
-        <li><a href="https://github.com/michaellocher/apue">GitHub (private beta)</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
       </ul>
     </nav>
   </div>

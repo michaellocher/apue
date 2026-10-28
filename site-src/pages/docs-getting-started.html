@@ -1,57 +1,61 @@
-<!--{"path":"docs/getting-started.html","layout":"docs","title":"Getting started — apü","description":"Run the apü example app, then write a first API: a contract, a server, a typed client, and the same calls with curl."}-->
+<!--{"path":"docs/getting-started.html","layout":"docs","title":"Getting started — apü","description":"Install apü from npm (npm install apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Start</p>
 <h1>Getting started</h1>
-<p class="page-intro">Run the example app, then build a small API of your own: one cacheable read and one server stream, called from a typed client and from curl.</p>
+<p class="page-intro">Install the package, then build a small API: one cacheable read and one server stream, called from a typed client and from curl.</p>
 {{toc}}
 
-<h2>Requirements</h2>
+<h2>Install</h2>
+{{pre:console|a new project}}
+$ npm init -y && npm pkg set type=module
+$ npm install apue@beta
+{{/pre}}
 <ul>
-  <li><strong>Node ≥ 26.11</strong>. The implementation is TypeScript run natively by Node (type stripping) — there is no build step.</li>
-  <li><strong>openssl</strong>: apü servers speak TLS (HTTP/2 with HTTP/1.1 fallback), and the tests and example generate a throwaway self-signed certificate.</li>
-  <li>Optional: Chrome or Firefox (and <code>npx playwright-core install webkit</code> for WebKit) for the real-browser tests; Docker for the constrained benchmarks and the proxy probes.</li>
+  <li><strong>Node ≥ 26.11</strong> for the server and the Node client. Node runs your <code>.ts</code> files directly (type stripping) — no build step. The package itself ships JavaScript and type declarations.</li>
+  <li>The web-safe core (<code>apue</code>, <code>apue/websocket</code>) runs in browsers too. No runtime dependencies.</li>
+  <li>A TLS certificate: apü servers speak HTTP/2 over TLS (with HTTP/1.1 fallback). For local development, a self-signed one will do (below).</li>
 </ul>
 <div class="callout">
-  <span class="callout-title">No package yet</span>
-  <p>apü is not published to npm. Everything runs from a checkout of the (currently private) research repository; your code imports the modules under <code>src/</code> directly, the way <code>examples/todo</code> does.</p>
+  <span class="callout-title">Beta</span>
+  <p><code>0.1.0-beta</code> releases may still change the wire format and APIs. Every change is listed in the changelog that ships with the package (<code>node_modules/apue/CHANGELOG.md</code>).</p>
 </div>
 
-<h2>Run the example</h2>
-<p>The todo example serves a web page and its API from one origin. The browser imports <code>src/*.ts</code>, type-stripped by the example server — no bundler.</p>
-{{pre:sh|repository root}}
-node examples/todo/server.ts     # https://localhost:8443 — open it in a browser (self-signed cert)
-node examples/todo/cli.ts        # typed calls, a pipelined batch, a resumable change stream
-{{/pre}}
-<p>The first start writes a certificate to <code>certs/</code> (git-ignored); bring your own with mkcert if your browser should trust it. <code>npm run certs</code> creates one with openssl as well.</p>
-
-<h2>Develop and test</h2>
-{{pre:sh}}
-npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test, incl. headless Chrome, Firefox, WebKit (skipped if absent)
-npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
-node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
-bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)
-bench/proxy/run.sh   # behaviour through real nginx, Caddy, HAProxy and Envoy (Docker)
-{{/pre}}
-<p>At draft 01 the suite has 348 tests and runs in about 20 seconds.</p>
+<h2>Entry points</h2>
+<table data-label="Entry points">
+  <thead><tr><th scope="col">Import</th><th scope="col">What</th><th scope="col">Runs in</th></tr></thead>
+  <tbody>
+    <tr><td><code>apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code></td><td>browsers, Node</td></tr>
+    <tr><td><code>apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options</td><td>Node</td></tr>
+    <tr><td><code>apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
+    <tr><td><code>apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
+    <tr><td><code>apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
+    <tr><td><code>apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code></td><td>Node</td></tr>
+    <tr><td><code>apue-types</code> (CLI)</td><td>typed TypeScript modules, or Python, Go and Java clients, from a server’s manifest</td><td>Node</td></tr>
+  </tbody>
+</table>
 
 <h2>A first API</h2>
-<p>Create <code>examples/hello/</code> in your checkout, so that the imports below resolve to <code>src/</code> like the todo example’s do.</p>
+<p>Three files in your project: a contract shared by server and clients, a server, and a client. Create a certificate for <code>localhost</code> first:</p>
+{{pre:sh|certs/}}
+mkdir -p certs && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 \
+  -keyout certs/key.pem -out certs/cert.pem -subj /CN=localhost \
+  -addext subjectAltName=DNS:localhost,IP:127.0.0.1
+{{/pre}}
 
 <h3>1. The contract</h3>
 <p>An operation has a dotted name, an <code>effect</code>, an optional <code>stream</code> kind, and schemas for input and output. The file is plain TypeScript, shared by server and clients.</p>
-{{code:hello/api.ts|examples/hello/api.ts}}
+{{code:hello/api.ts|api.ts}}
 
 <h3>2. The server</h3>
 <p><code>Handlers&lt;typeof api&gt;</code> types every handler from the contract: unary handlers return a value (or a promise), streaming handlers return an async iterable. <code>ctx.signal</code> fires when the client goes away or the deadline passes.</p>
-{{code:hello/server.ts|examples/hello/server.ts}}
+{{code:hello/server.ts|server.ts}}
 
 <h3>3. A typed client</h3>
-<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving.</p>
-{{code:hello/client.ts|examples/hello/client.ts}}
+<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving. In browsers, use <code>fetchTransport</code> from <code>apue</code> or <code>autoTransport</code> from <code>apue/websocket</code> — see the <a href="client.html">client reference</a>.</p>
+{{code:hello/client.ts|client.ts}}
 {{pre:console|run it}}
-$ node examples/hello/server.ts &
+$ node server.ts &
 listening on https://localhost:8443
-$ node examples/hello/client.ts
+$ node client.ts
 Hello, Ada!
 1
 2
@@ -95,12 +99,12 @@ data: {"n":3}
 event: end
 data: {"status":200}
 {{/pre}}
-<p class="source">These outputs are from running the files above against the reference implementation (some response headers omitted).</p>
+<p class="source">These outputs are from running the files above (some response headers omitted).</p>
 
 <h2>Next steps</h2>
 <ul>
   <li><a href="concepts.html">Operations &amp; HTTP mapping</a> — effects, methods, idempotency keys, field selection, schema types.</li>
   <li><a href="streaming.html">Streaming</a> — client and bidi streams, browsers, resumable streams.</li>
-  <li><a href="client.html">Client reference</a> — browser transports and call options.</li>
-  <li><a href="manifest.html">Manifest &amp; codegen</a> — clients for code that can’t import your TypeScript, including Python.</li>
+  <li><a href="manifest.html">Clients, manifest &amp; OpenAPI</a> — Python, Go and Java clients for code that can’t import your TypeScript.</li>
+  <li><a href="deployment.html">Deployment</a> — proxies, several replicas, shutdown and logging.</li>
 </ul>

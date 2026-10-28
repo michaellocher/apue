@@ -1,4 +1,4 @@
-// examples/hello/server.ts — run from the repository root
+// server.ts — node server.ts
 import { readFileSync } from 'node:fs';
 import { createApueServer, type Handlers } from '../../src/server.ts';
 import { api } from './api.ts';

@@ -1,5 +1,4 @@
-import { defineApi, op } from '../../src/api.ts';
-import { t, type Infer } from '../../src/schema.ts';
+import { defineApi, op, t, type Infer } from '../../src/index.ts';
 
 export const User = t.object({
   id: t.string(),

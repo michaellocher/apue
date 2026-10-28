@@ -1627,6 +1627,94 @@ a.card:hover h3::after {
   color: var(--signal);
 }
 
+/* install command (hero, call to action) */
+
+.hero-install,
+.cta-install {
+  max-width: 22rem;
+  margin: 1.75rem auto 0;
+  text-align: left;
+}
+
+.hero-install figure.code,
+.cta-install figure.code {
+  margin: 0;
+  box-shadow: var(--shadow);
+}
+
+.hero-install figure.code figcaption,
+.cta-install figure.code figcaption {
+  display: none;
+}
+
+.hero-install pre,
+.cta-install pre {
+  padding: 0.85rem 5.5rem 0.85rem 1.1rem;
+  font-size: 0.95rem;
+}
+
+.hero-install .copy-btn,
+.cta-install .copy-btn {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.hero-install + .actions {
+  margin-top: 1.1rem;
+}
+
+.cta-install figure.code {
+  border-color: #3a4066;
+}
+
+/* clients by language */
+
+.langs {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
+  margin-bottom: 1.5rem;
+}
+
+.lang {
+  display: flex;
+  flex-direction: column;
+  padding: 1.3rem 1.4rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-sm);
+}
+
+.lang-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.lang-head b {
+  font-size: 1.08rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.lang p {
+  margin: 0 0 0.75rem;
+  color: var(--fg-muted);
+  font-size: 0.93rem;
+  line-height: 1.55;
+}
+
+.lang p.duplex {
+  margin: auto 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border-strong);
+  color: var(--fg);
+  font-size: 0.88rem;
+}
+
 /* what's new */
 
 .news {
@@ -1837,7 +1925,7 @@ a.card:hover h3::after {
 
 .spike-bar {
   display: grid;
-  grid-template-columns: repeat(28, 1fr);
+  grid-template-columns: repeat(30, 1fr);
   gap: 3px;
   margin: 0.25rem 0 0.75rem;
 }
@@ -1849,7 +1937,7 @@ a.card:hover h3::after {
   opacity: 0.85;
 }
 
-.spike-bar span:nth-last-child(-n+4) {
+.spike-bar span:nth-last-child(-n+2) {
   background: var(--signal);
   opacity: 1;
 }

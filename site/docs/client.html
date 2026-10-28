@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Client reference — apü</title>
-<meta name="description" content="Reference for the apü TypeScript client: ApueClient methods and options, call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), downloads and uploads.">
+<meta name="description" content="Reference for the apü TypeScript client: ApueClient methods and options (authorization, per-request headers), call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), replica routing, downloads and uploads.">
 <link rel="canonical" href="https://apue.dev/docs/client.html">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -16,7 +16,7 @@
 <meta property="og:site_name" content="apü">
 <meta property="og:locale" content="en">
 <meta property="og:title" content="Client reference — apü">
-<meta property="og:description" content="Reference for the apü TypeScript client: ApueClient methods and options, call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), downloads and uploads.">
+<meta property="og:description" content="Reference for the apü TypeScript client: ApueClient methods and options (authorization, per-request headers), call options, transports for Node and browsers (http2Transport, fetchTransport, webSocketTransport, autoTransport), replica routing, downloads and uploads.">
 <meta property="og:url" content="https://apue.dev/docs/client.html">
 <meta property="og:image" content="https://apue.dev/assets/og.png">
 <meta property="og:image:width" content="1200">
@@ -28,18 +28,18 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">draft 01</span></a>
-    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private beta</span></a></li></ul></nav>
+    <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html" aria-current="page">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
   </div>
 </header>
 <div class="wrap docs-layout has-toc">
-<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html" aria-current="page">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html" aria-current="page">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav>
 <main id="main" class="prose" tabindex="-1">
-<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html" aria-current="page">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html" aria-current="page">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
 <p class="breadcrumb"><a href="index.html">Docs</a> / Reference</p>
 <h1>Client reference</h1>
-<p class="page-intro"><code>ApueClient</code> is typed from the API definition — no code generation — and runs in Node and in browsers (web-platform APIs only; transports are pluggable). Source: <code>src/client.ts</code>, <code>src/transport-http2.ts</code>, <code>src/transport-ws.ts</code>.</p>
-<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#apueclient">ApueClient</a></li><li><a href="#options">Options</a></li><li><a href="#transports">Transports</a></li><li><a href="#in-the-browser">In the browser</a></li><li><a href="#downloads">Downloads</a></li><li><a href="#errors">Errors</a></li></ul></nav>
+<p class="page-intro"><code>ApueClient</code> is typed from the API definition — no code generation — and runs in Node and in browsers (web-platform APIs only; transports are pluggable). Imports: <code>ApueClient</code>, <code>fetchTransport</code>, <code>Download</code> and <code>ApueError</code> from <code>apue</code>; <code>http2Transport</code> from <code>apue/http2</code>; <code>webSocketTransport</code> and <code>autoTransport</code> from <code>apue/websocket</code>.</p>
+<nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#apueclient">ApueClient</a></li><li><a href="#options">Options</a></li><li><a href="#transports">Transports</a></li><li><a href="#in-the-browser">In the browser</a></li><li><a href="#several-replicas">Several replicas</a></li><li><a href="#downloads">Downloads</a></li><li><a href="#errors">Errors</a></li></ul></nav>
 
 <h2 id="apueclient">ApueClient</h2>
 <figure class="code"><pre tabindex="0"><code class="language-ts"><span class="tok-k">new</span> ApueClient(api, transport, options?: ClientOptions)</code></pre></figure>
@@ -65,8 +65,8 @@
     <tr><td><code>retries</code></td><td>2</td><td>Retries for retry-eligible calls (safe, or keyed)</td></tr>
     <tr><td><code>backoffMs</code></td><td>100</td><td>Base backoff: attempt n waits a random time in [0, base·2ⁿ] (full jitter)</td></tr>
     <tr><td><code>maxBackoffMs</code></td><td>2000</td><td>Cap for backoff and for honoured <code>Retry-After</code> values</td></tr>
-    <tr><td><code>authorization</code></td><td>none</td><td>An <code>Authorization</code> value, or a function asked before every request; over WebSocket sent as an <code>apue.auth.</code> subprotocol</td></tr>
-    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> per request, e.g. a fresh <code>DPoP</code> proof; over WebSocket only <code>dpop</code> travels</td></tr>
+    <tr><td><code>authorization</code></td><td>none</td><td>An <code>Authorization</code> value for every request (calls, batches, uploads), or a function (may be async) asked before each one — a refreshed token is used from the next request on. Over WebSocket it travels as an <code>apue.auth.</code> subprotocol</td></tr>
+    <tr><td><code>headers</code></td><td>none</td><td><code>({ method, path }) =&gt; headers</code> (may be async), asked before each request — e.g. a fresh <code>DPoP</code> proof. Over WebSocket only <code>dpop</code> travels (as an <code>apue.dpop.</code> subprotocol), and WebSocket calls report <code>POST</code></td></tr>
   </tbody>
 </table></div>
 <div class="table-wrap" role="region" tabindex="0" aria-label="CallOptions"><table>
@@ -82,9 +82,9 @@
 </table></div>
 
 <h2 id="transports">Transports</h2>
-<figure class="code"><figcaption>transports</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'../../src/client.ts'</span>;
-<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-http2.ts'</span>;
-<span class="tok-k">import</span> { autoTransport, webSocketTransport } <span class="tok-k">from</span> <span class="tok-s">'../../src/transport-ws.ts'</span>;
+<figure class="code"><figcaption>transports</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'apue/http2'</span>;
+<span class="tok-k">import</span> { autoTransport, webSocketTransport } <span class="tok-k">from</span> <span class="tok-s">'apue/websocket'</span>;
 
 <span class="tok-c">// Node, server to server: node:http2, full duplex (tier T1), zstd/br/gzip, 4 MiB windows.</span>
 <span class="tok-k">const</span> ca = readFileSync(<span class="tok-s">'ca.pem'</span>);
@@ -111,22 +111,26 @@
     <tr><td><code>http2Transport(origin, options?)</code></td><td>Node: one multiplexed <code>node:http2</code> session per origin, full duplex (T1)</td><td><code>ca</code>; <code>streamWindow</code> (4 MiB), <code>connectionWindow</code> (32 MiB); <code>acceptEncoding</code> (<code>'zstd, br, gzip'</code>, responses decompressed); <code>windowTuning</code>: <code>'fixed'</code> (default) or <code>'bdp'</code> (experimental, measured no better)</td></tr>
     <tr><td><code>fetchTransport(baseUrl, options?)</code></td><td>Anywhere with fetch: T0, and T2 request streams where fetch can stream uploads</td><td><code>fetch</code> (your implementation); <code>credentials</code> (e.g. <code>'include'</code>, so Chrome shares the HTTP/2 connection with WebSockets)</td></tr>
     <tr><td><code>webSocketTransport(baseUrl, options?)</code></td><td>Request streams over WebSocket (T3); every other call over fetch</td><td><code>receiveWindow</code> (4 MiB: the client’s memory bound per call), <code>WebSocketImpl</code>, <code>http</code> (transport for non-stream calls)</td></tr>
-    <tr><td><code>autoTransport(baseUrl)</code></td><td>Browsers: fetch for everything; request streams via fetch if supported, else WebSocket</td><td>—</td></tr>
+    <tr><td><code>autoTransport(baseUrl)</code></td><td>Browsers: fetch for everything; request streams via fetch where it can stream uploads to this server, else WebSocket. Probed once, on the first request stream: a one-byte streaming <code>POST</code> to the manifest URL (answered <code>405</code>) — feature detection alone is fooled by WebKit on Linux, and Chrome streams uploads only over HTTP/2</td><td>—</td></tr>
   </tbody>
 </table></div>
 <p>A transport is a small interface — <code>request({ method, path, headers, body, signal })</code> returning status, headers and a body iterable, plus optional <code>close()</code> and <code>baseUrl</code> — so you can supply your own.</p>
 
 <h2 id="in-the-browser">In the browser</h2>
-<p>There is no bundle yet. The todo example’s server type-strips <code>src/*.ts</code> on request, and its page imports them directly:</p>
-<figure class="code"><figcaption>examples/todo/index.html (excerpt)</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'/src/client.ts'</span>;
-<span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'/src/transport-ws.ts'</span>;
-<span class="tok-k">import</span> { todoApi } <span class="tok-k">from</span> <span class="tok-s">'/examples/todo/api.ts'</span>;
+<p><code>apue</code> and <code>apue/websocket</code> are ES modules without dependencies and use web-platform APIs only. Serving the page and the API from one origin (the server’s <code>fallback</code> hook) needs no CORS:</p>
+<figure class="code"><figcaption>app.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'apue/websocket'</span>;
 
-<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(todoApi, fetchTransport(location.origin));
-<span class="tok-k">const</span> uploads = <span class="tok-k">new</span> ApueClient(todoApi, autoTransport(location.origin));
+<span class="tok-c">// Same origin: no CORS, no preflights. fetch for calls and response streams (HTTP caching, HTTP/2).</span>
+<span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, fetchTransport(location.origin));
+<span class="tok-c">// Request streams: fetch where it can stream uploads to this server (probed once), else WebSocket.</span>
+<span class="tok-k">const</span> uploads = <span class="tok-k">new</span> ApueClient(api, autoTransport(location.origin));
 
-<span class="tok-k">await</span> client.call(<span class="tok-s">'todos.create'</span>, { title }); <span class="tok-c">// validated before sending, retried safely (Idempotency-Key)</span>
+<span class="tok-k">await</span> client.call(<span class="tok-s">'todos.create'</span>, { title: <span class="tok-s">'buy milk'</span> }); <span class="tok-c">// validated before sending, safe to retry</span>
 <span class="tok-k">const</span> [count] = <span class="tok-k">await</span> Array.fromAsync(uploads.duplex(<span class="tok-s">'todos.import'</span>, titles()));</code></pre></figure>
+
+<h2 id="several-replicas">Several replicas</h2>
+<p>An upload lives on the replica that received it. When a server sets <code>instance</code>, upload ids carry the replica’s name (<code>eu-1.&lt;random&gt;</code>), and the client sends <code>apue-replica: eu-1</code> with a unary call or batch whose input references uploads from that one replica — so a load balancer can route the call to them. The uploads themselves (<code>/$uploads/eu-1.…</code>) and download URLs (<code>/$downloads/eu-1.…</code>) are routed by path. See <a href="deployment.html#routing-by-replica">Deployment</a>.</p>
 
 <h2 id="downloads">Downloads</h2>
 <div class="table-wrap" role="region" tabindex="0" aria-label="Download object"><table>
@@ -138,19 +142,20 @@
     <tr><td><code>bytes({ signal? })</code>, <code>blob({ signal? })</code></td><td>The whole content; <code>bytes()</code> verifies the SHA-256 with WebCrypto everywhere</td></tr>
   </tbody>
 </table></div>
+<p>A download URL works for <code>downloads.ttlMs</code> (15 minutes by default). An idempotent replay of the call that created it refreshes the URL, or answers <code>410</code> <a href="../problems/download-expired.html">download-expired</a> if it has already expired — the operation is not run again.</p>
 
 <h2 id="errors">Errors</h2>
 <p>Every failure is thrown as an <code>ApueError</code> with <code>status</code> and <code>problem</code> (RFC 9457 fields plus extensions). Client-side validation failures are <code>400</code> <code>validation-failed</code> without a request being sent; an unknown operation name is <code>404</code>; undecodable or truncated responses are <code>502</code>. A cancelled call rejects with your signal’s reason. See <a href="errors.html">Errors</a>.</p>
 
 <nav class="pager" aria-label="Previous and next page"><a class="prev" href="../docs/server.html" rel="prev"><span>Previous</span><b>Server reference</b></a><a class="next" href="../docs/wire-format.html" rel="next"><span>Next</span><b>Wire format</b></a></nav>
 </main>
-<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#apueclient">ApueClient</a></li><li><a href="#options">Options</a></li><li><a href="#transports">Transports</a></li><li><a href="#in-the-browser">In the browser</a></li><li><a href="#downloads">Downloads</a></li><li><a href="#errors">Errors</a></li></ul></nav></aside>
+<aside class="toc-rail"><nav class="toc" aria-labelledby="toc-rail-title"><h2 id="toc-rail-title">On this page</h2><ul><li><a href="#apueclient">ApueClient</a></li><li><a href="#options">Options</a></li><li><a href="#transports">Transports</a></li><li><a href="#in-the-browser">In the browser</a></li><li><a href="#several-replicas">Several replicas</a></li><li><a href="#downloads">Downloads</a></li><li><a href="#errors">Errors</a></li></ul></nav></aside>
 </div>
 <footer class="site-footer">
   <div class="wrap">
     <div>
       <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
-      <p>An API protocol built on plain HTTP semantics. Research draft 01, October 2026 — not a stable standard, and no package is published yet.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -160,7 +165,8 @@
         <li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li>
         <li><a href="../docs/streaming.html">Streaming</a></li>
         <li><a href="../docs/errors.html">Errors</a></li>
-        <li><a href="../docs/manifest.html">Manifest &amp; codegen</a></li>
+        <li><a href="../docs/manifest.html">Clients &amp; OpenAPI</a></li>
+        <li><a href="../docs/deployment.html">Deployment</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: reference">
@@ -177,7 +183,7 @@
       <ul>
         <li><a href="../docs/spec.html">Spec &amp; research</a></li>
         <li><a href="../docs/measurements.html">Measurements</a></li>
-        <li><a href="https://github.com/michaellocher/apue">GitHub (private beta)</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
       </ul>
     </nav>
   </div>

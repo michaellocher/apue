@@ -55,7 +55,7 @@
   <li>Original still running → <code>409</code> <code>idempotency-key-in-progress</code> with <code>retryable: true</code>.</li>
   <li>Handler 4xx responses are stored; 5xx and client aborts release the key, so a retry executes again.</li>
 </ul>
-<p>The default store is in memory (24 h, 10,000 entries). Several replicas need a shared store implementing the same <code>IdempotencyStore</code> contract; <code>idempotency: false</code> turns the feature off.</p>
+<p>The default store is in memory (24 h, 10,000 entries). Several replicas need a shared store with the same contract — <code>begin</code>, <code>complete</code>, <code>release</code>, each of which may return a promise — so a retry that reaches another replica is replayed (<a href="server.html#idempotency-stores">Server reference</a>, <a href="deployment.html#a-shared-idempotency-store">Deployment</a>); <code>idempotency: false</code> turns the feature off.</p>
 
 <h2>Retries</h2>
 <p>The client retries (default 2 retries, full-jitter exponential backoff) on transport errors, <code>503</code> and <code>429</code> (honouring <code>Retry-After</code> as seconds or an HTTP date, capped at the maximum backoff) and <code>409</code> with <code>retryable: true</code> — but only for safe operations or keyed requests. A <code>504</code> deadline is not retried.</p>

@@ -1,6 +1,6 @@
-// examples/hello/client.ts — node examples/hello/client.ts
+// client.ts — node client.ts
 import { readFileSync } from 'node:fs';
-import { ApueClient } from '../../src/client.ts';
+import { ApueClient } from '../../src/index.ts';
 import { http2Transport } from '../../src/transport-http2.ts';
 import { api } from './api.ts';
 

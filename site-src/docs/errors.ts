@@ -1,7 +1,5 @@
 //-hide
-import { defineApi, op } from '../../src/api.ts';
-import { ApueClient } from '../../src/client.ts';
-import { t } from '../../src/schema.ts';
+import { defineApi, op, ApueClient, t } from '../../src/index.ts';
 import type { Handlers } from '../../src/server.ts';
 import { http2Transport } from '../../src/transport-http2.ts';
 const api = defineApi({
@@ -9,7 +7,7 @@ const api = defineApi({
 });
 const orders = new Map<string, { id: string; state: string }>();
 //-show
-import { ApueError } from '../../src/protocol.ts';
+import { ApueError } from '../../src/index.ts';
 
 const handlers: Handlers<typeof api> = {
   'orders.cancel': ({ id }) => {

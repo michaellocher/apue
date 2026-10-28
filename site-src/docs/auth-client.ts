@@ -1,7 +1,5 @@
 //-hide
-import { defineApi, op } from '../../src/api.ts';
-import { t } from '../../src/schema.ts';
-import { ApueClient } from '../../src/client.ts';
+import { defineApi, op, t, ApueClient } from '../../src/index.ts';
 const api = defineApi({ 'me.get': op({ effect: 'safe', input: t.void(), output: t.object({ user: t.string() }) }) });
 const tokens = { current: async () => 'Bearer abc', refresh: async () => {} };
 async function dpopProof(method: string, path: string): Promise<string> {

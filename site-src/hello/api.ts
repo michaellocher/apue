@@ -1,6 +1,5 @@
-// examples/hello/api.ts — the contract, shared by server and clients
-import { defineApi, op } from '../../src/api.ts';
-import { t } from '../../src/schema.ts';
+// api.ts — the contract, shared by server and clients
+import { defineApi, op, t } from '../../src/index.ts';
 
 export const api = defineApi({
   'greetings.get': op({

@@ -15,7 +15,7 @@ this file records what was actually observed. Configs: `bench/proxy/`.
 | client stream sent as a whole | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | WebSocket (tier T3) | ✗ no upgrade headers | ✓ | ✓ | ✓ | ✗ no `upgrade_configs` | ✓ |
 | zstd response passed through | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| stalled consumer: server ahead, HTTP/2 (T1) | — (request buffered) | 6.3 MiB | **125 MiB** (all of it) | 7.0 MiB | 32 MiB | 32 MiB |
+| stalled consumer: server ahead, HTTP/2 (T1) | — (request buffered) | 5.8–6.3 MiB | **125 MiB** (all of it) | 6.5–7.0 MiB | 32 MiB | 32 MiB |
 | stalled consumer: server ahead, WebSocket (T3 credit) | — (no upgrade) | 4.0 MiB | 4.0 MiB | 4.0 MiB | — (no upgrade) | 4.0 MiB |
 
 Versions:
@@ -44,7 +44,7 @@ Versions:
 6. **HTTP/2 backpressure does not survive proxies; T3 credit does** (S17): a consumer that stalls
    for 1.5 s while the server produces 64 KiB items as fast as allowed. Direct, HTTP/2 flow control
    stops the server at the client's 4 MiB window. Through proxies each hop has its own window and
-   buffers: the server got 6–7 MiB ahead through nginx and HAProxy, 32 MiB through Envoy, and through
+   buffers: the server got 5.8–7.0 MiB ahead through nginx and HAProxy (two runs), 32 MiB through Envoy, and through
    Caddy (defaults) it produced the entire 125 MiB response. Cross-checked from a client inside the
    Docker network (no Docker Desktop port forwarder): same 125 MiB through Caddy, 4.0 MiB directly to
    the server. During the stall the client held exactly its 4.0 MiB window, the TCP queues in both

@@ -23,7 +23,10 @@ are self-contained with a message that explains the reasoning.
 npm install
 npm run typecheck && npm test   # what CI runs, plus:
 npm run build && npm run verify:package && npm run site
+scripts/test-linux-webkit.sh    # the browser tests in WebKit on Linux (Docker), as CI runs them
 ```
+
+Run all of it before pushing: CI runs on Linux, and some browser behaviour differs there (S30).
 
 ## Releasing
 

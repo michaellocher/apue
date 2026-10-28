@@ -122,7 +122,7 @@ describe('in real browsers', () => {
     ['Firefox (headless, WebDriver BiDi)', FIREFOX, runInFirefox],
     ['WebKit (headless, Playwright)', WEBKIT, runInWebKit],
   ] as const) {
-    test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 90_000 }, async (t) => {
+    test(name, { skip: existsSync(binary) || (binary === WEBKIT && process.env.WEBKIT_ENDPOINT) ? false : `${binary} not installed`, timeout: 90_000 }, async (t) => {
       const results = (await drive(binary, `${page.url}/`, "typeof window.__run === 'function'", `window.__run(${JSON.stringify(api.url)}).then(JSON.stringify)`)) as CheckResult[];
       for (const r of results) t.diagnostic(`${r.ok ? (r.skipped ? 'SKIP' : 'ok  ') : 'FAIL'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
       const failed = results.filter((r) => !r.ok);
@@ -178,7 +178,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
     ['Firefox', FIREFOX, runInFirefox],
     ['WebKit', WEBKIT, runInWebKit],
   ] as const) {
-    test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
+    test(name, { skip: existsSync(binary) || (binary === WEBKIT && process.env.WEBKIT_ENDPOINT) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
       const result = (await drive(binary, `${example!.url}/`, "document.readyState === 'complete' && document.querySelector('#add')?.onsubmit != null", script)) as { added: boolean; imported: boolean; count: number; shown: boolean; log: string };
       t.diagnostic(JSON.stringify(result));
       assert.equal(result.added, true);
@@ -197,6 +197,11 @@ async function startPageServer(): Promise<{ url: string; close(): Promise<void> 
   const server = http2.createSecureServer({ key, cert });
   server.on('stream', (stream: http2.ServerHttp2Stream, headers) => {
     const path = decodeURIComponent(String(headers[':path']).split('?')[0]!);
+    // The server's view when Chrome reports net::ERR_FAILED for a module (a rare flake).
+    stream.on('error', (error) => console.error(`[page-server] ${path}: stream error ${error.message}`));
+    stream.on('close', () => {
+      if (stream.rstCode !== 0 && stream.rstCode !== 8) console.error(`[page-server] ${path}: rst=${stream.rstCode} finished=${stream.writableFinished}`);
+    });
     if (path === '/') {
       stream.respond({ ':status': 200, 'content-type': 'text/html; charset=utf-8' });
       return void stream.end(`<!doctype html><meta charset="utf-8"><title>apü browser suite</title>
@@ -214,6 +219,7 @@ async function startPageServer(): Promise<{ url: string; close(): Promise<void> 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const sessions = new Set<http2.ServerHttp2Session>();
   server.on('session', (s) => (sessions.add(s), s.on('close', () => sessions.delete(s))));
+  server.on('sessionError', (error) => console.error(`[page-server] session error ${error.message}`));
   return {
     url: `https://127.0.0.1:${(server.address() as AddressInfo).port}`,
     close: () =>
@@ -307,12 +313,24 @@ async function runInChrome(binary: string, pageUrl: string, ready: string, expre
     });
     const cdp = await rpc(target.webSocketDebuggerUrl);
     await Promise.all(['Runtime.enable', 'Log.enable', 'Network.enable'].map((m) => cdp.send(m)));
-    await cdp.send('Page.navigate', { url: pageUrl });
-    try {
-      await until('page ready', async () => ((await cdp.send('Runtime.evaluate', { expression: ready, returnByValue: true })).result.value ? true : undefined));
-    } catch (error) {
-      // seen once in ~40 runs: the page's modules never became ready — say why next time
-      throw new Error(`${(error as Error).message}: ${pageProblems(cdp.events)}`);
+    // Chrome sometimes resets a fresh TCP connection while module requests are in flight on it
+    // (both servers log `read ECONNRESET`, nothing else; also a plain node:http2 static server, so
+    // not apü's) and the module fails with net::ERR_FAILED — ~1 in 5 runs on a busy machine. Such a
+    // page load is retried once, and reported; any other failure fails at once.
+    for (let attempt = 1; ; attempt++) {
+      cdp.events.length = 0;
+      await cdp.send('Page.navigate', { url: pageUrl });
+      try {
+        await until('page ready', async () => ((await cdp.send('Runtime.evaluate', { expression: ready, returnByValue: true })).result.value ? true : undefined));
+        break;
+      } catch (error) {
+        const problems = pageProblems(cdp.events);
+        if (attempt === 1 && /request failed: net::ERR_FAILED \(Script\)/.test(problems)) {
+          console.error(`[harness] Chrome: a module request failed with net::ERR_FAILED; reloading once (${problems.slice(0, 200)})`);
+          continue;
+        }
+        throw new Error(`${(error as Error).message}: ${problems}`);
+      }
     }
     const evaluated = await cdp.send('Runtime.evaluate', {
       expression,
@@ -329,7 +347,10 @@ async function runInChrome(binary: string, pageUrl: string, ready: string, expre
 
 async function runInWebKit(_binary: string, pageUrl: string, ready: string, expression: string): Promise<unknown> {
   const { webkit } = await import('playwright-core');
-  const browser = await webkit.launch();
+  // WEBKIT_ENDPOINT: a Playwright WebKit server elsewhere (scripts/test-linux-webkit.sh runs Linux
+  // WebKit in Docker); its loopback traffic is routed back here, so the test servers stay local.
+  const endpoint = process.env.WEBKIT_ENDPOINT;
+  const browser = endpoint ? await webkit.connect(endpoint, { exposeNetwork: '<loopback>' }) : await webkit.launch();
   try {
     const page = await (await browser.newContext({ ignoreHTTPSErrors: true })).newPage();
     await page.goto(pageUrl);

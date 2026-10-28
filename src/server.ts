@@ -24,7 +24,8 @@ import { STATUS_CODES } from 'node:http';
 import { onExchange, WsExchange, type Exchange, type WebSocketUpgrade } from './exchange.ts';
 import { acceptKey, checkHandshake, WsClose, WsConnection } from './websocket.ts';
 import { drained } from './node-streams.ts';
-import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClientGone, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+export { isClientGone } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, project, SelectionError, type Selection } from './select.ts';
@@ -228,6 +229,8 @@ export class FrameWriter {
   #scheduled = false;
   #lastWrite = performance.now();
   #heartbeat: NodeJS.Timeout | undefined;
+  /** One waiter for all writes while the sink needs draining (each drained() adds 3 listeners). */
+  #drain: Promise<void> | undefined;
 
   constructor(sink: Writable, options: FrameWriterOptions = {}) {
     this.#sink = sink;
@@ -273,7 +276,10 @@ export class FrameWriter {
     // Only wait when 'drain' is guaranteed to come (a write returned false): waiting on the buffer
     // size alone deadlocks when the sink's high-water mark is above maxBufferedBytes.
     const mustWait = this.#sink.writableNeedDrain && this.#sink.writableLength > this.#maxBufferedBytes;
-    return mustWait ? drained(this.#sink) : undefined;
+    if (!mustWait) return undefined;
+    // Blob chunks, heartbeats and checkpoints can each hit this while blocked: share one waiter
+    // (a waiter per call put 11+ listeners on a slow stream — MaxListenersExceededWarning).
+    return (this.#drain ??= drained(this.#sink).finally(() => (this.#drain = undefined)));
   }
 
   flush(): void {
@@ -1074,13 +1080,6 @@ async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: b
   throw new ApueError(400, 'Truncated Stream', 'request body ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
 }
 
-const CLIENT_GONE_CODES = new Set(['ERR_STREAM_PREMATURE_CLOSE', 'ERR_HTTP2_STREAM_ERROR', 'ERR_HTTP2_STREAM_CANCEL', 'ERR_STREAM_DESTROYED', 'ECONNRESET', 'EPIPE', 'ABORT_ERR']);
-
-/** Errors a request stream raises when the peer resets or drops it. */
-export function isClientGone(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && CLIENT_GONE_CODES.has(String((error as { code?: unknown }).code));
-}
-
 function parseJson(payload: Uint8Array, what: string, maxDepth: number): unknown {
   checkJsonDepth(payload, maxDepth);
   try {
@@ -1228,6 +1227,9 @@ function sendBytes(
 
 function toProblem(error: unknown): Problem {
   if (error instanceof ApueError) return error.problem;
+  // A handler awaiting something with ctx.signal (timers/promises, events.once, pipeline) rejects
+  // with Node's AbortError when the client goes: a disconnect, not a server failure — not logged.
+  if (isClientGone(error)) return { title: 'Client Closed Request', status: 499 };
   if (error instanceof ValidationError) {
     // Only output validation reaches here (input errors are converted earlier) → server bug.
     console.error('apü: handler output does not match schema:', error.message);

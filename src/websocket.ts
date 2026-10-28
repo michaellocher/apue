@@ -11,7 +11,7 @@ import { hash } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Writable } from 'node:stream';
-import { ApueError, checkWindow, parseCredit, ProblemType, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, checkWindow, isClientGone, parseCredit, ProblemType, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
 /** How long the server waits for the peer's close frame before ending the transport anyway. */
 const CLOSE_HANDSHAKE_TIMEOUT_MS = 2000;
@@ -306,7 +306,13 @@ export class WsConnection {
     this.#io.write(encodeWsFrame(WsOpcode.CLOSE, payload));
     // RFC 6455 §5.5.1: the transport ends after both close frames; a peer that never answers its
     // close frame gets a timeout.
-    if (this.#peerClosed || fail) this.#io.end();
+    if (fail) {
+      // Fail the connection (RFC 6455 §7.1.7): nobody reads any more, so end() alone would leave
+      // a peer that stays connected holding the transport (and its call) open.
+      this.#io.end(() => this.#io.destroy());
+    } else if (this.#peerClosed) {
+      this.#io.end();
+    }
     else this.#closeTimer = setTimeout(() => this.#io.end(), CLOSE_HANDSHAKE_TIMEOUT_MS).unref();
   }
 
@@ -363,6 +369,12 @@ export class WsConnection {
       }
       this.#endInput(new ApueError(499, 'Client Closed Request', 'WebSocket transport ended without close frame'));
     } catch (error) {
+      if (isClientGone(error)) {
+        // the transport was reset: the client is gone (499 as on HTTP/2), not a protocol error
+        this.#endInput(new ApueError(499, 'Client Closed Request', `WebSocket transport failed: ${(error as Error).message}`));
+        this.#io.destroy();
+        return;
+      }
       const code = error instanceof WsProtocolError ? error.code : WsClose.PROTOCOL_ERROR;
       // Surface to the handler as a client error, not as a server failure.
       this.#endInput(new ApueError(400, 'Malformed Stream', (error as Error).message, { type: ProblemType.MALFORMED_STREAM }));

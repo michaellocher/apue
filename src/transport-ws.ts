@@ -3,8 +3,7 @@
 // Flow control as in src/websocket.ts: binary bytes use up a window, text messages ("65536")
 // extend it; the browser API can't pause receiving, so the window is what bounds client memory.
 import { fetchTransport, type Transport, type TransportResponse } from './client.ts';
-import { concatBytes } from './frame.ts';
-import { checkWindow, Header, MediaType, parseCredit, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { concatBytes } from './frame.ts';import { checkWindow, Header, MediaType, parseCredit, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
 export const WS_CLOSE_CANCELLED = 4000;
@@ -39,8 +38,13 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
   const WebSocketImpl = options.WebSocketImpl ?? WebSocket;
   const receiveWindow = checkWindow('receiveWindow', options.receiveWindow ?? 4 * 1024 * 1024);
   const http = options.http ?? fetchTransport(baseUrl);
+  const ownsHttp = options.http === undefined; // a caller's transport may be shared: theirs to close
+  const live = new Set<WebSocket>();
   return {
-    close: () => http.close?.() ?? Promise.resolve(),
+    async close() {
+      for (const ws of live) ws.close(WS_CLOSE_CANCELLED, 'transport closed');
+      if (ownsHttp) await http.close?.();
+    },
     async request(req) {
       if (req.body === undefined || req.body instanceof Uint8Array) return http.request(req);
       const { path, headers, body, signal } = req;
@@ -50,6 +54,8 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       const url = `${base}${path}${timeout ? `${path.includes('?') ? '&' : '?'}timeout=${encodeURIComponent(timeout)}` : ''}`;
       const ws = new WebSocketImpl(url, WS_SUBPROTOCOL);
       ws.binaryType = 'arraybuffer';
+      live.add(ws);
+      let input: AsyncIterator<Uint8Array> | undefined;
 
       const queue: Uint8Array[] = [];
       let ended = false;
@@ -94,6 +100,8 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
         notify();
         wakeSender();
         closeChannel(); // also when the producer never yields again
+        live.delete(ws);
+        void input?.return?.()?.catch?.(() => {}); // release the producer (runs once it next yields or returns)
       };
 
       /** Sends bytes as binary messages, each within the credit; resolves false if the socket closed. */
@@ -134,7 +142,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       function flush(): Promise<boolean> {
         flushScheduled = false;
         if (pendingBytes === 0) return flushing;
-        const bytes = pending.length === 1 ? pending[0]! : concatBytes(pending, pendingBytes);
+        const bytes = concatBytes(pending, pendingBytes);
         pending = [];
         pendingBytes = 0;
         queuedBytes += bytes.byteLength;
@@ -163,8 +171,13 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       }
       async function pump(body: AsyncIterable<Uint8Array>): Promise<void> {
         try {
-          for await (const chunk of body) {
-            if (ws.readyState !== ws.OPEN) return; // the call ended: stop pulling the producer
+          input = body[Symbol.asyncIterator]();
+          for (;;) {
+            if (ws.readyState !== ws.OPEN) return void input.return?.(); // the call ended: don't pull (and lose) another chunk
+            const next = await input.next();
+            if (next.done) break;
+            const chunk = next.value;
+            if (ws.readyState !== ws.OPEN) return void input.return?.();
             pending.push(chunk);
             pendingBytes += chunk.byteLength;
             // Bounded like an un-coalesced pump: once 16 KiB wait in total, wait for the sends.
@@ -257,7 +270,10 @@ export function autoTransport(baseUrl: string): Transport {
   const ws = webSocketTransport(baseUrl, { http });
   const streamingFetch = supportsRequestStreams();
   return {
-    close: () => ws.close?.() ?? Promise.resolve(),
+    async close() {
+      await ws.close?.(); // its live WebSockets; the shared fetch transport is ours
+      await http.close?.();
+    },
     request(req) {
       const requestStream = req.body !== undefined && !(req.body instanceof Uint8Array);
       return requestStream && !streamingFetch ? ws.request(req) : http.request(req);

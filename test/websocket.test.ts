@@ -882,11 +882,48 @@ describe('second review (b91f057..HEAD)', () => {
     }
   });
 
-  test('webSocketTransport.close() closes the transport used for non-stream calls', async () => {
-    let closed = 0;
-    const http = { request: () => Promise.reject(new Error('unused')), close: async () => void closed++ };
-    await webSocketTransport('https://x.example', { http }).close?.();
-    assert.equal(closed, 1);
+  test('close(): closes live WebSockets, leaves a caller-supplied (possibly shared) http transport open', async () => {
+    let httpClosed = 0;
+    const http = { request: () => Promise.reject(new Error('unused')), close: async () => void httpClosed++ };
+    const { WebSocketImpl, state } = fakeSocket({ credit: 2 ** 20 });
+    const transport = webSocketTransport('https://x.example', { http, WebSocketImpl });
+    let release: (() => void) | undefined;
+    async function* waiting() {
+      yield msgFrame(1);
+      await new Promise<void>((resolve) => (release = resolve));
+    }
+    await requestWith(transport, waiting());
+    const codes: number[] = [];
+    const close = (state.instance as unknown as { close(code: number): void }).close.bind(state.instance);
+    (state.instance as unknown as { close(code: number): void }).close = (code: number) => (codes.push(code), close(code));
+    await transport.close?.();
+    assert.deepEqual(codes, [4000]);
+    assert.equal(httpClosed, 0);
+    release?.(); // the pump stopped pulling, so the producer may never have reached its wait
+  });
+
+  test('a protocol error destroys the transport even if the peer stays connected', async () => {
+    const ws = await rawWs('/sum.client');
+    ws.socket.allowHalfOpen = true; // a peer that stays connected after the server's FIN
+    ws.socket.on('error', () => {});
+    const closed = new Promise((resolve) => ws.socket.once('close', resolve));
+    ws.send(0x2, msgFrame(1), { mask: false }); // unmasked → 1002; we never answer or close
+    for await (const frame of ws.frames()) if (frame.opcode === 0x8) break;
+    await sleep(100);
+    // Only a really closed server socket answers further client data with a reset; a half-open
+    // one (end() alone) keeps accepting it silently.
+    for (let i = 0; i < 5; i++) ws.socket.write(Buffer.alloc(1024));
+    await Promise.race([closed, sleep(1000).then(() => assert.fail('the server kept the transport half-open'))]);
+  });
+
+  // Documents behaviour: in Node, 'close' (→ 499) is handled before the reader's catch sees the reset,
+  // so this holds with or without the reader's own isClientGone branch (kept as defence).
+  test('a transport reset during a WebSocket call is 499 (client gone), not 400', async () => {
+    const io = new Duplex({ read() {}, write(_c, _e, cb) { cb(); } });
+    const conn = new WsConnection(io);
+    const input = Array.fromAsync(conn);
+    io.destroy(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }));
+    await assert.rejects(input, (e: ApueError) => e.status === 499);
   });
 
   test('a protocol error ends the transport at once (no 2 s close handshake wait)', async () => {

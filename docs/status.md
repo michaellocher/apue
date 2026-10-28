@@ -18,8 +18,12 @@
 - **Third review (everything after the second): 10 more fixes** — a startup crash for HTTP/2
   windows < 64 KiB, lost upload backpressure and a runaway producer in the new send coalescing,
   over-broad 499 mapping that could hide server bugs, slow protocol-error closes.
+- **Fourth review (of the third review's fixes)**: AbortError from `ctx.signal` waits logged as a
+  server failure, protocol-error closes leaving half-open transports, `close()` closing a shared
+  transport / not closing live sockets; plus a `MaxListenersExceededWarning` on slow streams
+  (FrameWriter created a drain waiter per blocked write).
 - Everything with failing-first tests (mutation-checked), plus a WebSocket fuzz test (400 seeded
-  sessions, half well-formed); 240 tests, all committed.
+  sessions, half well-formed); 244 tests, all committed.
 
 ## Where to start
 
@@ -29,7 +33,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 240 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 244 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -75,8 +79,10 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 
 - `examples/todo in real browsers`: the page replays earlier browsers' todos after it reports ready;
   counting mid-replay gave 102 instead of 101 (seen in Firefox). The test now waits until the list
-  is stable. Chrome once threw "Inspected target navigated or closed": most likely a native form
-  submit before the app's handler was installed (not verified); the test now waits for the handler.
+  is stable. Chrome occasionally (~1 in 40 runs) fails to load **one module** of the page
+  (`net::ERR_FAILED` for e.g. `/src/batch.ts`, captured by the new CDP diagnostics at 07:17) — the
+  page then never becomes ready (and once navigated by a native form submit). Server side shows no
+  error; cause still open (next step: log the server's view of that stream).
 - WebKit lost the last messages of a WebSocket stream and reported 1006 in ~1 of 10 runs: a
   server-initiated close right after the data, over RFC 8441. Reproduced with a raw WebSocket page
   (3–4 of 40), gone after letting the client close after END (0 of 40; spec §8).

@@ -89,3 +89,17 @@ export function checkWindow(name: string, value: number): number {
   }
   return value;
 }
+
+/**
+ * Errors Node raises when the peer resets or drops a stream/session (or an operation was aborted
+ * via the call's signal): the client is gone — reported as 499, never logged as a server failure.
+ */
+const CLIENT_GONE_CODES = new Set([
+  'ERR_STREAM_PREMATURE_CLOSE', 'ERR_STREAM_DESTROYED', 'ERR_HTTP2_STREAM_ERROR', 'ERR_HTTP2_STREAM_CANCEL',
+  'ERR_HTTP2_INVALID_SESSION', 'ERR_HTTP2_SESSION_ERROR', 'ERR_HTTP2_GOAWAY_SESSION',
+  'ECONNRESET', 'ECONNABORTED', 'EPIPE', 'ETIMEDOUT', 'ABORT_ERR',
+]);
+
+export function isClientGone(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && CLIENT_GONE_CODES.has(String((error as { code?: unknown }).code));
+}

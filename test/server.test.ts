@@ -377,6 +377,19 @@ describe('FrameWriter', () => {
     assert.deepEqual(frames.map((f) => decodeJson(f.payload)), Array.from({ length: 100 }, (_, i) => i));
   });
 
+  test('a blocked writer shares one drain waiter (no listener pile-up, no MaxListenersExceededWarning)', async () => {
+    const sink = new Writable({ highWaterMark: 1024, write: (_chunk, _encoding, callback) => setTimeout(callback, 20) });
+    const writer = new FrameWriter(sink, { maxBufferedBytes: 1024, coalesceBytes: 0 });
+    const waits = new Set<Promise<void>>();
+    for (let i = 0; i < 40; i++) {
+      const pending = writer.frame(FrameType.BLOB, new Uint8Array(4096));
+      if (pending) waits.add(pending);
+    }
+    assert.ok(waits.size >= 1);
+    assert.ok(sink.listenerCount('drain') <= 2 && sink.listenerCount('close') <= 2, `drain ${sink.listenerCount('drain')}, close ${sink.listenerCount('close')}`);
+    await Promise.all(waits);
+  });
+
   test('backpressure never deadlocks when the sink high-water mark exceeds maxBufferedBytes', async () => {
     // Regression: waiting on buffer size alone hung when 'drain' was never going to fire.
     const sink = new Writable({ highWaterMark: 64 * 1024, write: (_chunk, _encoding, callback) => setTimeout(callback, 1) });

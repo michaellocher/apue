@@ -27,8 +27,9 @@ export interface Options {
 
 type Client = ApueClient<typeof benchApi>;
 
-function apueClient(port: number, ca: string): Client {
-  return new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${port}`, { ca }));
+/** Identity encoding unless asked: baselines are uncompressed, compression has its own scenario. */
+function apueClient(port: number, ca: string, acceptEncoding = ''): Client {
+  return new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${port}`, { ca, acceptEncoding }));
 }
 
 function rawSession(port: number, ca: string): http2.ClientHttp2Session {
@@ -90,6 +91,7 @@ export async function unary(ports: Ports, { ca, durationMs }: Options): Promise<
 
 export async function stream(ports: Ports, { ca }: Options, n = 200_000): Promise<Row[]> {
   const client = apueClient(ports.apue, ca);
+  const zstdClient = apueClient(ports.apue, ca, 'zstd');
   const session = rawSession(ports.raw, ca);
   const best = async (fn: () => Promise<number>) => {
     await fn();
@@ -131,8 +133,19 @@ export async function stream(ports: Ports, { ca }: Options, n = 200_000): Promis
         return count;
       }),
     },
+    {
+      scenario: `server stream ${n / 1000}k small msgs`,
+      variant: 'apü stream + zstd',
+      unit: 'msg/s',
+      value: await best(async () => {
+        let count = 0;
+        for await (const _ of zstdClient.stream('items.stream', { n })) count++;
+        return count;
+      }),
+    },
   ];
   await client.close();
+  await zstdClient.close();
   session.close();
   return rows;
 }
@@ -184,4 +197,50 @@ export async function chain(ports: Ports, { ca }: Options, depth = 3, repeats = 
     { scenario: `${depth} dependent calls`, variant: 'sequential calls', unit: 'ms', value: sequential.p50, p50: sequential.p50, p99: sequential.p99 },
     { scenario: `${depth} dependent calls`, variant: 'apü batch (1 round trip)', unit: 'ms', value: batched.p50, p50: batched.p50, p99: batched.p99 },
   ];
+}
+
+/** Payload throughput and bytes on the wire per content-coding (1 MiB JSON-ish responses). */
+export async function compression(ports: Ports, { ca }: Options, kb = 1024, repeats = 10): Promise<Row[]> {
+  const rows: Row[] = [];
+  const session = rawSession(ports.apue, ca);
+  for (const coding of ['', 'gzip', 'br', 'zstd']) {
+    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, acceptEncoding: coding }));
+    await client.call('blob.get', { kb });
+    const t0 = performance.now();
+    for (let i = 0; i < repeats; i++) await client.call('blob.get', { kb });
+    const mibs = (kb * repeats) / 1024 / ((performance.now() - t0) / 1000);
+    const wire = await wireBytes(session, `/blob.get?i=${encodeURIComponent(JSON.stringify({ kb }))}`, coding);
+    rows.push({ scenario: `compression, ${kb} KiB JSON`, variant: `${coding || 'identity'} (wire ${Math.round(wire / 1024)} KiB)`, unit: 'MiB/s', value: mibs });
+    await client.close();
+  }
+  session.close();
+  return rows;
+}
+
+function wireBytes(session: http2.ClientHttp2Session, path: string, coding: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = session.request({ ':path': path, ...(coding ? { 'accept-encoding': coding } : {}) });
+    let bytes = 0;
+    req.on('data', (chunk: Buffer) => (bytes += chunk.byteLength));
+    req.on('end', () => resolve(bytes));
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+/** Download throughput with the RFC default 64 KiB receive window vs tuned windows (needs latency to matter). */
+export async function window(ports: Ports, { ca }: Options, kb = 4096, repeats = 3): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (const [variant, streamWindow, connectionWindow] of [
+    ['client window 64 KiB (RFC default)', 65_535, 65_535],
+    ['client window 4 MiB / 32 MiB (apü default)', 4 * 1024 * 1024, 32 * 1024 * 1024],
+  ] as const) {
+    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, streamWindow, connectionWindow, acceptEncoding: '' }));
+    await client.call('blob.get', { kb: 64 });
+    const t0 = performance.now();
+    for (let i = 0; i < repeats; i++) await client.call('blob.get', { kb });
+    rows.push({ scenario: `download ${kb / 1024} MiB, uncompressed`, variant, unit: 'MiB/s', value: (kb * repeats) / 1024 / ((performance.now() - t0) / 1000) });
+    await client.close();
+  }
+  return rows;
 }

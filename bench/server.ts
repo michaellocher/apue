@@ -14,6 +14,9 @@ const { values } = parseArgs({
     'max-buffered': { type: 'string', default: String(256 * 1024) },
     'no-validate': { type: 'boolean', default: false },
     window: { type: 'string', default: 'tuned' },
+    host: { type: 'string', default: '127.0.0.1' },
+    'port-apue': { type: 'string', default: '0' },
+    'port-raw': { type: 'string', default: '0' },
     key: { type: 'string' },
     cert: { type: 'string' },
   },
@@ -32,7 +35,7 @@ const apue = createApueServer(benchApi, benchHandlers, {
   streamWindow: tuned ? 4 * 1024 * 1024 : RFC_DEFAULT_WINDOW,
   connectionWindow: tuned ? 32 * 1024 * 1024 : RFC_DEFAULT_WINDOW,
 });
-const apuePort = await apue.listen(0, '127.0.0.1');
+const apuePort = await apue.listen(Number(values['port-apue']), values.host);
 
 // Baseline: what a hand-written node:http2 endpoint costs (no validation, no framing).
 const raw = http2.createSecureServer({ key, cert, settings: { initialWindowSize: tuned ? 4 * 1024 * 1024 : RFC_DEFAULT_WINDOW } });
@@ -63,7 +66,7 @@ raw.on('stream', (stream: http2.ServerHttp2Stream, headers) => {
     stream.end();
   }
 });
-await new Promise<void>((resolve) => raw.listen(0, '127.0.0.1', resolve));
+await new Promise<void>((resolve) => raw.listen(Number(values['port-raw']), values.host, resolve));
 if (tuned) raw.on('session', (session) => session.setLocalWindowSize(32 * 1024 * 1024));
 
 process.stdout.write(JSON.stringify({ apue: apuePort, raw: (raw.address() as AddressInfo).port }) + '\n');

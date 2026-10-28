@@ -31,6 +31,10 @@ re-measured and corrected.
 - **New since the table**: uploads (S18) 474–503 MiB/s for a 64 MiB unary `t.bytes()` input (careful
   creation + PATCH, SHA-256 as data arrives) vs 446–468 MiB/s as BLOB frames in a client stream;
   manifest with derived docs (S19) builds in 0.2–0.6 ms once.
+- **Uploads over emulated networks** (S31, `bench/uploads-wan.sh`, 32 MiB into the file store,
+  three runs): 25 ms each way + 100 Mbit/s 8.4–8.7 MiB/s, 50 ms + 20 Mbit/s + 0.1 % loss
+  1.8–1.9 MiB/s — 88 % and 82–86 % of raw TCP under the same netem. Cut half way and resumed on
+  the same connection: + one HEAD round trip (3.79–3.86 s vs 3.68–3.82 s).
 
 ## Key results
 

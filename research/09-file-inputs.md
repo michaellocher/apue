@@ -79,7 +79,8 @@ the right answer? A short spike to find out what it costs and what it changes.
   (server digest = browser digest; an oversized `Blob` refused on the client).
 - Concurrency (added later; 8 × 64 MiB, one connection each, separate server process): file store
   419–459 MiB/s aggregate, server peak RSS 297–335 MiB; memory store 460–494 MiB/s, peak 868–873 MiB;
-  all digests correct. Aggregate ≈ one upload (one server thread). Not measured over a real network.
+  all digests correct. Aggregate ≈ one upload (one server thread). Over emulated networks: S31
+  (docs/benchmarks.md) — found two bugs on resume, both fixed.
 - ~~`server.close()` waits without a limit; the idle timeout only sends GOAWAY~~ → S22:
   `shutdownGraceMs`, and idle sessions that GOAWAY can't finish are destroyed.
 

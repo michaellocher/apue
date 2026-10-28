@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import https from 'node:https';
 import { after, afterEach, before, describe, test, mock } from 'node:test';
 import { defineApi, op } from '../src/api.ts';
-import { ApueClient, type Transport, type TransportRequest } from '../src/client.ts';
+import { ApueClient, retryAfterMs, type Transport, type TransportRequest } from '../src/client.ts';
 import { MediaType } from '../src/protocol.ts';
 import { ApueError } from '../src/protocol.ts';
 import { t } from '../src/schema.ts';
@@ -376,6 +376,20 @@ describe('client retries', () => {
     assert.deepEqual(await new ApueClient(api, transport).call('orders.flaky'), { attempt: 3 });
     assert.equal(log.length, 3);
     assert.equal(new Set(log.map((r) => r.headers['idempotency-key'])).size, 1);
+  });
+
+  test('Retry-After: seconds or HTTP-date; absent or invalid → exponential backoff (review finding)', () => {
+    const now = Date.parse('2026-10-28T03:00:00Z');
+    assert.equal(retryAfterMs(null, now), undefined); // was Number(null) = 0: retries without any delay
+    assert.equal(retryAfterMs('', now), undefined);
+    assert.equal(retryAfterMs('  ', now), undefined);
+    assert.equal(retryAfterMs('0', now), 0);
+    assert.equal(retryAfterMs(' 120 ', now), 120_000);
+    assert.equal(retryAfterMs('1.5', now), undefined);
+    assert.equal(retryAfterMs('-1', now), undefined);
+    assert.equal(retryAfterMs('Wed, 28 Oct 2026 03:00:30 GMT', now), 30_000);
+    assert.equal(retryAfterMs('Wed, 28 Oct 2026 02:00:00 GMT', now), 0); // in the past
+    assert.equal(retryAfterMs('soon', now), undefined);
   });
 
   test('retry budget is respected', async () => {

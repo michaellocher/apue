@@ -63,6 +63,12 @@ describe('CORS', () => {
     assert.equal(h.vary, 'origin');
   });
 
+  test('preflight allows resuming streams: apue-resume and last-event-id (review finding)', async () => {
+    const h = await preflight(listed.url, ORIGIN, 'apue-resume, last-event-id, apue-timeout');
+    assert.equal(h[':status'], 204);
+    assert.equal(h['access-control-allow-headers'], 'apue-resume, last-event-id, apue-timeout');
+  });
+
   test('preflight from another origin → 403 without CORS headers', async () => {
     const h = await preflight(listed.url, 'https://evil.example');
     assert.equal(h[':status'], 403);
@@ -84,6 +90,14 @@ describe('CORS', () => {
     const h = await request(listed.url, { ':path': '/users.get', origin: 'https://evil.example' });
     assert.equal(h[':status'], 200);
     assert.equal(h['access-control-allow-origin'], undefined);
+    assert.equal(h.vary, 'origin');
+  });
+
+  test('responses without Origin still say Vary: origin, so caches cannot cross-serve them (review finding)', async () => {
+    const h = await request(listed.url, { ':path': '/users.get' });
+    assert.equal(h[':status'], 200);
+    assert.equal(h['access-control-allow-origin'], undefined);
+    assert.equal(h.vary, 'origin');
   });
 
   test("origins: '*' → wildcard, no Vary: origin, custom max-age", async () => {

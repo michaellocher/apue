@@ -59,6 +59,13 @@ describe('schema', () => {
     assert.equal(t.void().parse(undefined), undefined);
     assert.throws(() => t.void().parse(1), /expected no value/);
     assert.throws(() => t.string({ pattern: /^a/ }).parse('b'), /does not match/);
+    // review finding: stateful flags would make repeated checks alternate; other flags are kept
+    assert.throws(() => t.string({ pattern: /a/g }), /g or y flag/);
+    assert.throws(() => t.string({ pattern: /a/y }), /g or y flag/);
+    const caseless = t.string({ pattern: /^abc$/i });
+    for (let i = 0; i < 3; i++) assert.equal(caseless.parse('ABC'), 'ABC');
+    assert.deepEqual(caseless.toJSONSchema(), { type: 'string', pattern: '^abc$', 'x-apue-flags': 'i' });
+    assert.deepEqual(t.string({ pattern: /^a/ }).toJSONSchema(), { type: 'string', pattern: '^a' });
   });
 
   test('exports JSON Schema', () => {

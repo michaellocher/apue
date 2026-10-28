@@ -250,7 +250,9 @@ export class ApueClient<A extends Api> {
             !(error instanceof FrameError) &&
             !(error instanceof SyntaxError);
           if (!resumable) throw error;
-          skip = sinceCheckpoint;
+          // Skipped-but-not-yet-replayed items still count: a loss during the replay must not
+          // shrink the window of items the consumer has already seen.
+          skip += sinceCheckpoint;
           sinceCheckpoint = 0;
           resumes++;
           await sleep(this.#backoff(resumes - 1), controller.signal);
@@ -344,8 +346,8 @@ export class ApueClient<A extends Api> {
   /** Returns a delay if the response is a retryable failure, else undefined. Never consumes non-409 bodies. */
   async #retryDelay(res: TransportResponse, attempt: number): Promise<number | undefined> {
     if (res.status === 503 || res.status === 429) {
-      const retryAfter = Number(res.headers.get('retry-after'));
-      return Number.isFinite(retryAfter) && retryAfter >= 0 ? Math.min(retryAfter * 1000, this.#maxBackoffMs) : this.#backoff(attempt);
+      const delay = retryAfterMs(res.headers.get('retry-after'));
+      return delay === undefined ? this.#backoff(attempt) : Math.min(delay, this.#maxBackoffMs);
     }
     if (res.status === 409 && baseMediaType(res.headers.get('content-type')) === MediaType.PROBLEM) {
       // 409 is only retryable when the server says so (Idempotency-Key still in progress).
@@ -365,6 +367,15 @@ export class ApueClient<A extends Api> {
 }
 
 // ---------------------------------------------------------------------------------------------
+
+/** Retry-After (RFC 9110 §10.2.3): delay-seconds or an HTTP-date; undefined if absent or invalid. */
+export function retryAfterMs(header: string | null, now = Date.now()): number | undefined {
+  if (header === null) return undefined;
+  const value = header.trim();
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const date = Date.parse(value);
+  return Number.isNaN(date) || !/[a-z]/i.test(value) ? undefined : Math.max(0, date - now);
+}
 
 export function validate(def: OpDef, value: unknown, what: string): unknown {
   try {

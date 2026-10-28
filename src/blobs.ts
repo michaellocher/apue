@@ -2,7 +2,7 @@
 // raw BLOB frames on the message's lane *before* the MSG frame, chunked, the last chunk flagged.
 // The message references them in order as {"$blob": k}. Look-alike data ({"$blob"}/{"$lit"} as
 // the only member) is escaped as {"$lit": value}. Web-only.
-import { encodeFrame, Flag, FrameError, FrameType, jsonFrame, type Frame } from './frame.ts';
+import { decodeJson, encodeFrame, Flag, FrameDecoder, FrameError, FrameType, jsonFrame, type EndInfo, type Frame } from './frame.ts';
 
 export const BLOB_CHUNK = 64 * 1024;
 
@@ -92,6 +92,20 @@ export class BlobAssembler {
     if (used.size !== blobs.length) throw new FrameError(`message references ${used.size} of ${blobs.length} blobs`);
     return result;
   }
+}
+
+/** Decodes a complete framed body holding one value (BLOB frames + MSG + END), e.g. a stored response. */
+export function decodeFramedValue(body: Uint8Array): unknown {
+  const decoder = new FrameDecoder();
+  const assembler = new BlobAssembler();
+  let value: unknown;
+  for (const frame of decoder.push(body)) {
+    if (frame.type === FrameType.BLOB) assembler.push(frame);
+    else if (frame.type === FrameType.MSG) value = assembler.resolve(decodeJson(frame.payload));
+    else if (frame.type === FrameType.END && (decodeJson(frame.payload) as EndInfo).status >= 400) throw new FrameError('stored framed body ends with an error');
+  }
+  decoder.end();
+  return value;
 }
 
 function restore(value: unknown, blobs: Uint8Array[], used: Set<number>): unknown {

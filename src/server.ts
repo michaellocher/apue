@@ -11,6 +11,7 @@ import {
   decodeJson,
   encodeFrame,
   encodeJson,
+  endFrame,
   FrameError,
   FrameType,
   jsonFrame,
@@ -27,7 +28,7 @@ import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemTy
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, project, SelectionError, type Selection } from './select.ts';
-import { BlobAssembler, blobChunks, splitMessage } from './blobs.ts';
+import { BlobAssembler, blobChunks, decodeFramedValue, messageFrames, splitMessage } from './blobs.ts';
 import { containsBytes, ValidationError } from './schema.ts';
 
 export type { Exchange } from './exchange.ts';
@@ -488,18 +489,6 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         checkpoint,
         ...(resumeFrom === undefined ? {} : { resumeFrom }),
       };
-      if (!hasResponseStream(def) && containsBytes(def.output)) {
-        // A JSON body can't carry bytes: answer framed (MSG + BLOB frames + END), never cached.
-        if (head) {
-          complete();
-          return res.send(200, { ...STREAM_HEADERS, vary: 'accept' });
-        }
-        const value = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
-        const once = (async function* () {
-          yield value;
-        })();
-        return await streamResponse(req, res, once, outputShaper(def, selection), signal, clientGone.signal, complete, undefined, true);
-      }
       if (!hasResponseStream(def)) {
         // Keys apply to plain unary calls only: a request stream cannot be fingerprinted or replayed.
         const keyHeader = req.headers[IDEMPOTENCY_KEY];
@@ -509,7 +498,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         if (outcome.aborted) return;
         complete();
         if (outcome.status === 200 && read) {
-          return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, ...cacheHeaders(def) }, outcome.body, true);
+          return await sendBody(req, res, 200, { 'content-type': outcome.headers['content-type']!, ...cacheHeaders(def) }, outcome.body, true);
         }
         if (def.invalidates?.length && outcome.status < 400) res.setHeader('cache-group-invalidation', sfStringList(def.invalidates));
         const headers = outcome.replayed ? { ...outcome.headers, [REPLAYED]: '?1' } : outcome.headers;
@@ -572,7 +561,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       scope = `${opName}\n${hash(String(ctx.headers.authorization ?? ''))}\n${key}`;
       const claim = idempotency.begin(scope, hash(canonicalJson(input ?? null)));
       if (claim.state === 'replay') {
-        return { ...claim.response, payload: decodeJson(claim.response.body), replayed: true };
+        const stored = claim.response;
+        const payload = baseMediaType(stored.headers['content-type']) === MediaType.STREAM_JSON ? decodeFramedValue(stored.body) : decodeJson(stored.body);
+        return { ...stored, payload, replayed: true };
       }
       if (claim.state === 'in-progress') {
         return problemOutcome(
@@ -597,8 +588,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const value = selection ? project(validated, selection) : validated;
       const outcome: Outcome = {
         status: 200,
-        headers: { 'content-type': MediaType.JSON, 'cache-control': 'no-store' },
-        body: encodeJson(value),
+        // A JSON body can't carry bytes: such outputs are answered framed (BLOB frames + MSG + END)
+        // — the same bytes are stored for Idempotency-Key replays.
+        headers: { 'content-type': containsBytes(def.output) ? MediaType.STREAM_JSON : MediaType.JSON, 'cache-control': 'no-store' },
+        body: containsBytes(def.output) ? concatBytes([...messageFrames(value), endFrame({ status: 200 })]) : encodeJson(value),
         payload: value,
       };
       if (scope) idempotency!.complete(scope, outcome);
@@ -1041,9 +1034,11 @@ async function readJsonBodyNow(req: Exchange, maxBodyBytes: number, query: boole
 
 /** Request stream messages; each message is limited to maxMessageBytes. Garbage → 400/413, never 500. */
 async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: boolean, maxDepth: number): AsyncGenerator<unknown> {
-  const assembler = blobs ? new BlobAssembler() : undefined;
+  // Blobs of one message share the body budget; a single call only uses lane 0.
+  const assembler = blobs ? new BlobAssembler(maxMessageBytes) : undefined;
   try {
     for await (const frame of decodeFrames(req as AsyncIterable<Uint8Array>, maxMessageBytes)) {
+      if (frame.lane !== 0) throw new ApueError(400, 'Malformed Stream', `lane ${frame.lane} in a request stream`, { type: ProblemType.MALFORMED_STREAM });
       if (frame.type === FrameType.BLOB) {
         if (!assembler) throw new ApueError(400, 'Malformed Stream', 'BLOB frame for an op without bytes', { type: ProblemType.MALFORMED_STREAM });
         assembler.push(frame);
@@ -1140,7 +1135,7 @@ function hash(text: string | Uint8Array): string {
 }
 
 const CORS_ALLOW_METHODS = 'GET, HEAD, POST, QUERY';
-const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT]);
+const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id']);
 const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding';
 
 /**
@@ -1152,9 +1147,11 @@ function applyCors(req: Exchange, res: Exchange, cors: CorsOptions): boolean {
   const origin = req.headers.origin;
   const allowed = typeof origin === 'string' && (cors.origins === '*' || cors.origins.includes(origin));
   const preflight = req.method === 'OPTIONS' && req.headers['access-control-request-method'] !== undefined;
+  // With an origin list the response depends on Origin for *every* request — including ones
+  // without or with a foreign Origin — or a shared cache could serve one origin's answer to another.
+  if (cors.origins !== '*') res.setHeader('vary', 'origin');
   if (allowed) {
     res.setHeader('access-control-allow-origin', cors.origins === '*' ? '*' : origin);
-    if (cors.origins !== '*') res.setHeader('vary', 'origin');
     if (cors.credentials) res.setHeader('access-control-allow-credentials', 'true');
     res.setHeader('access-control-expose-headers', CORS_EXPOSE_HEADERS);
     // Lets the page see nextHopProtocol/timings of API requests (Resource Timing).

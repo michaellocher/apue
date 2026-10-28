@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
 import { canonicalJson, defineApi, op } from '../src/api.ts';
 import { ApueClient, type Transport, type TransportRequest } from '../src/client.ts';
-import { decodeFrames, decodeJson, FrameType } from '../src/frame.ts';
+import { decodeFrames, decodeJson, encodeFrame, FrameType } from '../src/frame.ts';
 import { ApueError, MediaType } from '../src/protocol.ts';
 import { ResumeTokens } from '../src/resume.ts';
 import { t } from '../src/schema.ts';
@@ -16,6 +16,7 @@ const api = defineApi({
   'events.watch': op({ effect: 'safe', stream: 'server', resumable: true, input: t.object({ n: t.number() }), output: t.number() }),
   'events.failing': op({ effect: 'safe', stream: 'server', resumable: true, input: t.void(), output: t.number() }),
   'plain.stream': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
+  'events.sparse': op({ effect: 'safe', stream: 'server', resumable: true, input: t.object({ n: t.number() }), output: t.number() }),
 });
 
 const resumedFrom: Array<string | undefined> = [];
@@ -32,6 +33,12 @@ const handlers: Handlers<typeof api> = {
     yield 1;
     ctx.checkpoint('1');
     throw new ApueError(409, 'Conflict', 'stream failed on purpose');
+  },
+  'events.sparse': async function* ({ n }, ctx) {
+    for (let i = ctx.resumeFrom === undefined ? 0 : Number(ctx.resumeFrom) + 1; i < n; i++) {
+      yield i;
+      if (i % 5 === 4) ctx.checkpoint(String(i)); // several items between checkpoints
+    }
   },
   'plain.stream': async function* (_input, ctx) {
     yield 1;
@@ -78,6 +85,29 @@ function flaky(inner: Transport, cutAfter: number, failures: number) {
     close: () => inner.close?.() ?? Promise.resolve(),
   };
   return { transport, log };
+}
+
+/** Cuts attempt k right after `msgsPerAttempt[k]` MSG frames (frame-exact, unlike `flaky`). */
+function cutAfterMessages(inner: Transport, msgsPerAttempt: number[]): Transport {
+  let attempt = 0;
+  return {
+    async request(req) {
+      const res = await inner.request(req);
+      const limit = msgsPerAttempt[attempt++];
+      if (limit === undefined) return res;
+      return {
+        ...res,
+        body: (async function* () {
+          let msgs = 0;
+          for await (const frame of decodeFrames(res.body)) {
+            yield encodeFrame(frame.type, frame.payload, frame.lane, frame.flags);
+            if (frame.type === FrameType.MSG && ++msgs === limit) throw new Error('ECONNRESET (simulated)');
+          }
+        })(),
+      };
+    },
+    close: () => inner.close?.() ?? Promise.resolve(),
+  };
 }
 
 describe('resume tokens', () => {
@@ -128,6 +158,15 @@ describe('transparent resume', () => {
       assert.deepEqual(items, Array.from({ length: 40 }, (_, i) => i), `cut after ${cut} bytes`);
       await client.close();
     }
+  });
+
+  test('a second loss during the replay still skips everything already seen (review finding)', async () => {
+    // Attempt 1: items 0-4, checkpoint 4, items 5-7, loss. Attempt 2 replays from 5: one item
+    // (5, skipped), loss. Attempt 3 must still skip 5-7, not only 5.
+    const transport = cutAfterMessages(http2Transport(a.url, { ca: testCert().cert, acceptEncoding: '' }), [8, 1]);
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    assert.deepEqual(await Array.fromAsync(client.stream('events.sparse', { n: 12 })), Array.from({ length: 12 }, (_, i) => i));
+    await client.close();
   });
 
   test('resume budget: gives up after `resumes` attempts', async () => {

@@ -24,7 +24,9 @@ const api = defineApi({
   'files.put': op({ effect: 'unsafe', stream: 'client', input: File, output: t.object({ count: t.number(), bytes: t.number() }) }),
   'files.echo': op({ effect: 'unsafe', stream: 'bidi', input: File, output: File }),
   'plain.sum': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
+  'files.render': op({ effect: 'unsafe', input: t.object({ name: t.string() }), output: File }),
 });
+let renders = 0;
 const handlers: Handlers<typeof api> = {
   'files.list': async function* () {
     yield* files;
@@ -42,6 +44,7 @@ const handlers: Handlers<typeof api> = {
   'files.echo': async function* (inputs) {
     for await (const file of inputs) yield file;
   },
+  'files.render': ({ name }) => ({ name, data: new Uint8Array(70_000).fill(++renders) }),
   'plain.sum': async (inputs) => {
     let sum = 0;
     for await (const n of inputs) sum += n;
@@ -51,7 +54,7 @@ const handlers: Handlers<typeof api> = {
 
 let server: { url: string; close(): Promise<void> };
 before(async () => {
-  server = await startServer(api, handlers);
+  server = await startServer(api, handlers, { maxBodyBytes: 4 * MiB }); // blobs count against the body budget
 });
 after(() => server.close());
 
@@ -143,6 +146,43 @@ describe('blobs end to end', () => {
       await client.close?.();
     });
   }
+
+  test('request-stream blobs: over the body budget → 413, lanes other than 0 → 400 (review finding)', async () => {
+    const big = new Uint8Array(5 * MiB);
+    const client = new ApueClient(api, http2Transport(server.url, { ca: testCert().cert }));
+    async function* tooBig() {
+      yield { name: 'big', data: big };
+    }
+    await assert.rejects(Array.fromAsync(client.duplex('files.put', tooBig())), (e: { status: number }) => e.status === 413);
+    await client.close();
+    const res = await fetch(`${server.url}/files.put`, {
+      method: 'POST',
+      headers: { 'content-type': MediaType.STREAM_JSON },
+      body: concatBytes([encodeFrame(FrameType.BLOB, new Uint8Array([1]), 7, 0)]) as Uint8Array<ArrayBuffer>,
+    });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).detail, /lane 7/);
+  });
+
+  test('unsafe op with bytes output: an Idempotency-Key replays the stored bytes (review finding)', async () => {
+    const client = new ApueClient(api, http2Transport(server.url, { ca: testCert().cert }));
+    const before = renders;
+    const first = await client.call('files.render', { name: 'r' }, { idempotencyKey: 'render-1' });
+    const again = await client.call('files.render', { name: 'r' }, { idempotencyKey: 'render-1' });
+    assert.equal(renders, before + 1); // executed once
+    assert.ok(again.data instanceof Uint8Array);
+    assert.ok(same(again, first));
+    assert.equal(again.data[0], first.data[0]);
+    const raw = await fetch(`${server.url}/files.render`, {
+      method: 'POST',
+      headers: { 'content-type': MediaType.JSON, 'idempotency-key': '"render-1"' },
+      body: JSON.stringify({ name: 'r' }),
+    });
+    assert.equal(raw.headers.get('apue-replayed'), '?1');
+    assert.equal(raw.headers.get('content-type'), MediaType.STREAM_JSON);
+    await raw.arrayBuffer();
+    await client.close();
+  });
 
   test('batch lanes carry blobs; BLOB frames on a non-bytes op are a 400', async () => {
     const client = new ApueClient(api, http2Transport(server.url, { ca: testCert().cert }));

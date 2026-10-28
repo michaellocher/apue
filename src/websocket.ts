@@ -61,17 +61,24 @@ export interface WsFrame {
 /** Incremental parser for client → server frames (must be masked, no extensions). */
 export class WsParser {
   readonly maxPayload: number;
-  #buffer: Uint8Array = new Uint8Array(0);
+  // Incomplete input is kept as a list and joined only once `#needed` bytes are there: joining on
+  // every chunk would copy a large frame once per chunk (quadratic).
+  #chunks: Uint8Array[] = [];
+  #buffered = 0;
+  #needed = 2;
 
   constructor(maxPayload: number) {
     this.maxPayload = maxPayload;
   }
 
   push(chunk: Uint8Array): WsFrame[] {
-    this.#buffer = this.#buffer.byteLength === 0 ? chunk : Buffer.concat([this.#buffer, chunk]);
+    this.#chunks.push(chunk);
+    this.#buffered += chunk.byteLength;
+    if (this.#buffered < this.#needed) return [];
+    const buf = this.#chunks.length === 1 ? chunk : Buffer.concat(this.#chunks, this.#buffered);
     const frames: WsFrame[] = [];
+    let needed = 2;
     let offset = 0;
-    const buf = this.#buffer;
     while (buf.byteLength - offset >= 2) {
       const b0 = buf[offset]!;
       const b1 = buf[offset + 1]!;
@@ -82,11 +89,11 @@ export class WsParser {
       let length = b1 & 0x7f;
       let header = 2;
       if (length === 126) {
-        if (buf.byteLength - offset < 4) break;
+        if (buf.byteLength - offset < (needed = 4)) break;
         length = (buf[offset + 2]! << 8) | buf[offset + 3]!;
         header = 4;
       } else if (length === 127) {
-        if (buf.byteLength - offset < 10) break;
+        if (buf.byteLength - offset < (needed = 10)) break;
         const view = new DataView(buf.buffer, buf.byteOffset + offset + 2, 8);
         const big = view.getBigUint64(0);
         if (big > BigInt(this.maxPayload)) throw new WsProtocolError(WsClose.TOO_BIG, 'frame too large');
@@ -99,15 +106,19 @@ export class WsParser {
         throw new WsProtocolError(WsClose.PROTOCOL_ERROR, `unknown opcode ${opcode}`);
       }
       if (length > this.maxPayload) throw new WsProtocolError(WsClose.TOO_BIG, 'frame too large');
-      if (buf.byteLength - offset < header + 4 + length) break;
+      if (buf.byteLength - offset < (needed = header + 4 + length)) break;
       const mask = buf.subarray(offset + header, offset + header + 4);
       const payload = new Uint8Array(length);
       const start = offset + header + 4;
       for (let i = 0; i < length; i++) payload[i] = buf[start + i]! ^ mask[i & 3]!;
       frames.push({ fin, opcode, payload });
       offset = start + length;
+      needed = 2;
     }
-    this.#buffer = buf.subarray(offset);
+    const rest = buf.subarray(offset);
+    this.#chunks = rest.byteLength === 0 ? [] : [rest];
+    this.#buffered = rest.byteLength;
+    this.#needed = needed;
     return frames;
   }
 }
@@ -138,8 +149,15 @@ export class WsConnection {
     this.sink = new Writable({
       write: (chunk: Buffer, _encoding, callback) => {
         if (this.#closeSent || io.destroyed) return callback();
-        if (io.write(encodeWsFrame(WsOpcode.BINARY, chunk))) callback();
-        else io.once('drain', () => callback());
+        if (io.write(encodeWsFrame(WsOpcode.BINARY, chunk))) return callback();
+        // A transport that closes instead of draining must not leave the write pending forever.
+        const done = () => {
+          io.off('drain', done);
+          io.off('close', done);
+          callback();
+        };
+        io.on('drain', done);
+        io.on('close', done);
       },
       final: (callback) => {
         this.close(WsClose.NORMAL);
@@ -244,6 +262,7 @@ export class WsConnection {
 
   #onIoClose(): void {
     this.#closed = true;
+    this.sink.destroy(); // producers waiting for the sink's 'drain' get 'close' instead
     this.#resumeReader?.();
     this.#endInput(this.#closeSent ? undefined : new ApueError(499, 'Client Closed Request', 'WebSocket connection lost'));
     for (const callback of this.#closeCallbacks.splice(0)) callback();

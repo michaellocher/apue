@@ -126,6 +126,8 @@ export interface ArrayOptions {
 export const t = {
   string(options: StringOptions = {}): Schema<string> {
     const { min, max, pattern } = options;
+    // g and y make RegExp#test stateful (lastIndex): the same value would alternate valid/invalid.
+    if (pattern?.global || pattern?.sticky) throw new Error(`t.string(): pattern ${pattern} must not use the g or y flag`);
     return define(
       'string',
       (value, ctx) => {
@@ -140,6 +142,9 @@ export const t = {
         ...(min === undefined ? {} : { minLength: min }),
         ...(max === undefined ? {} : { maxLength: max }),
         ...(pattern ? { pattern: pattern.source } : {}),
+        // JSON Schema patterns have no flags: other validators see `pattern` alone, so flags that
+        // change matching (i, m, s, u, v) travel as an extension that apü's codegen restores.
+        ...(pattern?.flags ? { 'x-apue-flags': pattern.flags } : {}),
       }),
     );
   },

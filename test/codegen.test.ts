@@ -27,6 +27,7 @@ const Rich = t.object({
   avatar: t.optional(t.bytes()),
   extra: t.unknown(),
   active: t.boolean(),
+  code: t.string({ pattern: /^[a-z]+\/\d+$/iu }), // flags and a slash survive the round trip (review finding)
 });
 
 const original = defineApi({
@@ -54,6 +55,13 @@ test('round trip: manifest → generated code → identical manifest', async () 
   assert.deepEqual(buildManifest(generated), buildManifest(original));
 });
 
+test('regex flags are restored by codegen, so generated clients validate like the server', async () => {
+  const code = schemaCode({ type: 'string', pattern: '^[a-z]+\\/\\d+$', 'x-apue-flags': 'iu' });
+  assert.equal(code, 't.string({ pattern: /^[a-z]+\\/\\d+$/iu })');
+  const schema = (await importGenerated(`import { t } from '${runtime}/schema.ts';\nexport const api = ${code};\n`)) as unknown as { parse(v: unknown): unknown };
+  assert.equal(schema.parse('ABC/12'), 'ABC/12');
+});
+
 test('unsupported JSON Schema is an error, not a silent unknown', () => {
   assert.throws(() => schemaCode({ type: 'string', format: 'date-time' }), /unsupported JSON Schema/);
   assert.throws(() => schemaCode({ type: 'object', properties: {}, additionalProperties: false }), /unsupported JSON Schema/);
@@ -65,7 +73,7 @@ test('unsupported JSON Schema is an error, not a silent unknown', () => {
 
 test('CLI against a running server; the generated contract drives a typed client', async () => {
   const handlers: Handlers<typeof original> = {
-    'users.get': ({ id }) => ({ id, score: 1, role: 'admin', tags: [], manager: null, extra: { any: 'thing' }, active: true }),
+    'users.get': ({ id }) => ({ id, score: 1, role: 'admin', tags: [], manager: null, extra: { any: 'thing' }, active: true, code: 'AB/1' }),
     'users.old': () => 'old',
     'users.watch': async function* () {},
     'files.put': async (inputs) => {
@@ -86,7 +94,7 @@ test('CLI against a running server; the generated contract drives a typed client
   await promisify(execFile)(process.execPath, [join(import.meta.dirname, '..', 'bin', 'apue-types.ts'), server.url, '--runtime', runtime, '--ca', join(dir, 'ca.pem'), '--out', out]);
   const generated = (await import(pathToFileURL(out).href)) as { api: typeof original };
   const client = new ApueClient(generated.api, http2Transport(server.url, { ca: testCert().cert }));
-  assert.deepEqual(await client.call('users.get', { id: 'ab-1' }), { id: 'ab-1', score: 1, role: 'admin', tags: [], manager: null, extra: { any: 'thing' }, active: true });
+  assert.deepEqual(await client.call('users.get', { id: 'ab-1' }), { id: 'ab-1', score: 1, role: 'admin', tags: [], manager: null, extra: { any: 'thing' }, active: true, code: 'AB/1' });
   // The generated schemas validate on the client too: no request is sent for invalid input.
   await assert.rejects(client.call('users.get', { id: 42 as unknown as string }), (e: { status: number }) => e.status === 400);
   await client.close();

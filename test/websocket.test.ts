@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import http2 from 'node:http2';
+import { Duplex } from 'node:stream';
 import { after, before, describe, test } from 'node:test';
 import tls from 'node:tls';
 import { defineApi, op } from '../src/api.ts';
@@ -11,7 +12,8 @@ import { ApueError } from '../src/protocol.ts';
 import { t } from '../src/schema.ts';
 import type { Handlers } from '../src/server.ts';
 import { webSocketTransport } from '../src/transport-ws.ts';
-import { encodeWsFrame, WsParser } from '../src/websocket.ts';
+import { drained } from '../src/node-streams.ts';
+import { encodeWsFrame, WsConnection, WsParser } from '../src/websocket.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const api = defineApi({
@@ -275,5 +277,91 @@ describe('WebSocket over HTTP/2 (extended CONNECT), negative cases', () => {
   });
 });
 
+describe('WsParser', () => {
+  /** A client frame: masked with a random key (RFC 6455 §5.3). */
+  function masked(opcode: number, payload: Uint8Array, fin = true): Buffer {
+    const plain = encodeWsFrame(opcode, payload);
+    const header = plain.byteLength - payload.byteLength;
+    const key = randomBytes(4);
+    const out = Buffer.alloc(plain.byteLength + 4);
+    plain.copy(out, 0, 0, header);
+    out[0] = (fin ? 0x80 : 0) | opcode;
+    out[1]! |= 0x80;
+    key.copy(out, header);
+    for (let i = 0; i < payload.byteLength; i++) out[header + 4 + i] = payload[i]! ^ key[i & 3]!;
+    return out;
+  }
+  const sizes = [0, 1, 125, 126, 300, 65535, 65536, 70_000];
+  const payloads = sizes.map((n) => new Uint8Array(randomBytes(n)));
+  const wire = Buffer.concat([...payloads.map((p) => masked(0x2, p)), masked(0x9, new Uint8Array([7])), masked(0x1, payloads[2]!, false)]);
+  const check = (frames: Array<{ fin: boolean; opcode: number; payload: Uint8Array }>) => {
+    assert.equal(frames.length, sizes.length + 2);
+    payloads.forEach((p, i) => assert.ok(Buffer.from(frames[i]!.payload).equals(Buffer.from(p)), `payload ${sizes[i]}`));
+    assert.deepEqual([frames.at(-2)!.opcode, [...frames.at(-2)!.payload]], [0x9, [7]]);
+    assert.deepEqual([frames.at(-1)!.opcode, frames.at(-1)!.fin], [0x1, false]);
+  };
+
+  test('every split point of the header and payload boundaries yields the same frames', () => {
+    // all 2-chunk splits within the first 400 bytes and around the 7- and 10-byte-length headers
+    const boundaries = new Set<number>();
+    for (let i = 1; i < 400; i++) boundaries.add(i);
+    let at = 0;
+    for (const p of payloads) {
+      for (let d = -12; d <= 12; d++) if (at + d > 0 && at + d < wire.byteLength) boundaries.add(at + d);
+      at += masked(0x2, p).byteLength;
+    }
+    for (const split of boundaries) {
+      const parser = new WsParser(1 << 20);
+      check([...parser.push(wire.subarray(0, split)), ...parser.push(wire.subarray(split))]);
+    }
+  });
+
+  test('random chunking and one-byte chunks', () => {
+    for (let round = 0; round < 50; round++) {
+      const parser = new WsParser(1 << 20);
+      const frames = [];
+      for (let i = 0; i < wire.byteLength; ) {
+        const n = round === 0 ? 1 : 1 + Math.floor(Math.random() * 5000);
+        frames.push(...parser.push(wire.subarray(i, i + n)));
+        i += n;
+      }
+      check(frames);
+    }
+  });
+
+  test('a 16 MiB frame in 1 KiB chunks is linear, not quadratic (review finding)', () => {
+    // Joining on every chunk copied ~128 GiB here (minutes); buffering until complete copies once.
+    const big = new Uint8Array(16 << 20).fill(5);
+    const frame = masked(0x2, big);
+    const parser = new WsParser(32 << 20);
+    const start = performance.now();
+    const frames = [];
+    for (let i = 0; i < frame.byteLength; i += 1024) frames.push(...parser.push(frame.subarray(i, i + 1024)));
+    const ms = performance.now() - start;
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0]!.payload.byteLength, big.byteLength);
+    assert.ok(ms < 2000, `${ms.toFixed(0)} ms`);
+  });
+
+  test('a transport that closes while a write waits for drain releases the producer (review finding)', async () => {
+    const io = new Duplex({ read() {}, write() {}, writableHighWaterMark: 1 }); // never drains
+    const conn = new WsConnection(io);
+    assert.equal(conn.sink.write(new Uint8Array(conn.sink.writableHighWaterMark + 1)), false); // above the sink's high-water mark
+    conn.sink.write(new Uint8Array(100)); // queued behind the stuck one
+    const released = drained(conn.sink);
+    io.destroy();
+    await Promise.race([released, sleep(1000).then(() => assert.fail('producer still waiting for drain'))]);
+    assert.equal(conn.sink.destroyed, true);
+  });
+
+  test('protocol errors are detected from the header alone, before the payload arrives', () => {
+    const unmasked = encodeWsFrame(0x2, new Uint8Array(10));
+    assert.throws(() => new WsParser(1024).push(unmasked.subarray(0, 2)), /must be masked/);
+    const tooBig = masked(0x2, new Uint8Array(2000));
+    assert.throws(() => new WsParser(1024).push(tooBig.subarray(0, 4)), /too large/);
+    const reserved = Buffer.from([0xc2, 0x80]);
+    assert.throws(() => new WsParser(1024).push(reserved), /reserved bits/);
+  });
+});
+
 void decodeFrames;
-void WsParser;

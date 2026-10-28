@@ -1,6 +1,6 @@
-# apü — draft 00
+# apü — draft 01
 
-*Status: design draft, 2026-10-28. Nothing here is final; every MUST is a hypothesis to be validated by a spike.*
+*Status: design draft, 2026-10-28, revised after nine spikes (§15). Sections say whether they are **implemented** (Node 26 spike in `src/`, tested) or **planned**. Everything implemented is covered by `npm test` (166 tests incl. real browsers).*
 *Research basis: [`research/`](research/) — 01 existing-API problems, 02 HTTP/2 & modern HTTP (+ performance addendum), 03 data plane, 04 Node 26 platform, 05 verified normative details.*
 
 ASCII identifier for media types and header names: **`apue`**.
@@ -12,7 +12,7 @@ ASCII identifier for media types and header names: **`apue`**.
 **Goals**
 1. One call model covering unary, server-streaming, client-streaming and bidirectional calls, with one frame format on every transport.
 2. Maximum throughput, short TTFB, compression, multiplexing, chunking, streaming.
-3. **Fully HTTP/2 compatible** — defined purely in RFC 9110 semantics (methods, status, fields, content). HTTP/2 is used for multiplexing, HPACK and flow control, but nothing depends on h2 framing ⇒ HTTP/3 works unchanged, HTTP/1.1 works for non-streaming calls.
+3. **Fully HTTP/2 compatible** — defined purely in RFC 9110 semantics (methods, status, fields, content). HTTP/2 is used for multiplexing, HPACK and flow control, but nothing depends on h2 framing ⇒ HTTP/3 works unchanged (via an h3-terminating proxy/CDN — Node 26 has no built-in QUIC/HTTP/3, `node:quic` is not available), HTTP/1.1 works for everything except full-duplex request streams (verified, incl. streams over HTTP/1.1 and WebSocket Upgrade).
 4. Works from all browsers via `fetch()`, through ordinary CDNs, proxies and load balancers.
 5. Fix the top problems of existing styles (see §2).
 6. TypeScript-first schemas; language-neutral manifest derived from them.
@@ -24,18 +24,18 @@ ASCII identifier for media types and header names: **`apue`**.
 
 ## 2. Problems addressed
 
-| # | Problem (research/01) | apü answer |
-|---|---|---|
-| 1 | No unified sync + streaming + realtime model; gRPC bidi not in browsers | One frame format (§6) across fetch, native h2 duplex, WebSocket, WebTransport; capability tiers (§8) |
-| 2 | Expressive reads lose HTTP caching (GraphQL/gRPC POST) | Ops declare `effect`; safe ops → GET (canonical input in URL) or QUERY (RFC 10008) with POST fallback; ETag, `Cache-Control` (§5, §9) |
-| 3 | No portable error/partial-failure model; errors hidden behind 200 | Unary: real status + RFC 9457. Streams: in-band END frame with status + problem; per-lane END in batches (§7) |
-| 4 | Versioning/evolution pain | Additive-only evolution rules, `Deprecation`/`Sunset` (RFC 9745/8594), manifest hash (§11) |
-| 5 | Dependent calls = N round trips | Pipelined batches with `$ref`, results streamed out of order (§10) |
-| 6 | Query DoS, authZ per field | No query language; projection only, schema-declared limits (§11) |
-| 7 | Idempotency, retries, long-running ops | `effect` drives retry rules; `Idempotency-Key`; deadline; checkpoint/resume (§5, §8) |
-| 8 | Agent consumption | Compact typed manifest at a well-known URL + RFC 9727 api-catalog (§11) |
-| 9 | LB / proxy / debuggability | Stateless; heartbeats; `Incremental: ?1`; JSON default; SSE debug rendering (§6, §12) |
-| 10 | Large / resumable binaries | Blob frames (no base64) or out-of-band URLs; resumable-upload draft for large uploads (§6) |
+| # | Problem (research/01) | apü answer | Status |
+|---|---|---|---|
+| 1 | No unified sync + streaming + realtime model; gRPC bidi not in browsers | One frame format (§6) across fetch, native h2 duplex and WebSocket; capability tiers (§8) | implemented (T0–T3; T4 planned) |
+| 2 | Expressive reads lose HTTP caching (GraphQL/gRPC POST) | Ops declare `effect`; safe ops → GET (canonical input in URL) or QUERY (RFC 10008) with POST fallback; ETag, `Cache-Control` (§5, §9) | implemented |
+| 3 | No portable error/partial-failure model; errors hidden behind 200 | Unary: real status + RFC 9457. Streams: early errors as real status, later in-band END; per-lane END in batches (§7) | implemented |
+| 4 | Versioning/evolution pain | Additive-only evolution, unknown input fields ignored, `Deprecation`/`Sunset` (RFC 9745/8594), manifest (§11) | implemented (rules + headers) |
+| 5 | Dependent calls = N round trips | Pipelined batches with `$ref`, results streamed out of order (§10) — 2.8× faster for 3 calls at 63 ms RTT | implemented |
+| 6 | Over-fetching, query DoS, per-field authZ | No query language; schema-validated field selection; output stripped to the schema (§5, §11) | implemented |
+| 7 | Idempotency, retries, long-running ops | `effect` drives retry rules; `Idempotency-Key`; deadlines; resumable streams (§5, §8) | implemented |
+| 8 | Agent consumption | Typed manifest + RFC 9727 api-catalog (§11) | implemented |
+| 9 | LB / proxy / debuggability | Stateless (no sessions, resume tokens), heartbeats, anti-buffering headers, JSON default, SSE rendering (§6, §12) — verified through nginx | implemented |
+| 10 | Large / resumable binaries | BLOB frames (no base64) or out-of-band URLs; resumable-upload draft (§6) | planned |
 
 ## 3. Transport rules
 
@@ -55,9 +55,11 @@ An operation is identified by a dotted name, e.g. `users.get`, and declares:
 |---|---|---|
 | `effect` | `safe` · `idempotent` · `unsafe` | HTTP method, cacheability, retry and 0-RTT eligibility |
 | `stream` | `none` · `server` · `client` · `bidi` | body framing and transport tier |
-| `input` / `output` | schema | validation, manifest, codecs |
-| `limits` | max items, max select depth, max input size | DoS bounds |
-| `cache` | `max-age`, `swr`, `vary` | `Cache-Control` for safe ops |
+| `input` / `output` | schema (`t.*`) | validation (both sides), output stripping, manifest; limits live in the schema (`t.array(x, {max})`, string lengths) |
+| `cache` | `maxAge`, `staleWhileRevalidate`, `private` | `Cache-Control` for safe ops |
+| `resumable` | boolean | server streams with checkpoints (§8) |
+| `deprecated` | `since`, `sunset`, `link` | `Deprecation`/`Sunset`/`Link` headers |
+| `description` | text | manifest |
 
 ## 5. HTTP mapping
 
@@ -72,9 +74,10 @@ URL: `{base}/{op}` — op name in `:path` (HPACK-friendly, routable, one preflig
 
 - `i` = input as **RFC 8785 JCS canonical JSON**, percent-encoded → deterministic cache key.
 - **Field selection** (implemented, S9): `?s=a,b.c` on any method (part of the cache key for GET; QUERY/POST carry it in the URL too), `select` per call in batches. Paths are validated against the output schema (unknown → 400 `invalid-selection` before the handler runs), at most 64, through objects, arrays, optional and nullable fields; selecting a parent absorbs children. Applied after output validation, so only schema fields can ever be selected. The ETag covers the projected body. Typed client: `pick(op, input, ['address.city'])` checks paths at compile time and returns `DeepPartial<Output>`. No query language, no joins — cost is bounded by the schema.
-- Deadline: `Apue-Timeout: <ms>` (SF integer). Server aborts work after deadline; client maps to `AbortController` → RST_STREAM.
-- Unary response: real HTTP status, `Content-Type: application/json` (or `application/cbor`), errors as `application/problem+json`.
-- Streaming response/request: `Content-Type: application/apue+json` / `application/apue+cbor` (framed, §6), or `text/event-stream` (debug/EventSource rendering).
+- Deadline: `apue-timeout: <ms>` (SF integer; WebSocket: `?timeout=`). The server aborts the handler's signal and answers 504 (`deadline-exceeded`) — also for producers that ignore the signal; client cancellation (AbortController / `break`) resets the stream and aborts the handler.
+- Unary response: real HTTP status, `Content-Type: application/json`, errors as `application/problem+json`. (CBOR: planned.)
+- Streaming response/request: `Content-Type: application/apue+json` (framed, §6), or `text/event-stream` (debug/EventSource rendering). (`application/apue+cbor`: planned.)
+- Reserved paths: `/.well-known/apue` (manifest), `/.well-known/api-catalog` (RFC 9727), `/$batch` (§10). Everything else that is not an op can be served by the application (`fallback`), e.g. the web app itself.
 - Safe responses carry a strong `ETag` (SHA-256 of the representation); `If-None-Match` → 304 (weak comparison). `Cache-Control` from the op's `cache` policy, default `no-cache` (revalidate), `private` for caller-dependent ops; non-safe and streams `no-store`. Reads advertise `Accept-Query: "application/json"`.
 - Server enforces the mapping: other methods → 405 + `Allow`.
 - **Idempotency-Key semantics** (draft-08): scope = op + hash(Authorization) + key; fingerprint = SHA-256 of canonical input. Same key + same payload → stored response replayed with `apue-replayed: ?1` (apü extension; the draft defines no header); different payload → 422; original still running → 409 `retryable: true`. Handler 4xx are stored; 5xx and client aborts release the key so a retry re-executes.
@@ -99,12 +102,14 @@ Streaming bodies (both directions) are a sequence of frames with an **8-byte hea
 |---|---|---|
 | 0x00 | MSG | one encoded message (JSON/CBOR) |
 | 0x01 | END | `{status, problem?, meta?}` — terminates a lane. A body that ends while a lane has no END is **truncated** and MUST be treated as an error (detects proxy cut-offs). Lane 0xFFFF reserved |
-| 0x02 | BLOB | raw bytes chunk for blob id = lane; flag `last` closes it |
-| 0x03 | HEARTBEAT | empty |
-| 0x04 | CHECKPOINT | opaque resume token (client may reconnect with `Apue-Resume`) |
-| 0x05 | CREDIT | u32 messages the receiver is willing to accept (app-level flow control, §8) |
+| 0x02 | BLOB | raw bytes chunk for blob id = lane; flag `last` closes it — *planned* |
+| 0x03 | HEARTBEAT | empty (sent after 15 s without other frames) |
+| 0x04 | CHECKPOINT | resume token (§8); SSE rendering: `id:` |
+| 0x05 | CREDIT | u32 messages the receiver is willing to accept (app-level flow control) — *planned* |
 
-Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), others reserved (MUST be 0).
+Flags: bit0 `compressed` (per-frame, independent context — *planned*; today compression is per stream via `Content-Encoding`), bit1 `last` (BLOB), others reserved (MUST be 0). Receivers ignore unknown frame types.
+
+Limits (implemented): a frame header announcing more than the limit is rejected before buffering (request streams: per-message limit = `maxBodyBytes` → 413; malformed → 400; clients map undecodable responses to 502).
 
 - **Lane** = call index in a pipelined batch (§10) or blob id; 0 for single calls.
 - Parser is a byte-stream state machine; DATA-frame / chunk boundaries are meaningless.
@@ -114,7 +119,7 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 
 ## 7. Errors
 
-- Unary: HTTP status + `application/problem+json` (RFC 9457). Generic errors use `about:blank` with the status phrase as `title`; apü protocol errors have `type` URIs (`…/validation-failed`, `…/unknown-operation`, `…/truncated-stream`, `…/deadline-exceeded`, `…/idempotency-key-in-progress`, `…/idempotency-key-reused`; namespace `https://apue.dev/problems/` is a placeholder). Extension members: `retryable` (bool), `fields` (per-field validation errors).
+- Unary: HTTP status + `application/problem+json` (RFC 9457). Generic errors use `about:blank` with the status phrase as `title`; apü protocol errors have `type` URIs under `https://apue.dev/problems/` (placeholder namespace): `validation-failed`, `unknown-operation`, `truncated-stream`, `malformed-stream`, `deadline-exceeded`, `idempotency-key-in-progress`, `idempotency-key-reused`, `failed-dependency`, `unresolvable-reference`, `invalid-batch`, `invalid-resume-token`, `invalid-selection`. Extension members: `retryable` (bool), `fields` (per-field validation errors). Unexpected handler errors → 500 without details (logged server-side).
 - Streams: if the stream fails before its first item and within the **commit window** (server-chosen, default 50 ms), the server answers with a real HTTP status + problem+json — visible to proxies and dashboards. Otherwise headers are committed (short TTFB) and later failures go into an END frame `{status: <http-status-code>, problem}`.
 - Batches: each lane ends with its own END → partial failure is explicit. The HTTP status is 200 if the batch was *accepted*.
 
@@ -128,16 +133,16 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 | T3 | WebSocket (RFC 6455/8441) carrying the same frames | ← | all browsers |
 | T4 | WebTransport bidi stream carrying the same frames | ← | all engines since Safari 26.4; draft |
 
-- Clients negotiate down: T1 → T4 → T3.
+- Client selection (implemented): Node uses T1 (`http2Transport`); browsers use `autoTransport()` — fetch (T0) for everything, T2 for request streams where fetch can stream uploads (Chromium), otherwise T3. T4 (WebTransport) is planned; Node has no WebTransport server.
 - **Verified in real browsers (S5, Chrome 156 and Firefox, headless):** T0 everywhere incl. h2, QUERY and preflighted custom headers, compression (zstd) and cancellation; **T2 works in Chrome, not in Firefox** (feature-detected); **T3 works in both** (full duplex verified). T4 not implemented (no WebTransport server in Node).
 - **T3 (implemented):** one WebSocket per call (`wss://…/{op}`, subprotocol `apue.v0` required), carrying the *unchanged* apü frame stream in both directions inside binary messages (message boundaries are irrelevant; fragmentation allowed). Handshake via HTTP/2 extended CONNECT (RFC 8441; the server advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`) or HTTP/1.1 Upgrade. Observed: Firefox and Node's WebSocket client use RFC 8441 over the existing h2 connection. Chrome (RFC 8441 by default since M91) only *reuses* an existing h2 session with an identical session key and never opens a fresh h2 connection for a WebSocket; a cross-origin fetch without credentials has a different key (privacy mode) than the always-credentialed WebSocket, so Chrome fell back to HTTP/1.1 — with `fetchTransport(url, { credentials: 'include' })` (CORS `credentials: true`) Chrome used RFC 8441 over the shared connection (verified in S6). Same-origin deployment gets this by default. Origin is checked against the CORS list (or same-origin) to prevent cross-site WebSocket hijacking. Browsers can't set WebSocket headers, so the deadline is `?timeout=ms`; errors (including handshake-independent ones like 404/415) arrive in-band as END frames; the server closes with 1000 after END, 1001 on shutdown; the client closes with 4000 to cancel. Text frames → 1003, unmasked/invalid frames → 1002. `autoTransport()` picks fetch for everything and WebSocket only for request streams when fetch can't stream uploads (Firefox, Safari).
-- Consumer-paced streams use **CREDIT** frames (transport backpressure doesn't survive buffering proxies; browsers buffer 6–15 MiB).
+- Consumer-paced streams will use **CREDIT** frames (*planned*; transport backpressure doesn't survive buffering proxies, browsers buffer 6–15 MiB). Today: HTTP/2 flow control end-to-end where no proxy buffers, plus per-stream server buffers bounded at 256 KiB.
 - **Resume** (implemented, S7): ops declared `resumable: true` (server streams; safe or idempotent only, because resuming re-sends the request). The handler calls `ctx.checkpoint(cursor)` after the items the cursor covers; the server sends a CHECKPOINT frame with a self-contained token `base64url(JSON{op, 128-bit input hash, cursor, expiry}).HMAC-SHA256` (~140 bytes). After a transport loss the client re-sends the call with `apue-resume: <token>` (SSE: `id:` / `Last-Event-ID`); any replica with the shared secret verifies it (no sticky sessions, no stream state) and passes `ctx.resumeFrom`. Invalid, foreign, expired tokens or tokens for another input → 400 `invalid-resume-token` before the stream starts. Contract: from a cursor, the handler replays the same items in the same order; the client counts messages since the last checkpoint and skips that many → exactly-once delivery to the consumer (verified for 30 cut positions × 2 losses). Never resumed: END with an error, malformed frames, no checkpoint yet, budget (`resumes`, default 3) exhausted. Batch lanes and WebSocket calls are not resumable.
 
 ## 9. Caching
 
-- Safe ops: `Cache-Control` from op `cache` declaration, `ETag`, `stale-while-revalidate`; `CDN-Cache-Control` (RFC 9213); `Cache-Groups` (RFC 9875) for invalidation.
-- QUERY responses MAY return `Location` / `Content-Location` → GET-able URL.
+- Implemented: `Cache-Control` from the op's `cache` declaration (`max-age`, `stale-while-revalidate`, `private`), strong `ETag` per representation (content-coding and selection included), `If-None-Match` → 304, `Vary` for `accept`, `accept-encoding`, `origin` as applicable, HEAD.
+- Planned: `CDN-Cache-Control` (RFC 9213), `Cache-Groups` (RFC 9875) for invalidation; QUERY responses with `Location` / `Content-Location` → GET-able URL. Note: no CDN caches QUERY today (research/05).
 
 ## 10. Pipelined batches (promise pipelining)
 
@@ -172,31 +177,44 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 
 ## 12. Data plane & performance guidance
 
-- **Encoding**: JSON default (V8-native, debuggable; no replacer/reviver in hot path); bigint/decimal as strings. CBOR optional via `Accept`, later with schema-compiled codecs (no eval).
+- **Encoding**: JSON (V8-native, debuggable; no replacer/reviver in the hot path); bigint/decimal as strings. CBOR via `Accept` is planned, and only worth it with schema-compiled codecs (research/03: generic binary decoders in JS reach ~1–3× `JSON.parse`).
 - **Compression** (implemented, measured — docs/benchmarks.md): `Accept-Encoding` negotiation (q-values; server preference zstd > br > gzip). Defaults zstd-3, brotli-4, gzip-1 (brotli-11 runs at ~1 MiB/s: never dynamic). Unary bodies ≥ 1 KiB, off the event loop ≥ 64 KiB; `Vary: accept-encoding`; ETag per content-coding. Streams: compressor flushed after every frame burst (TTFB unaffected, tested per coding). On a 100 Mbit/s, 63 ms RTT link zstd gives 2.7× stream and 1.8× bulk throughput. Never mix secrets with attacker-echoed data in one stream. Optional later: RFC 9842 schema-derived dictionary.
 - **HTTP/2 tuning (both ends)**: stream window 4 MiB, connection window 32 MiB (Node ≥ 26.11 `connectionWindowSize`; Node 26.12.1 still defaults to 64 KiB, which costs 12× download throughput at 63 ms RTT), frames ≤ 16 KiB, TCP_NODELAY, frames coalesced into one write per event-loop turn (≤ 16 KiB), up to 256 KiB buffered per stream before the producer waits for `drain`.
 - **Headers**: op in `:path`; few stable SF headers; one entropy field; compact auth tokens.
 
 ## 13. Open questions
 
-1. ~~`idempotent` ops: POST + key vs. PUT?~~ → POST + key (PUT means "replace the target resource", wrong for RPC).
-2. ~~Do common CDNs pass `QUERY`?~~ → No for CloudFront (403) and Akamai (501), yes for Fastly/nginx/Envoy ≥ 1.40/HAProxy, none cache it (research/05) → client fallback to POST.
-7. Problem type namespace (placeholder `https://apue.dev/problems/`).
-3. Correlated-pair duplex for browsers without WebSocket/WebTransport — needs shared state; drop?
-4. Per-frame vs per-stream compression default.
-5. Projection syntax (paths vs. FieldMask-like).
-6. Auth: out of scope (standard `Authorization`), or define token-binding guidance?
+Resolved:
+- `idempotent` ops: POST + key, not PUT (PUT means "replace the target resource").
+- QUERY through CDNs: CloudFront (403) and Akamai (501) reject it, nginx/Envoy ≥ 1.40/HAProxy/Fastly forward it, none cache it → client falls back to POST; verified through nginx 1.31.8.
+- Browser duplex without request streaming: WebSocket tier T3 instead of correlated request pairs (no shared state needed).
+- Compression: per stream via `Content-Encoding` with per-burst flush (measured: TTFB unaffected).
+- Projection syntax: dotted paths validated against the output schema.
 
-## 14. Spike plan (Node 26, native TS, no build step)
+Open:
+1. CBOR encoding and schema-compiled codecs — worth it only where CPU, not network, dominates.
+2. BLOB frames vs. out-of-band URLs for large binaries; resumable uploads.
+3. CREDIT frames for consumer-paced bidi streams.
+4. WebTransport (T4) once a server implementation exists for Node; HTTP/3 in Node.
+5. Problem type namespace (placeholder `https://apue.dev/problems/`).
+6. Auth: out of scope (standard `Authorization`), or define token-binding guidance? (Idempotency keys are already scoped per credentials.)
+7. Long-running operations: resumable streams cover progress + result; is a separate pattern needed?
+8. Non-TypeScript schema source (the manifest is JSON Schema; a code generator for other languages).
 
-| Spike | Goal | Validates |
+## 14. Spikes (Node 26, native TS, no build step)
+
+| Spike | Goal | Status |
 |---|---|---|
-| **S0** | Skeleton: `package.json` (`type: module`), typecheck-only `tsconfig`, mkcert certs, `node --test` | platform |
-| **S1** | Frame codec (encode / streaming decode) + h2 server streaming + Node client; measure TTFB | §6, §3 |
-| **S2** | Schema builder + op registry + HTTP mapping (GET/QUERY/POST), JCS, problem+json, ETag | §4, §5, §7, §11 |
-| **S3** | Pipelined batch with `$ref`, out-of-order lanes, 424 propagation | §10 |
-| **S4** | Benchmark harness: apü vs plain JSON over h2; window sizes; compression on/off; frame coalescing | §12 |
-| **S5** | Browser client (fetch + ReadableStream) over TLS; T0 everywhere, T2 in Chrome, T3 WebSocket | §8 |
+| S0 | Skeleton: `type: module`, typecheck-only `tsconfig`, `node --test` | ✅ |
+| S1 | Frame codec, h2 server streaming, Node client, TTFB | ✅ |
+| S2 | Schemas, op registry, HTTP mapping (GET/QUERY/POST), JCS, problem+json, ETag, idempotency | ✅ |
+| S3 | Pipelined batches with `$ref`, out-of-order lanes, 424 | ✅ |
+| S4 | Benchmarks (local, constrained Docker, WAN emulation), profiling, compression | ✅ |
+| S5 | CORS; real-browser tests (Chrome, Firefox) | ✅ |
+| S6 | Fuzzing; tier T3 (WebSocket, RFC 8441/6455) | ✅ |
+| S7 | Resumable streams | ✅ |
+| S8 | Real intermediary (nginx) | ✅ |
+| S9 | Field selection, resource limits, example app, api-catalog | ✅ |
 
 Dependencies: none at runtime; `typescript` + `@types/node` as devDependencies for typechecking only.
 

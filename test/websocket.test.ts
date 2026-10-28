@@ -26,6 +26,7 @@ const api = defineApi({
   'stall.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'flood': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.string() }),
   'echo.big': op({ effect: 'unsafe', stream: 'bidi', input: t.string(), output: t.string() }),
+  'fails.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.number() }),
 });
 let aborted = 0;
 let flooded = 0;
@@ -61,6 +62,9 @@ const handlers: Handlers<typeof api> = {
   },
   'echo.big': async function* (inputs) {
     for await (const s of inputs) yield s;
+  },
+  'fails.duplex': async function* (inputs) {
+    for await (const _ of inputs) throw new ApueError(409, 'Conflict', 'fails on purpose');
   },
 };
 
@@ -547,6 +551,23 @@ test('a stream message failing client-side validation is a 400 over WebSocket to
     yield 'two' as unknown as number;
   }
   await assert.rejects(Array.fromAsync(client.duplex('echo.duplex', bad())), (e: ApueError) => e.status === 400 && /input message 1/.test(e.problem.detail ?? ''));
+  await client.close();
+});
+
+test('the client closes with 1000 after END (also an error END) and with 4000 when it cancels', async () => {
+  const codes: number[] = [];
+  class Recording extends WebSocket {
+    override close(code?: number, reason?: string) {
+      codes.push(code ?? 1005);
+      super.close(code, reason);
+    }
+  }
+  const client = new ApueClient(api, webSocketTransport(server.url, { WebSocketImpl: Recording }));
+  assert.equal((await Array.fromAsync(client.duplex('echo.duplex', numbers(3)))).length, 3);
+  await assert.rejects(Array.fromAsync(client.duplex('fails.duplex', numbers(1))), (e: ApueError) => e.status === 409); // an error END
+  for await (const _ of client.duplex('slow.duplex', numbers(1))) break; // cancel
+  await sleep(50);
+  assert.deepEqual(codes, [1000, 1000, 4000]);
   await client.close();
 });
 

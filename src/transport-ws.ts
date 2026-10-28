@@ -248,13 +248,16 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
           }
         } finally {
           signal.removeEventListener('abort', onAbort);
-          if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close(WS_CLOSE_CANCELLED, 'cancelled');
+          // After END a normal close (the server answers it at once); before END a cancellation.
+          if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close(completed ? 1000 : WS_CLOSE_CANCELLED, completed ? '' : 'cancelled');
         }
       }
+      let completed = false;
       const response: TransportResponse = {
         status: 200,
         headers: new Headers({ 'content-type': MediaType.STREAM_JSON }),
         body: responseBody(),
+        complete: () => void (completed = true),
       };
       return response;
     },

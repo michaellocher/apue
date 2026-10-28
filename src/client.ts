@@ -33,6 +33,11 @@ export interface TransportResponse {
   body: AsyncIterable<Uint8Array>;
   /** Optional fast path for reading the whole body (unary responses); consumes `body`. */
   bytes?(): Promise<Uint8Array>;
+  /**
+   * Called when the END frame arrived: the call ended as the protocol intends (also with an error
+   * status), so stopping to read the body now is not a cancellation (WebSocket: close 1000, not 4000).
+   */
+  complete?(): void;
 }
 
 export interface Transport {
@@ -245,6 +250,7 @@ export class ApueClient<A extends Api> {
               } else if (frame.type === FrameType.END) {
                 const info = decodeJson(frame.payload) as EndInfo;
                 finished = true;
+                res.complete?.();
                 if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
                 return;
               }

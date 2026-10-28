@@ -17,16 +17,23 @@ export interface UploadOptions {
   storeBytes?: number;
   /** Lifetime of an upload resource from its creation (Upload-Limit max-age). Default 1 h. */
   ttlMs?: number;
-  /** Bytes one credentials scope may hold (so one client can't lock out the rest). Default storeBytes / 4. */
+  /**
+   * Bytes one client may hold (so one client can't lock out the rest). A client is its credentials
+   * (Authorization) or, without them, its address — behind a proxy all anonymous clients share
+   * the proxy's address. Default storeBytes / 4.
+   */
   scopeBytes?: number;
-  /** Upload resources one credentials scope may hold, complete or not. Default 100. */
+  /** Upload resources one client may hold, complete or not. Default 100. */
   scopeUploads?: number;
   now?: () => number;
 }
 
 interface Upload {
   readonly id: string;
+  /** Who may access it (credentials). */
   readonly scope: string;
+  /** Whose quota it counts against (credentials, or the address of an anonymous client). */
+  readonly quota: string;
   readonly expires: number;
   chunks: Uint8Array[];
   offset: number;
@@ -77,14 +84,21 @@ export class UploadStore {
     return this.#stored;
   }
 
-  create(scope: string, length: number | undefined): Upload {
+  /** The largest upload one client can make: the per-upload and the per-client limit. */
+  get maxSize(): number {
+    return Math.min(this.maxBytes, this.scopeBytes);
+  }
+
+  create(scope: string, quota: string, length: number | undefined): Upload {
     this.#sweep();
-    if (length !== undefined && length > this.maxBytes) throw tooLarge(this.maxBytes);
-    const usage = this.#usageOf(scope);
+    if (length !== undefined && length > this.maxSize) throw tooLarge(this.maxSize);
+    const usage = this.#usageOf(quota);
     if (usage.uploads >= this.scopeUploads) throw quotaExceeded(`${this.scopeUploads} uploads`);
+    if (length !== undefined && usage.bytes + length > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
     const upload: Upload = {
       id: randomBytes(16).toString('base64url'),
       scope,
+      quota,
       expires: this.#now() + this.ttlMs,
       chunks: [],
       offset: 0,
@@ -121,6 +135,8 @@ export class UploadStore {
   }
 
   append(upload: Upload, chunk: Uint8Array): void {
+    // Deleted meanwhile (DELETE, expiry): counting its bytes would recreate a usage entry nothing frees.
+    if (this.#uploads.get(upload.id) !== upload) throw notFound();
     if (upload.length !== undefined && upload.offset + chunk.byteLength > upload.length) {
       this.delete(upload);
       throw inconsistentLength(`content beyond Upload-Length ${upload.length}`);
@@ -129,7 +145,7 @@ export class UploadStore {
       this.delete(upload);
       throw tooLarge(this.maxBytes);
     }
-    const usage = this.#usageOf(upload.scope);
+    const usage = this.#usageOf(upload.quota);
     if (usage.bytes + chunk.byteLength > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
     if (this.#stored + chunk.byteLength > this.storeBytes) {
       throw new ApueError(503, 'Service Unavailable', 'upload storage is full', { retryable: true }, { 'retry-after': '60' });
@@ -152,9 +168,9 @@ export class UploadStore {
     if (this.#uploads.get(upload.id) !== upload) return;
     this.#uploads.delete(upload.id);
     this.#stored -= upload.offset;
-    const usage = this.#usageOf(upload.scope);
+    const usage = this.#usageOf(upload.quota);
     usage.bytes -= upload.offset;
-    if (--usage.uploads === 0) this.#usage.delete(upload.scope);
+    if (--usage.uploads === 0) this.#usage.delete(upload.quota);
     upload.writer?.abort();
   }
 
@@ -166,7 +182,7 @@ export class UploadStore {
 
   limits(upload?: Upload): string {
     const maxAge = Math.max(0, Math.ceil(((upload?.expires ?? this.#now() + this.ttlMs) - this.#now()) / 1000));
-    return `max-size=${this.maxBytes}, max-age=${maxAge}`;
+    return `max-size=${this.maxSize}, max-age=${maxAge}`;
   }
 
   #sweep(): void {
@@ -182,12 +198,12 @@ export class UploadStore {
  * Serves `/$uploads` (creation, OPTIONS) and `/$uploads/{id}` (HEAD/GET offset, PATCH append,
  * DELETE). `scope` identifies the credentials (uploads are invisible to other principals).
  */
-export async function handleUpload(req: Exchange, store: UploadStore, scope: string, path: string): Promise<UploadResponse> {
+export async function handleUpload(req: Exchange, store: UploadStore, scope: string, quota: string, path: string): Promise<UploadResponse> {
   const id = path === UPLOADS_PATH ? undefined : path.slice(UPLOADS_PATH.length + 1);
   if (id === undefined) {
     if (req.method === 'OPTIONS') return { status: 204, headers: { 'upload-limit': store.limits(), allow: 'OPTIONS, POST' } };
     if (req.method !== 'POST') throw notAllowed('OPTIONS, POST');
-    return create(req, store, scope);
+    return create(req, store, scope, quota);
   }
   if (!/^[A-Za-z0-9_-]{22}$/.test(id)) throw notFound();
   const upload = store.get(id, scope);
@@ -211,11 +227,11 @@ export async function handleUpload(req: Exchange, store: UploadStore, scope: str
   }
 }
 
-async function create(req: Exchange, store: UploadStore, scope: string): Promise<UploadResponse> {
+async function create(req: Exchange, store: UploadStore, scope: string, quota: string): Promise<UploadResponse> {
   // Without Upload-Complete this is a plain (non-resumable) upload of the whole content.
   const complete = parseBoolean(req.headers['upload-complete'], 'Upload-Complete') ?? true;
   const length = parseInteger(req.headers['upload-length'], 'Upload-Length');
-  const upload = store.create(scope, length);
+  const upload = store.create(scope, quota, length);
   const location = `${UPLOADS_PATH}/${upload.id}`;
   if (req.headers['upload-draft-interop-version'] === UPLOAD_INTEROP_VERSION) {
     req.interim?.(104, { location, 'upload-limit': store.limits(upload), 'upload-draft-interop-version': UPLOAD_INTEROP_VERSION });
@@ -326,8 +342,9 @@ const inconsistentLength = (detail: string) => new ApueError(400, 'Bad Request',
 const tooLarge = (max: number) => new ApueError(413, 'Content Too Large', `uploads are limited to ${max} bytes`);
 const notFound = () => new ApueError(404, 'Not Found', 'no such upload (unknown, expired or not yours)');
 const notAllowed = (allow: string) => new ApueError(405, 'Method Not Allowed', undefined, {}, { allow });
+// 507 (Insufficient Storage, RFC 4918 §11.5), not 429: retrying soon won't help; deleting uploads will.
 const quotaExceeded = (what: string) =>
-  new ApueError(429, 'Too Many Requests', `this client's uploads are limited to ${what}; finished uploads expire or can be deleted`, {}, { 'retry-after': '60' });
+  new ApueError(507, 'Insufficient Storage', `this client's uploads are limited to ${what}; finished uploads expire or can be deleted`);
 
 function parseBoolean(value: string | string[] | undefined, name: string): boolean | undefined {
   if (value === undefined) return undefined;

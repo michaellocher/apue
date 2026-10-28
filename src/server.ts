@@ -483,7 +483,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       if (url.pathname === UPLOADS_PATH || url.pathname.startsWith(`${UPLOADS_PATH}/`)) {
         if (!uploads) throw new ApueError(404, 'Not Found', 'uploads are not enabled on this server');
-        const response = await handleUpload(req, uploads, credentialScope(req), url.pathname);
+        const scope = credentialScope(req);
+        const quota = req.headers.authorization ? scope : `addr:${req.remoteAddress ?? ''}`;
+        const response = await handleUpload(req, uploads, scope, quota, url.pathname);
         complete();
         return void res.send(response.status, response.headers, head ? undefined : response.body);
       }

@@ -27,6 +27,8 @@ export interface Exchange extends AsyncIterable<Uint8Array> {
   onClose(callback: () => void): void;
   /** Sends an interim (1xx) response, where the protocol allows it (HTTP/2; Node's HTTP/1.1 API cannot). */
   interim?(status: number, headers: Record<string, string>): void;
+  /** The peer's address (behind a proxy: the proxy's). */
+  readonly remoteAddress?: string | undefined;
 }
 
 export class H2Exchange implements Exchange {
@@ -47,6 +49,10 @@ export class H2Exchange implements Exchange {
     this.headers = headers;
     this.method = headers[':method'] ?? 'GET';
     this.url = headers[':path'] ?? '/';
+  }
+
+  get remoteAddress(): string | undefined {
+    return this.#stream.session?.socket?.remoteAddress;
   }
 
   get sink(): Writable {
@@ -133,6 +139,9 @@ export class H1Exchange implements Exchange {
   }
   get headers(): IncomingHttpHeaders {
     return this.#req.headers;
+  }
+  get remoteAddress(): string | undefined {
+    return this.#req.socket.remoteAddress;
   }
   get httpVersion(): string {
     return this.#req.httpVersion;

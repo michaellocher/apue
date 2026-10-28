@@ -4,7 +4,7 @@ import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from
 import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared, type WithUploadRefs } from './client.ts';
 import { decodeFrameBatches, decodeJson, FrameError, FrameType, type EndInfo } from './frame.ts';
 import { containsBytes } from './schema.ts';
-import { ApueError, baseMediaType, MediaType, ProblemType } from './protocol.ts';
+import { ApueError, baseMediaType, isUploadRef, MediaType, ProblemType, type UploadRef } from './protocol.ts';
 import { BlobAssembler } from './blobs.ts';
 import { containsRef, encodeArgs, Ref } from './refs.ts';
 
@@ -165,9 +165,9 @@ export class Batch<A extends Api> {
     for (const lane of lanesOf(input)) {
       if (lane >= sink.lane) throw new Error(`ref to call ${lane} must come from an earlier call in this batch`);
     }
-    // Inputs containing refs can only be validated on the server, after resolution; inputs with
-    // bytes are validated when their bytes are uploaded (send).
-    const value = containsRef(input) || containsBytes(def.input) ? input : validate(def, input, `input of call ${sink.lane}`);
+    // Inputs containing refs can only be validated on the server, after resolution; inputs holding
+    // upload() references are validated at send, when they stand in for bytes.
+    const value = containsRef(input) || hasUploadRef(input) ? input : validate(def, input, `input of call ${sink.lane}`);
     this.#entries.push({ op, def, input: value, sink });
     return sink;
   }
@@ -175,16 +175,20 @@ export class Batch<A extends Api> {
   async #run(options: CallOptions): Promise<void> {
     const controller = new AbortController();
     const unlink = linkSignal(options.signal, controller);
-    // Bytes in inputs become upload references first (deleted again once the batch has settled).
-    const uploads = await Promise.all(this.#entries.map(({ def, input }) => this.#client.prepareUploads(def, input, controller.signal, !containsRef(input)))).catch((error: unknown) => {
-      unlink();
-      throw error;
-    });
+    // Bytes in inputs become upload references first; whatever was uploaded is deleted again once
+    // the batch has settled — also when one lane's upload or validation fails (the others are stopped).
+    const created: UploadRef[] = [];
     try {
-      await this.#exchange(options, controller, uploads.map((u) => u.input));
+      const lanes = this.#entries.map(({ def, input }, lane) => this.#client.prepareUploads(def, input, controller.signal, created, `input of call ${lane}`, !containsRef(input)));
+      for (const lane of lanes) lane.catch((error: unknown) => controller.abort(error)); // one fails: stop the others
+      const results = await Promise.allSettled(lanes); // all settled: `created` is complete for the cleanup
+      const failed = results.find((result) => result.status === 'rejected');
+      // The root cause, not the abort it caused in an earlier lane.
+      if (failed) throw controller.signal.aborted ? controller.signal.reason : failed.reason;
+      await this.#exchange(options, controller, results.map((result) => (result as PromiseFulfilledResult<unknown>).value));
     } finally {
       unlink();
-      this.#client.releaseUploads(uploads.flatMap((u) => u.created));
+      this.#client.releaseUploads(created);
     }
   }
 
@@ -250,4 +254,11 @@ function lanesOf(value: unknown, lanes: number[] = []): number[] {
   else if (Array.isArray(value)) for (const item of value) lanesOf(item, lanes);
   else if (value !== null && typeof value === 'object') for (const item of Object.values(value)) lanesOf(item, lanes);
   return lanes;
+}
+
+/** Whether a value holds an upload() reference anywhere (validation then waits until send). */
+function hasUploadRef(value: unknown): boolean {
+  if (isUploadRef(value)) return true;
+  if (value === null || typeof value !== 'object' || value instanceof Uint8Array) return false;
+  return Object.values(value).some(hasUploadRef);
 }

@@ -11,6 +11,7 @@ import { ApueError } from '../src/protocol.ts';
 import { http2Transport } from '../src/transport-http2.ts';
 import { t } from '../src/schema.ts';
 import { createApueServer, type Handlers } from '../src/server.ts';
+import { UploadStore } from '../src/uploads.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const MiB = 1024 * 1024;
@@ -192,15 +193,24 @@ describe('resumable uploads (draft-14)', () => {
         req.on('error', reject);
         if (body !== undefined) req.end(body);
       });
-    const alice = { authorization: 'Bearer alice', 'upload-complete': '?1' };
-    assert.equal((await at('POST', '/$uploads', alice, new Uint8Array(MiB))).status, 201);
-    const over = await at('POST', '/$uploads', alice, new Uint8Array(1));
-    assert.equal(over.status, 429); // alice's 1 MiB are used up …
-    assert.equal((await at('POST', '/$uploads', { authorization: 'Bearer bob', 'upload-complete': '?1' }, new Uint8Array(MiB))).status, 201); // … bob is unaffected
-    const many = { authorization: 'Bearer carol', 'upload-complete': '?0' };
-    for (let i = 0; i < 3; i++) assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 201);
-    assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 429); // 3 uploads per scope
-    await small.close();
+    try {
+      const alice = { authorization: 'Bearer alice', 'upload-complete': '?1' };
+      assert.equal((await at('OPTIONS', '/$uploads', {})).headers['upload-limit'], `max-size=${MiB}, max-age=3600`); // min(maxBytes, scopeBytes)
+      assert.equal((await at('POST', '/$uploads', { ...alice, 'upload-length': String(MiB + 1) }, new Uint8Array(0))).status, 413); // can never fit
+      assert.equal((await at('POST', '/$uploads', alice, new Uint8Array(MiB))).status, 201);
+      const over = await at('POST', '/$uploads', alice, new Uint8Array(1));
+      assert.equal(over.status, 507); // alice's 1 MiB are used up (Insufficient Storage: retrying won't help) …
+      assert.equal((await at('POST', '/$uploads', { authorization: 'Bearer bob', 'upload-complete': '?1' }, new Uint8Array(MiB))).status, 201); // … bob is unaffected
+      const many = { authorization: 'Bearer carol', 'upload-complete': '?0' };
+      for (let i = 0; i < 3; i++) assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 201);
+      assert.equal((await at('POST', '/$uploads', many, new Uint8Array(0))).status, 507); // 3 uploads per client
+      // Without credentials the quota is per address (here all tests share 127.0.0.1): one bucket, not unlimited.
+      const anonymous = { 'upload-complete': '?1' };
+      assert.equal((await at('POST', '/$uploads', anonymous, new Uint8Array(MiB))).status, 201);
+      assert.equal((await at('POST', '/$uploads', anonymous, new Uint8Array(1))).status, 507);
+    } finally {
+      await small.close();
+    }
   });
 
   test('DELETE cancels (§9); unknown ids and other credentials see 404 (§20.1)', async () => {
@@ -269,6 +279,18 @@ describe('resumable uploads (draft-14)', () => {
     assert.equal(await staleStatus, 409);
     session.destroy();
   });
+});
+
+test('UploadStore: appending to a deleted upload is refused and leaves the accounting alone', () => {
+  const store = new UploadStore({ scopeBytes: 100, scopeUploads: 1 });
+  const upload = store.create('s', 'q', undefined);
+  store.append(upload, new Uint8Array(10));
+  store.delete(upload);
+  assert.equal(store.storedBytes, 0);
+  assert.throws(() => store.append(upload, new Uint8Array(10)), (e: ApueError) => e.status === 404);
+  assert.equal(store.storedBytes, 0);
+  const next = store.create('s', 'q', undefined); // the quota was freed completely (1 upload, 100 bytes)
+  store.append(next, new Uint8Array(100));
 });
 
 describe('upload references in op inputs', () => {
@@ -456,6 +478,88 @@ describe('client uploads (ApueClient.upload and t.bytes() inputs)', () => {
     await client.close();
     // the batch's own upload is cleaned up; the caller's upload() reference is theirs to keep
     assert.equal(log.filter((r) => r.method === 'DELETE').length, 1);
+  });
+
+  test('when one upload of a call fails, the completed ones are deleted (call and batch)', async () => {
+    const inner = h2();
+    const tooBig = new Uint8Array(5 * MiB); // > max-size: 413 at creation
+    // The small uploads finish only after the big one has failed: cleanup must wait for them.
+    const { transport, log } = recording(inner, (req) => (req.method === 'PATCH' ? (sleep(150).then(() => inner.request(req)) as never) : req));
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    await assert.rejects(client.call('files.store', { name: 'x', data: tooBig, thumb: new Uint8Array(100) }), (e: ApueError) => e.status === 413);
+    const batch = client.batch();
+    batch.call('files.store', { name: 'a', data: new Uint8Array(100) });
+    batch.call('files.store', { name: 'b', data: tooBig });
+    await assert.rejects(batch.send(), (e: ApueError) => e.status === 413);
+    await client.close();
+    const completed = log.filter((r) => r.method === 'PATCH').map((r) => r.path);
+    assert.equal(completed.length, 2); // the two small uploads
+    assert.deepEqual(log.filter((r) => r.method === 'DELETE').map((r) => r.path).sort(), completed.sort());
+  });
+
+  test('a completed upload naming another id than its location is refused (and cleaned up)', async () => {
+    const seen: string[] = [];
+    const fake: Transport = {
+      async request(req) {
+        seen.push(`${req.method} ${req.path}`);
+        const body = req.method === 'PATCH' ? JSON.stringify({ upload: '../files.store' }) : '';
+        const headers = new Headers(req.method === 'POST' ? { location: '/$uploads/abcdefghijklmnopqrstuv' } : { 'upload-complete': '?1' });
+        return { status: req.method === 'DELETE' ? 204 : 201, headers, body: (async function* () { yield new TextEncoder().encode(body); })() };
+      },
+    };
+    const client = new ApueClient(api, fake);
+    await assert.rejects(client.upload(new Uint8Array(3)), (e: ApueError) => e.status === 502 && /another id/.test(e.message));
+    await client.close();
+    assert.deepEqual(seen, ['POST /$uploads', 'PATCH /$uploads/abcdefghijklmnopqrstuv', 'DELETE /$uploads/abcdefghijklmnopqrstuv']);
+  });
+
+  test('Retry-After is honoured; 507 (quota) is not retried', async () => {
+    let busy = true;
+    const { transport } = recording(h2(), (req) => {
+      if (req.method === 'PATCH' && busy) {
+        busy = false;
+        return Promise.resolve({ status: 503, headers: new Headers({ 'retry-after': '1', 'content-type': 'application/problem+json' }), body: (async function* () {})() }) as never;
+      }
+      return req;
+    });
+    const client = new ApueClient(api, transport, { backoffMs: 1 });
+    const started = performance.now();
+    await client.upload(new Uint8Array(10));
+    assert.ok(performance.now() - started >= 900, 'retried before Retry-After');
+    await client.close();
+    const quota = await startServer(api, handlers, { uploads: { scopeBytes: 64 * 1024, scopeUploads: 1 } });
+    try {
+      const { transport: t2, log } = recording(http2Transport(quota.url, { ca: testCert().cert }));
+      const limited = new ApueClient(api, t2, { backoffMs: 1 });
+      await limited.upload(new Uint8Array(10));
+      await assert.rejects(limited.upload(new Uint8Array(10)), (e: ApueError) => e.status === 507);
+      assert.equal(log.filter((r) => r.method === 'POST').length, 2); // once each: no retries of the 507
+      await limited.close();
+    } finally {
+      await quota.close();
+    }
+  });
+
+  test('close() does not hang on an unanswered DELETE (time-boxed)', { timeout: 15_000 }, async () => {
+    const { transport } = recording(h2(), (req) =>
+      req.method === 'DELETE' ? (new Promise<never>((_resolve, reject) => req.signal.addEventListener('abort', () => reject(req.signal.reason), { once: true })) as never) : req,
+    );
+    const client = new ApueClient(api, transport);
+    await client.call('files.store', { name: 'd', data: new Uint8Array(10) });
+    const started = performance.now();
+    await client.close();
+    assert.ok(performance.now() - started < 7000, `close took ${(performance.now() - started).toFixed(0)} ms`);
+  });
+
+  test('batch inputs with bytes are validated in add(), naming the call', async () => {
+    const client = new ApueClient(api, h2());
+    const batch = client.batch();
+    batch.call('files.store', { name: 'ok', data: new Uint8Array(1) });
+    assert.throws(() => batch.call('files.store', { name: 1 as unknown as string, data: new Uint8Array(1) }), /input of call 1/);
+    const ref = await client.upload(new Uint8Array(4));
+    const picked = await client.pick('files.store', { name: 'p', data: ref }, ['size']); // UploadRef is typed for pick() too
+    assert.deepEqual(picked, { size: 4 });
+    await client.close();
   });
 
   test('invalid input fails on the client before anything is uploaded', async () => {

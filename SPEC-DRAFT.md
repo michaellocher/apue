@@ -139,6 +139,24 @@ Limits (implemented): a frame header announcing more than the limit is rejected 
 - Consumer-paced streams will use **CREDIT** frames (*planned*; transport backpressure doesn't survive buffering proxies, browsers buffer 6–15 MiB). Today: HTTP/2 flow control end-to-end where no proxy buffers, plus per-stream server buffers bounded at 256 KiB.
 - **Resume** (implemented, S7): ops declared `resumable: true` (server streams; safe or idempotent only, because resuming re-sends the request). The handler calls `ctx.checkpoint(cursor)` after the items the cursor covers; the server sends a CHECKPOINT frame with a self-contained token `base64url(JSON{op, 128-bit input hash, cursor, expiry}).HMAC-SHA256` (~140 bytes). After a transport loss the client re-sends the call with `apue-resume: <token>` (SSE: `id:` / `Last-Event-ID`); any replica with the shared secret verifies it (no sticky sessions, no stream state) and passes `ctx.resumeFrom`. Invalid, foreign, expired tokens or tokens for another input → 400 `invalid-resume-token` before the stream starts. Contract: from a cursor, the handler replays the same items in the same order; the client counts messages since the last checkpoint and skips that many → exactly-once delivery to the consumer (verified for 30 cut positions × 2 losses). Never resumed: END with an error, malformed frames, no checkpoint yet, budget (`resumes`, default 3) exhausted. Batch lanes and WebSocket calls are not resumable.
 
+### Pattern: long-running operations (no extra protocol needed)
+
+Built only from implemented features (resolves the AIP-151 / MCP-"Tasks" question for apü):
+
+```ts
+'reports.start': op({ effect: 'unsafe', input: ReportRequest, output: t.object({ jobId: t.string() }) }),       // POST + Idempotency-Key: retries never start a second job
+'reports.watch': op({ effect: 'safe', stream: 'server', resumable: true,                                       // progress events, then the result
+                      input: t.object({ jobId: t.string() }), output: JobEvent }),
+'reports.get':   op({ effect: 'safe', input: t.object({ jobId: t.string() }), output: JobState }),              // GET, ETag/304: for clients that poll
+```
+
+- Start is idempotent through the key, so a lost response is simply retried.
+- Watching is a resumable stream: the handler checkpoints after each event (cursor = event sequence
+  number); a client that loses the connection resumes on any replica without missing or repeating
+  events (exactly-once, §8). The stream ends with the result or an in-band error.
+- Polling clients use the cacheable `reports.get`; `If-None-Match` makes unchanged polls cheap.
+- Cancellation is an ordinary op (`reports.cancel`, idempotent).
+
 ## 9. Caching
 
 - Implemented: `Cache-Control` from the op's `cache` declaration (`max-age`, `stale-while-revalidate`, `private`), strong `ETag` per representation (content-coding and selection included), `If-None-Match` → 304, `Vary` for `accept`, `accept-encoding`, `origin` as applicable, HEAD.
@@ -199,7 +217,7 @@ Open:
 4. WebTransport (T4) once a server implementation exists for Node; HTTP/3 in Node.
 5. Problem type namespace (placeholder `https://apue.dev/problems/`).
 6. Auth: out of scope (standard `Authorization`), or define token-binding guidance? (Idempotency keys are already scoped per credentials.)
-7. Long-running operations: resumable streams cover progress + result; is a separate pattern needed?
+7. ~~Long-running operations~~ → a pattern of start (idempotent) + resumable watch stream + cacheable get (§8).
 8. Generators for other languages (the manifest is JSON Schema; TypeScript generation exists).
 
 ## 14. Spikes (Node 26, native TS, no build step)

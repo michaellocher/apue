@@ -17,6 +17,17 @@ const WS_CLOSE_POLICY = 4008;
  */
 export const MAX_UNSENT = 4 * 1024 * 1024;
 const MAX_POLL_MS = 64;
+const COALESCE_BYTES = 16 * 1024;
+
+function concat(parts: Uint8Array[], length: number): Uint8Array {
+  const out = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
+}
 
 export interface WebSocketTransportOptions {
   /** Bytes the server may send ahead of the consumer: the client-side memory bound per call. */
@@ -117,14 +128,52 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
           else if (left > MAX_UNSENT) pollMs = Math.min(MAX_POLL_MS, pollMs * 2);
         }
       }
+      // Small frames are coalesced: one ws.send (and WebSocket frame) per message halved small-
+      // message throughput against HTTP/2. Pending bytes go out at COALESCE_BYTES, or in the next
+      // macrotask (MessageChannel: not clamped like setTimeout), so a lone message waits < 1 ms.
+      let pending: Uint8Array[] = [];
+      let pendingBytes = 0;
+      let flushing = Promise.resolve(true);
+      let channel: MessageChannel | undefined;
+      let flushScheduled = false;
+      function flush(): Promise<boolean> {
+        flushScheduled = false;
+        if (pendingBytes === 0) return flushing;
+        const bytes = pending.length === 1 ? pending[0]! : concat(pending, pendingBytes);
+        pending = [];
+        pendingBytes = 0;
+        return (flushing = flushing.then((open) => open && send(bytes)));
+      }
+      function scheduleFlush(): void {
+        if (flushScheduled) return;
+        flushScheduled = true;
+        if (!channel) {
+          channel = new MessageChannel();
+          channel.port1.onmessage = () => void flush();
+        }
+        channel.port2.postMessage(null);
+      }
       async function pump(body: AsyncIterable<Uint8Array>): Promise<void> {
         try {
-          for await (const chunk of body) if (!(await send(chunk))) return;
+          for await (const chunk of body) {
+            pending.push(chunk);
+            pendingBytes += chunk.byteLength;
+            if (pendingBytes >= COALESCE_BYTES) {
+              if (!(await flush())) return;
+            } else {
+              scheduleFlush();
+            }
+          }
+          await flush();
         } catch (error) {
           // e.g. client-side validation of a stream message: the caller gets that error (a 400),
           // not a truncated stream (was a 502)
           failure ??= error as Error;
           ws.close(WS_CLOSE_CANCELLED, 'input failed');
+        } finally {
+          await flushing;
+          channel?.port1.close(); // an open port keeps a Node process alive
+          channel = undefined;
         }
       }
       const onAbort = () => ws.close(WS_CLOSE_CANCELLED, 'cancelled');

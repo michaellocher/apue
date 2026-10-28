@@ -110,18 +110,14 @@ numbers are isolated micro-benchmarks or A/B runs):
 | 1 | HTTP/2 core stream API instead of the compat layer (compat alone: −23 % req/s); no `AbortSignal.any` on the client (2.7 µs per call on Node 26); unary fast path without async generator; idempotency eviction O(n) → amortised O(1) (was 24 % of server CPU; Map tombstones kept a naïve fix at ~9 µs/insert, a FIFO queue brought it to 0.7 µs) | unary GET c=32 18.7k → 23.4k, c=1 5.3k → 7.6k; POST + key 7.4k → 18.7k req/s |
 | 2 | single-allocation JSON frames via Buffer (frame encode 498 → 140 ns; Node's TextEncoder is ~4× slower than Buffer for short strings); schema validation without per-field allocations (2.1–2.3×, User 593 → 257 ns); one abort listener per stream instead of a `Promise.race` per item; batched frame decoding (async step per chunk, not per frame) | stream 0.91M → 1.94M msg/s |
 | 3 | unread request bodies discarded only after `finish` (the early `resume()` made node:http2 destroy streams with a pending write and create an `ERR_STREAM_DESTROYED` per request); `respond()` without options; unary bodies read via events instead of an async iterator (A/B, 3 rounds: +4–6 %) | unary GET c=32 25.4k → 29.2k |
+| 5 | WebSocket (T3) client streams: small frames coalesced into one send per 16 KiB or per macrotask (`MessageChannel`, not clamped like `setTimeout`; a lone message leaves in < 10 ms, tested) instead of one `ws.send` + WebSocket frame per message. First tried before the close fix below: WebKit then lost the last frames of a stream in 4 of 19 browser runs — the same failure later appeared without coalescing (1 of 31), a WebKit issue with server-initiated closes over RFC 8441, fixed by letting the client close after END (spec §8); with that fix 0 of 20 | 100k-message client stream 436k → 972k msg/s (HTTP/2: 905k); bulk unchanged (295 MiB/s) |
 | 4 | WebSocket (T3) uploads: adaptive `bufferedAmount` polling instead of a fixed 5 ms (the fixed poll capped uploads at 1 MiB per 5 ms and left the socket idle ~25 % of the time: CPU/wall 0.83); server-side unmasking in 32-bit words (parser alone on 64 KiB frames in 16 KiB chunks: 0.75 → 3.3 GB/s); found while fixing quadratic frame buffering in the same parser (4 MiB frame in 1 KiB chunks: 791 → 16 ms) | 64 MiB upload as 1 MiB blobs over wss, client and server in one process: 142 → 293 MiB/s (pacing alone 227) |
 
 Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCII checks (only
 14–17 % faster decode ≈ 3 % of client CPU, Node-only); larger per-stream buffers before waiting for
 `drain` (no measurable effect); a schema-compiled "validate + serialize in one pass" built from
 closures (no eval): 140 → 103 ns for a 3-field item but 421 → 448 ns for a nested user — V8's
-native `JSON.stringify` after validation stays. Coalescing small client→server WebSocket sends (16 KiB or
-the next macrotask): 100k-message client stream 436k → 972k msg/s (HTTP/2: 905k), bulk unchanged — but
-with it WebKit lost the last frames of a credit-limited server stream (close 1006) in 4 of 19 browser-suite
-runs. Further runs then showed the same failure without coalescing (1 of 31): a WebKit issue with a
-server-initiated close over RFC 8441, fixed separately by letting the client close after END (spec §8).
-Coalescing was not re-measured after that fix and stays out for now.
+native `JSON.stringify` after validation stays.
 
 ## Caveats
 

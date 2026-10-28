@@ -720,6 +720,62 @@ describe('flow control hardening (review findings)', () => {
   });
 });
 
+test('small stream messages are coalesced into few sends; a lone message still leaves within milliseconds', async () => {
+  const sends: Array<{ at: number; bytes: number }> = [];
+  class Recorder {
+    static OPEN = 1;
+    OPEN = 1;
+    CONNECTING = 0;
+    readyState = 0;
+    protocol = 'apue.v1';
+    binaryType = 'blob';
+    bufferedAmount = 0;
+    onopen?: () => void;
+    onmessage?: (e: { data: unknown }) => void;
+    onclose?: () => void;
+    onerror?: () => void;
+    constructor() {
+      setTimeout(() => {
+        this.readyState = 1;
+        this.onopen?.();
+        this.onmessage?.({ data: String(2 ** 24) }); // plenty of credit
+      }, 1);
+    }
+    send(data: string | Uint8Array) {
+      if (typeof data !== 'string') sends.push({ at: performance.now(), bytes: data.byteLength });
+    }
+    close() {
+      this.readyState = 3;
+    }
+  }
+  const transport = webSocketTransport('https://x.example', { WebSocketImpl: Recorder as unknown as typeof WebSocket });
+  const request = (body: AsyncIterable<Uint8Array>) =>
+    transport.request({ method: 'POST', path: '/x', headers: {}, body, signal: new AbortController().signal } as unknown as Parameters<typeof transport.request>[0]);
+
+  async function* burst() {
+    for (let i = 0; i < 10_000; i++) yield msgFrame(i); // ~14 bytes each, 140 KB in total
+  }
+  await request(burst());
+  await sleep(50);
+  const total = sends.reduce((sum, s) => sum + s.bytes, 0);
+  assert.equal(total, concatBytes(Array.from({ length: 10_000 }, (_, i) => msgFrame(i))).byteLength);
+  assert.ok(sends.length <= 20, `${sends.length} sends for 10,000 messages`); // one per message before
+
+  sends.length = 0;
+  let yieldedAt = 0;
+  let release!: () => void;
+  async function* lone() {
+    yieldedAt = performance.now();
+    yield msgFrame('only');
+    await new Promise<void>((resolve) => (release = resolve)); // the producer then waits
+  }
+  await request(lone());
+  await sleep(30);
+  assert.equal(sends.length, 1);
+  assert.ok(sends[0]!.at - yieldedAt < 10, `lone message sent after ${(sends[0]!.at - yieldedAt).toFixed(1)} ms`);
+  release();
+});
+
 async function closeCodeForFrames(frames: AsyncGenerator<{ opcode: number; payload: Uint8Array }>): Promise<number> {
   for await (const frame of frames) if (frame.opcode === 0x8) return Buffer.from(frame.payload).readUInt16BE(0);
   return 0;

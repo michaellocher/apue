@@ -8,7 +8,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 230 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 231 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -76,8 +76,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
   RTT, ~16 MiB/s at 63 ms RTT — raise it for fast long links).
 - `webSocketTransport` sends calls without a request stream over fetch (unary over WebSocket had
   no way to carry a JSON body or GET input).
-- Rejected after measuring: coalescing small WebSocket sends (2.2× small-message uploads) — WebKit
-  lost frames in some runs with it; see docs/benchmarks.md.
+- Small WebSocket client frames are coalesced (2.2× small-message uploads); adopted after the WebKit
+  close race was fixed (docs/benchmarks.md, step 5).
 
 ## Open (spec §13)
 

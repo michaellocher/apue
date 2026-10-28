@@ -18,7 +18,7 @@ node bench/micro.ts  # data-path micro-benchmarks
 `node --test` includes real-browser tests (headless Chrome via CDP, Firefox via WebDriver BiDi);
 browsers that aren't installed are skipped. Override paths with `CHROME_PATH` / `FIREFOX_PATH`.
 
-Benchmark results: [`docs/benchmarks.md`](docs/benchmarks.md).
+Benchmark results: [`docs/benchmarks.md`](docs/benchmarks.md). Behaviour through real nginx (`bench/proxy/run.sh`): [`docs/intermediaries.md`](docs/intermediaries.md).
 
 | Path | |
 |---|---|

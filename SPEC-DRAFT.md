@@ -272,3 +272,7 @@ Totals after S5: 127 tests (`node --test`), all passing repeatedly; typecheck cl
 ### S7 — 2026-10-28 ✅ resumable streams
 
 `src/resume.ts` (HMAC tokens), `resumable` ops with `ctx.checkpoint()` / `ctx.resumeFrom`, client resume loop with exactly-once skipping, SSE `id:`/Last-Event-ID. Found by the tests: checkpoints follow their items, so a loss between an item and its checkpoint caused a duplicate on resume → client-side skip count. Also in this round: per-request ERR_STREAM_DESTROYED from discarding request bodies too early (fixed, +12% unary), event-based unary body reading (+4–6%), a hang when a 409 body had been read for the retry check (fixed; `npm test` now has a 60 s test timeout). 154 tests.
+
+### S8 — 2026-10-28 ✅ real intermediary
+
+nginx (Docker) between client and server, default and tuned configs: [`docs/intermediaries.md`](docs/intermediaries.md). Defaults pass everything request/response-shaped incl. QUERY, stream TTFB (thanks to `X-Accel-Buffering: no`; `Incremental` is ignored), cancellation and zstd; full duplex (request buffering) and WebSockets need `proxy_request_buffering off` and upgrade headers. Also: `maxConcurrentStreams` default 256 (Node's is unlimited; verified clients queue/open connections instead of failing).

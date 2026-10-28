@@ -73,8 +73,8 @@ reasoning. Decision by you: option 2 below. Implemented as S21.
 
 ## Not done / open
 
-- DPoP profile (option 3) — deferred: one signature per call and a replay cache, while DBSC covers
-  cookie apps transparently.
+- ~~DPoP profile (option 3) — deferred: one signature per call and a replay cache, while DBSC covers
+  cookie apps transparently~~ → built in S32 (`dpopVerifier`, `createDpopSigner`; research/11 §2).
 - ~~Cross-site WebSockets under third-party-cookie partitioning: not verified~~ → probed 2026-10-28
   (page on 127.0.0.1, API on localhost = another site; headless default profiles; one-off probe in
   the browser suite, not kept): **the WebSocket handshake gets exactly the cookies fetch gets** —

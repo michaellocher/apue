@@ -36,14 +36,20 @@ re-checked in the code. Item by item: consumer pacing (CREDIT frames), DPoP, lar
   verify ≈ 80 µs — not the obstacle.
 - Adoption (verified): Auth0, Okta, Keycloak (full since 26.4), Spring Security, Duende; Chrome DBSC
   GA on Windows (Chrome 146) covers the cookie case.
-- **Decision**: no verifier, nonce flow or replay cache in apü (niche: DPoP-bound tokens plus browser
-  WebSocket request streams; DBSC covers cookie apps). Groundwork (S25) so an application can do it in
+- **Decision (S25, revised in S32 — see below)**: no verifier, nonce flow or replay cache in apü
+  (niche: DPoP-bound tokens plus browser WebSocket request streams; DBSC covers cookie apps). Groundwork (S25) so an application can do it in
   its `principal` hook today: the hook gets `method` and `url`; WebSocket calls report POST, their
   logical method, so a proof signed for `POST /op` verifies on any tier (instead of the subagent's
   proposal to normalize handshakes to GET — the hook verifies the call, not the transport); the client
   option `headers({ method, path })` adds a fresh proof per request; `apue.dpop.<compact JWS>` carries
   it over T3 (a JWS is token characters — RFC 6455 §4.1, verified); CORS allows `DPoP` and exposes
   `WWW-Authenticate` and `DPoP-Nonce`.
+- **Revised (S32)**: built after all, as opt-in parts outside the protocol — the checks of §4.3 are
+  exact and testable, and leaving them to each application invites the subtle ones being skipped
+  (key/alg fit, private keys in `jwk`, `htu` normalization, replays across replicas). `dpopVerifier`
+  for the hook (replay store pluggable, nonces optional), `createDpopSigner` + `dpopHeaders` for
+  clients (WebCrypto). Verified against RFC 9449's own example proofs and RFC 7638's thumbprint
+  vector; token validation and the `cnf.jkt` comparison stay the application's.
 
 ## 3. Very large binary outputs — download resources (to be built)
 

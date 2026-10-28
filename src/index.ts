@@ -18,5 +18,6 @@ export {
 } from './client.ts';
 export { Batch, BatchCall, BatchStream } from './batch.ts';
 export { Download } from './download.ts';
+export { createDpopSigner, dpopHeaders, type DpopSigner } from './dpop-signer.ts';
 export { ApueError, MediaType, ProblemType, type UploadRef } from './protocol.ts';
 export type { EndInfo, Problem } from './frame.ts';

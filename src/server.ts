@@ -29,6 +29,7 @@ import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClien
 export { isClientGone } from './protocol.ts';
 // The idempotency store contract, so applications can plug in a shared store (replicas).
 export { MemoryIdempotencyStore, type BeginResult, type IdempotencyStore, type MemoryStoreOptions, type StoredResponse } from './idempotency.ts';
+export { dpopError, dpopVerifier, MemoryDpopReplayStore, thumbprint, type DpopAlgorithm, type DpopOptions, type DpopProof, type DpopReplayStore } from './dpop.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, MAX_SELECT_PATHS, project, SelectionError, type Selection } from './select.ts';

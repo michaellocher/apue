@@ -83,7 +83,9 @@ export interface ApueServerOptions {
   streamWindow?: number;
   /**
    * WebSocket (T3) receive window granted to each client, re-granted as the handler consumes:
-   * bounds server memory per call and caps uploads at window / RTT. Default 1 MiB.
+   * bounds server memory per call and caps uploads below window / RTT. Default: streamWindow, the
+   * same bound an HTTP/2 request stream gets (1 MiB uploaded at 6.3 MiB/s at 63 ms RTT, 4 MiB at
+   * 22.7; HTTP/2 27.2).
    */
   webSocketWindow?: number;
   /** HTTP/2 per-connection receive window. */
@@ -313,7 +315,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     coalesceBytes = 16 * 1024,
     maxBodyBytes = 1024 * 1024,
     streamWindow = 4 * 1024 * 1024,
-    webSocketWindow = 1024 * 1024,
+    webSocketWindow = streamWindow,
     connectionWindow = 32 * 1024 * 1024,
     validateOutput = true,
     maxBatchCalls = 64,

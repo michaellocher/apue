@@ -502,13 +502,14 @@ describe('flow control (apue.v1 credit)', () => {
   });
 
   test('a client sending beyond its window is closed with 1008; exactly the window is fine', async () => {
-    // The server grants 1 MiB right after the handshake (64 KiB initial + increment).
+    // The server grants its window right after the handshake (64 KiB initial + increment); the
+    // default is streamWindow (4 MiB), the bound an HTTP/2 request stream gets.
     const exact = await rawWs('/stall.client');
     const frames = exact.frames();
     const first = await frames.next();
     assert.equal(first.value!.opcode, 0x1);
     const window = WS_INITIAL_WINDOW + parseCredit(Buffer.from(first.value!.payload).toString())!;
-    assert.equal(window, 1024 * 1024);
+    assert.equal(window, 4 * 1024 * 1024);
     exact.send(0x2, new Uint8Array(window));
     const closed = await Promise.race([frames.next().then(() => 'frame'), sleep(300).then(() => 'quiet')]);
     assert.equal(closed, 'quiet');

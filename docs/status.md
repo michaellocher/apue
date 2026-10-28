@@ -72,8 +72,9 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 - WebSocket tier flow control as HTTP/2-style **byte** windows with credit in WebSocket **text**
   messages, mandatory, subprotocol bumped to `apue.v1` (no deployed clients). Message-count CREDIT
   frames across all tiers stay planned (spec §8 explains why bytes first and why not in-band).
-- Window defaults: browser `receiveWindow` 4 MiB, server `webSocketWindow` 1 MiB (uploads ≤ window /
-  RTT, ~16 MiB/s at 63 ms RTT — raise it for fast long links).
+- Window defaults: browser `receiveWindow` 4 MiB; server `webSocketWindow` = `streamWindow` (4 MiB,
+  what an HTTP/2 request stream gets). Measured at 63 ms RTT: 1 MiB windows uploaded at 6.3 MiB/s,
+  4 MiB at 22.7 (HTTP/2: 27.2) — window / RTT is only an upper bound (~40 % reached here).
 - `webSocketTransport` sends calls without a request stream over fetch (unary over WebSocket had
   no way to carry a JSON body or GET input).
 - Small WebSocket client frames are coalesced (2.2× small-message uploads); adopted after the WebKit

@@ -72,6 +72,15 @@ const handlers: Handlers<typeof browserApi> = {
   },
   'stats.flooded': () => flooded,
   'files.store': ({ data }) => ({ size: data.byteLength, sha256: createHash('sha256').update(data).digest('hex') }),
+  'files.ingest': async ({ file }) => {
+    const hash = createHash('sha256');
+    let size = 0;
+    for await (const chunk of file.stream()) {
+      hash.update(chunk);
+      size += chunk.byteLength;
+    }
+    return { size, sha256: hash.digest('hex'), declared: file.sha256 };
+  },
   'who.am': (_, ctx) => ({ principal: ctx.principal ?? null, authorization: (ctx.headers.authorization as string | undefined) ?? null, protocols: null }),
   'who.streaming': async (inputs, ctx) => {
     for await (const _ of inputs);

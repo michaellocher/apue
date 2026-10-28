@@ -17,6 +17,7 @@ export const browserApi = defineApi({
   'flood': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.string() }),
   'stats.flooded': op({ effect: 'safe', input: t.void(), output: t.number(), cache: { private: true } }),
   'files.store': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.object({ size: t.number(), sha256: t.string() }) }),
+  'files.ingest': op({ effect: 'unsafe', input: t.object({ file: t.file({ max: 8 * 1024 * 1024 }) }), output: t.object({ size: t.number(), sha256: t.string(), declared: t.string() }) }),
   'who.am': op({ effect: 'safe', input: t.void(), output: t.object({ principal: t.nullable(t.string()), authorization: t.nullable(t.string()), protocols: t.nullable(t.string()) }), cache: { private: true } }),
   'who.streaming': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.object({ principal: t.nullable(t.string()), authorization: t.nullable(t.string()), protocols: t.nullable(t.string()) }) }),
 });

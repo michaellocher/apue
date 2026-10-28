@@ -160,6 +160,16 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     }
     return 'uploaded 1 MiB via careful creation + PATCH; HEAD shows Upload-Offset';
   });
+  await check('t.file(): a Blob is uploaded as is and reaches the handler as a stream (S20)', async () => {
+    const parts: Uint8Array[] = [];
+    for (let i = 0; i < 48; i++) parts.push(crypto.getRandomValues(new Uint8Array(65_536))); // 3 MiB
+    const blob = new Blob(parts as BlobPart[]);
+    const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer()))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    equal(await client.call('files.ingest', { file: blob }), { size: blob.size, sha256: digest, declared: digest });
+    // Too large for t.file({ max }): refused on the client, before anything is uploaded.
+    await rejects(client.call('files.ingest', { file: new Blob([new Uint8Array(9 * 1024 * 1024)]) }), 400);
+    return `${blob.size} bytes, server digest = browser digest`;
+  });
   await check('autoTransport: streaming upload in every browser (fetch T2 or WebSocket T3)', async () => {
     const auto = new ApueClient(browserApi, autoTransport(apiUrl));
     async function* numbers() {

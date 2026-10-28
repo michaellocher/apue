@@ -116,7 +116,11 @@ Rejected after measuring: decoding whole chunks as Latin-1 with per-payload ASCI
 14–17 % faster decode ≈ 3 % of client CPU, Node-only); larger per-stream buffers before waiting for
 `drain` (no measurable effect); a schema-compiled "validate + serialize in one pass" built from
 closures (no eval): 140 → 103 ns for a 3-field item but 421 → 448 ns for a nested user — V8's
-native `JSON.stringify` after validation stays.
+native `JSON.stringify` after validation stays. Coalescing small client→server WebSocket sends (16 KiB or
+the next macrotask): 100k-message client stream 436k → 972k msg/s (HTTP/2: 905k), bulk unchanged — but
+with it WebKit lost the last frames of a credit-limited server stream (close 1006) in 4 of 19 browser-suite
+runs, against 0 of 16 without; same with `setTimeout` instead of `MessageChannel`. Not adopted until the
+mechanism is understood (open question; the client's input pump is idle at the moment of failure).
 
 ## Caveats
 

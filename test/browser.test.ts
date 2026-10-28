@@ -126,6 +126,11 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const count = () => document.querySelectorAll('#list li').length;
     const until = async (fn) => { for (let i = 0; i < 250 && !fn(); i++) await sleep(20); return fn(); };
+    // The change stream replays earlier browsers' todos after the page is ready: count only once the
+    // list has been stable for 300 ms (counting mid-replay gave 102 instead of 101 in Firefox).
+    for (let last = -1, stableSince = Date.now(); Date.now() - stableSince < 300; await sleep(20)) {
+      if (count() !== last) [last, stableSince] = [count(), Date.now()];
+    }
     const before = count();
     const form = document.querySelector('#add');
     form.title.value = 'from the browser';

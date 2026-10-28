@@ -1,0 +1,13 @@
+# Minimal Caddy reverse proxy: TLS + HTTP/2 to clients, HTTPS (h2 via ALPN) to apü, all defaults.
+{
+	auto_https off
+	admin off
+}
+:443 {
+	tls /certs/cert.pem /certs/key.pem
+	reverse_proxy https://apue:8443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}

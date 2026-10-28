@@ -12,7 +12,7 @@ Spikes in Node 26 with native TypeScript and no build step.
   data plane performance, Node 26 platform, verified normative details
 - Measurements: [`docs/benchmarks.md`](docs/benchmarks.md) (local, constrained Docker, WAN
   emulation, vs gRPC/grpc-js: 1.5× unary, 30× streaming) · [`docs/intermediaries.md`](docs/intermediaries.md)
-  (through real nginx)
+  (through nginx, Caddy, HAProxy, Envoy)
 
 ## In one minute
 
@@ -60,11 +60,11 @@ the nginx probe.
 
 ```sh
 npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 181 tests incl. headless Chrome + Firefox (skipped if absent)
+npm test             # node --test: 182 tests incl. headless Chrome + Firefox (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
 bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)
-bench/proxy/run.sh   # behaviour through real nginx (default and tuned configs)
+bench/proxy/run.sh   # behaviour through real nginx, Caddy, HAProxy and Envoy (Docker)
 node bench/micro.ts  # data-path micro-benchmarks
 ```
 

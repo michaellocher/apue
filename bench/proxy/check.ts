@@ -22,7 +22,10 @@ async function check(name: string, fn: () => Promise<string>) {
   try {
     rows.push(`| ${name} | ${await Promise.race([fn(), timeout])} |`);
   } catch (error) {
-    rows.push(`| ${name} | ✗ ${error instanceof Error ? error.message.slice(0, 120) : String(error)} |`);
+    const status = (error as { status?: number }).status;
+    const detail = (error as { problem?: { detail?: string } }).problem?.detail;
+    const message = error instanceof Error ? error.message : String(error);
+    rows.push(`| ${name} | ✗ ${status ? `HTTP ${status}: ` : ''}${(detail ?? message).slice(0, 120)} |`);
   }
 }
 

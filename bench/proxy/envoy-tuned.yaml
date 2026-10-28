@@ -1,0 +1,49 @@
+# Envoy (tuned): TLS + h2/h1 downstream, TLS + h2 upstream.
+static_resources:
+  listeners:
+  - name: https
+    address: { socket_address: { address: 0.0.0.0, port_value: 443 } }
+    filter_chains:
+    - transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+          common_tls_context:
+            alpn_protocols: [h2, http/1.1]
+            tls_certificates:
+            - certificate_chain: { filename: /certs/cert.pem }
+              private_key: { filename: /certs/key.pem }
+      filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress
+          codec_type: AUTO
+          upgrade_configs: [{ upgrade_type: websocket }]
+          http2_protocol_options: { allow_connect: true }
+          stream_idle_timeout: 3600s
+          route_config:
+            virtual_hosts:
+            - name: all
+              domains: ["*"]
+              routes:
+              - match: { prefix: "/" }
+                route: { cluster: apue, timeout: 0s }
+          http_filters:
+          - name: envoy.filters.http.router
+            typed_config: { "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router }
+  clusters:
+  - name: apue
+    type: STRICT_DNS
+    load_assignment:
+      cluster_name: apue
+      endpoints: [{ lb_endpoints: [{ endpoint: { address: { socket_address: { address: apue, port_value: 8443 } } } }] }]
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config: { http2_protocol_options: { allow_connect: true } }
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        common_tls_context: { alpn_protocols: [h2] }

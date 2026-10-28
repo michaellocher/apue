@@ -294,7 +294,7 @@ Totals after S5: 127 tests (`node --test`), all passing repeatedly; typecheck cl
 
 `src/resume.ts` (HMAC tokens), `resumable` ops with `ctx.checkpoint()` / `ctx.resumeFrom`, client resume loop with exactly-once skipping, SSE `id:`/Last-Event-ID. Found by the tests: checkpoints follow their items, so a loss between an item and its checkpoint caused a duplicate on resume → client-side skip count. Also in this round: per-request ERR_STREAM_DESTROYED from discarding request bodies too early (fixed, +12% unary), event-based unary body reading (+4–6%), a hang when a 409 body had been read for the retry check (fixed; `npm test` now has a 60 s test timeout). 154 tests.
 
-### S8 — 2026-10-28 ✅ real intermediary
+### S8 — 2026-10-28 ✅ real intermediaries
 
 nginx (Docker) between client and server, default and tuned configs: [`docs/intermediaries.md`](docs/intermediaries.md). Defaults pass everything request/response-shaped incl. QUERY, stream TTFB (thanks to `X-Accel-Buffering: no`; `Incremental` is ignored), cancellation and zstd; full duplex (request buffering) and WebSockets need `proxy_request_buffering off` and upgrade headers. Also: `maxConcurrentStreams` default 256 (Node's is unlimited; verified clients queue/open connections instead of failing).
 
@@ -309,3 +309,7 @@ Field selection (`src/select.ts`, typed `pick()`), idle-session and body timeout
 ### S11 — 2026-10-28 ✅ robustness probe, codegen, gRPC comparison
 
 Path/header probe found two 500s (malformed percent-encoding in the op path, deadlines beyond the timer range) → 400. `src/codegen.ts` + `bin/apue-types.ts` (manifest → typed API module; strict about unsupported keywords — found by its own test). Benchmark against grpc-js: 1.5× unary, 30× streaming (docs/benchmarks.md). 181 tests.
+
+### S12 — 2026-10-28 ✅ more intermediaries, a crash fixed
+
+Caddy 2.11.7, HAProxy 3.4.7 and Envoy 1.40.2 added to the probe (docs/intermediaries.md): Caddy and HAProxy pass all checks with default configs; Envoy needs `upgrade_configs` for WebSockets. Envoy surfaced a crash: resets with error codes other than CANCEL emit `'error'` on node:http2 server streams, which was unhandled → fixed, regression test for five reset codes. 182 tests.

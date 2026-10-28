@@ -36,7 +36,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 346 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 348 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -121,8 +121,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 ## Open (spec §13)
 
 WebTransport / HTTP/3 (the official Node 26 build
-is compiled without QUIC: `node_use_quic: false`) · · generators for other
-languages · problem-type namespace (apue.dev kept, to be bought if the results are good) · DPoP full profile (deferred; groundwork S25).
+is compiled without QUIC: `node_use_quic: false`) · · generators for more languages (TS + Python exist) · problem-type namespace (apue.dev kept, to be bought if the results are good) · DPoP full profile (deferred; groundwork S25).
 (Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),
 resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14),
 derived manifest docs (S19), spike `t.file()` + file-backed upload store (S20, research/09),

@@ -165,7 +165,8 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 ## 11. Schemas, manifest, evolution
 
 - Schemas are TS objects built from a small erasable-syntax builder with static type inference — no codegen for TS clients.
-- `GET {base}/.well-known/apue` → manifest: ops, effects, stream kind, JSON Schema for input/output, limits. Linked from `/.well-known/api-catalog` (RFC 9727). `ETag` = manifest hash.
+- `GET {base}/.well-known/apue` → manifest: ops, effects, stream kind, JSON Schema for input/output, cache policy, deprecation, resumability. `ETag` = manifest hash, `no-cache`.
+- `GET|HEAD /.well-known/api-catalog` (RFC 9727, implemented): `application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"` with a `service-desc` link to the manifest, and `Link: </.well-known/api-catalog>; rel="api-catalog"` — generic discovery for crawlers and agents.
 - Evolution: only additive changes within a major; removal via `deprecated` → `Deprecation`/`Sunset` headers.
 - Limits are part of the schema (list max, select depth) → cost is bounded statically.
 

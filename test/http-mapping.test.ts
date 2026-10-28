@@ -457,6 +457,20 @@ describe('deprecation and manifest', () => {
     assert.throws(() => op({ effect: 'safe', input: t.void(), output: t.void(), deprecated: { since: sunset, sunset: since } }), /RFC 9745/);
   });
 
+  test('RFC 9727 api-catalog links to the manifest (GET and HEAD with Link header)', async () => {
+    const res = await raw('/.well-known/api-catalog');
+    assert.equal(res.headers.get('content-type'), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"');
+    assert.equal(res.headers.get('link'), '</.well-known/api-catalog>; rel="api-catalog"');
+    const { port } = new URL(server.url);
+    assert.deepEqual(await res.json(), {
+      linkset: [{ anchor: `https://127.0.0.1:${port}/`, 'service-desc': [{ href: `https://127.0.0.1:${port}/.well-known/apue`, type: 'application/json' }] }],
+    });
+    const head = await raw('/.well-known/api-catalog', { method: 'HEAD' });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get('link'), '</.well-known/api-catalog>; rel="api-catalog"');
+    assert.equal((await raw('/.well-known/api-catalog', { method: 'POST' })).status, 405);
+  });
+
   test('createApueServer refuses an API with missing handlers', async () => {
     const { createApueServer } = await import('../src/server.ts');
     const { key, cert } = testCert();

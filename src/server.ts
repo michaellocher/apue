@@ -124,6 +124,9 @@ export interface ApueServer {
 }
 
 export const MANIFEST_PATH = '/.well-known/apue';
+/** RFC 9727 API catalog (linkset) pointing at the manifest, for generic discovery. */
+export const CATALOG_PATH = '/.well-known/api-catalog';
+const CATALOG_TYPE = 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"';
 // Op names start with a letter, so this never collides with an op — and `/` stays free for
 // serving the web app from the same origin.
 export const BATCH_PATH = '/$batch';
@@ -394,6 +397,17 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const queryAt = req.url.indexOf('?');
       const pathname = queryAt === -1 ? req.url : req.url.slice(0, queryAt);
       const url = { pathname, search: queryAt === -1 ? '' : req.url.slice(queryAt) };
+      if (url.pathname === CATALOG_PATH) {
+        if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
+        complete();
+        const authority = String(req.headers[':authority'] ?? req.headers.host ?? 'localhost');
+        const origin = `https://${authority}`;
+        const catalog = encodeJson({
+          linkset: [{ anchor: `${origin}/`, 'service-desc': [{ href: `${origin}${MANIFEST_PATH}`, type: MediaType.JSON }] }],
+        });
+        // RFC 9727 §2: HEAD (and GET) responses include a Link header to the catalog.
+        return await sendBody(req, res, 200, { 'content-type': CATALOG_TYPE, link: `<${CATALOG_PATH}>; rel="api-catalog"`, 'cache-control': 'no-cache' }, catalog, true);
+      }
       if (url.pathname === MANIFEST_PATH) {
         if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
         complete();

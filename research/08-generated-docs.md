@@ -13,7 +13,8 @@ Prototypes ran in the scratchpad only; nothing here is implemented.
   `anyOf` branch, bytes as `{"$upload": "…"}`), validated with the op's own schema: **73 of 74 valid**
   across 5 APIs / 37 ops. The failure: a regex `pattern` (`^[a-z]+\/\d+$`, flags `iu`) — patterns are
   the inherent limit. Rule therefore: an example that doesn't validate is omitted, never published.
-- **Size/time**: manifest +24–32 % (e.g. 1.9 → 2.3 KB), build < 1 ms once at startup.
+- **Size/time**: the examples alone: manifest +24–32 % (e.g. 1.9 → 2.3 KB), build < 1 ms once at startup.
+  *Added after implementing all four parts:* 2.5–3.4× raw (e.g. 1.9 → 5.4 KB), 1.2–1.5 KB gzipped.
 - **Codegen compatibility**: extra fields at op or top level → byte-identical generated client, and
   the round trip (API → manifest → code → manifest) still reproduces the original. `examples` *inside*
   a JSON Schema is rejected by codegen's keyword whitelist — so it would break existing generated

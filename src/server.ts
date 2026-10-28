@@ -28,7 +28,8 @@ import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, isClien
 export { isClientGone } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
-import { compileSelection, project, SelectionError, type Selection } from './select.ts';
+import { compileSelection, MAX_SELECT_PATHS, project, SelectionError, type Selection } from './select.ts';
+import { HTTP_CONVENTIONS, opErrors, opExample, opHttp, PROTOCOL_ERRORS } from './docs.ts';
 import { BlobAssembler, blobChunks, decodeFramedValue, messageFrames, splitMessage } from './blobs.ts';
 import { containsBytes, mapBytes, ValidationError } from './schema.ts';
 import { handleUpload, UploadStore, UPLOADS_PATH, type UploadOptions } from './uploads.ts';
@@ -376,7 +377,21 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   for (const name of Object.keys(api)) {
     if (typeof handlerMap[name] !== 'function') throw new Error(`missing handler for ${name}`);
   }
-  const manifest = encodeJson(buildManifest(api));
+  // Built once: docs derived from the definitions (research/08) plus this server's limits.
+  const manifest = encodeJson({
+    ...buildManifest(api),
+    limits: {
+      maxBodyBytes,
+      maxJsonDepth,
+      maxBatchCalls,
+      maxSelectPaths: MAX_SELECT_PATHS,
+      bodyTimeoutMs,
+      heartbeatMs,
+      ...(uploads
+        ? { uploads: { path: '/$uploads', maxBytes: uploads.maxBytes, clientBytes: uploads.scopeBytes, clientUploads: uploads.scopeUploads, maxAgeSeconds: Math.floor(uploads.ttlMs / 1000) } }
+        : {}),
+    },
+  });
 
   const serverOptions: http2.SecureServerOptions & { connectionWindowSize?: number } = {
     key: options.key,
@@ -1009,6 +1024,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 export function buildManifest(api: Api): Record<string, unknown> {
   return {
     apue: PROTOCOL_VERSION,
+    // Derived documentation (research/08): conventions and the errors every op can get.
+    http: HTTP_CONVENTIONS,
+    errors: PROTOCOL_ERRORS,
     ops: Object.fromEntries(
       Object.entries(api).map(([name, def]) => [
         name,
@@ -1021,6 +1039,9 @@ export function buildManifest(api: Api): Record<string, unknown> {
           ...(def.cache ? { cache: def.cache } : {}),
           ...(def.resumable ? { resumable: true } : {}),
           ...(def.invalidates?.length ? { invalidates: [...def.invalidates] } : {}),
+          http: opHttp(name, def),
+          errors: opErrors(def),
+          ...exampleField(def),
           ...(def.deprecated
             ? {
                 deprecated: {
@@ -1034,6 +1055,11 @@ export function buildManifest(api: Api): Record<string, unknown> {
       ]),
     ),
   };
+}
+
+function exampleField(def: OpDef): { example?: { input?: unknown; output?: unknown } } {
+  const example = opExample(def);
+  return Object.keys(example).length > 0 ? { example } : {};
 }
 
 export function deprecationHeaders(deprecated: NonNullable<OpDef['deprecated']>): Record<string, string> {

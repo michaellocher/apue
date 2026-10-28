@@ -1,6 +1,8 @@
 // Manifest → TypeScript API definition (`defineApi` + `t.*`), so clients in other code bases get
 // the same typed client and validation without importing the server's sources. Web-only.
 
+import type { OpHttp, ProblemRef } from './docs.ts';
+
 type JsonSchema = Record<string, any>;
 
 export interface ManifestOp {
@@ -13,11 +15,19 @@ export interface ManifestOp {
   deprecated?: { since: string; sunset?: string; link?: string };
   resumable?: boolean;
   invalidates?: string[];
+  /** Derived documentation (src/docs.ts) — not needed to generate code. */
+  http?: OpHttp;
+  errors?: ProblemRef[];
+  example?: { input?: unknown; output?: unknown };
 }
 
 export interface Manifest {
   apue: string;
   ops: Record<string, ManifestOp>;
+  /** Derived documentation and server limits — not needed to generate code. */
+  http?: Record<string, unknown>;
+  errors?: ProblemRef[];
+  limits?: Record<string, unknown>;
 }
 
 export interface CodegenOptions {

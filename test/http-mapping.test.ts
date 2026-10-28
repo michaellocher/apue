@@ -455,7 +455,9 @@ describe('deprecation and manifest', () => {
     const manifest = await res.json();
     assert.equal(manifest.apue, 'draft-00');
     assert.deepEqual(Object.keys(manifest.ops), Object.keys(api));
-    assert.deepEqual(manifest.ops['users.get'], {
+    const { http, errors, example, ...core } = manifest.ops['users.get']; // derived docs: test/docs.test.ts
+    assert.ok(http && errors && example);
+    assert.deepEqual(core, {
       effect: 'safe',
       stream: 'none',
       input: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },

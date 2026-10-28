@@ -11,7 +11,7 @@ import { hash } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Writable } from 'node:stream';
-import { ApueError, checkWindow, isClientGone, parseCredit, ProblemType, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, checkWindow, isClientGone, parseCredit, parseWsAuthProtocol, ProblemType, WS_AUTH_PREFIX, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
 /** How long the server waits for the peer's close frame before ending the transport anyway. */
 const CLOSE_HANDSHAKE_TIMEOUT_MS = 2000;
@@ -427,16 +427,31 @@ export interface HandshakeCheck {
   ok: boolean;
   status: number;
   reason?: string;
+  /** The `Authorization` value offered as an `apue.auth.` subprotocol, decoded. */
+  authorization?: string;
+  /** The offered subprotocols without the credentials (what the call's headers may show). */
+  protocols?: string[];
 }
 
-/** Validates version, subprotocol and Origin (protection against cross-site WebSocket hijacking). */
+/**
+ * Validates version, subprotocol, credentials and Origin (protection against cross-site WebSocket
+ * hijacking). Credentials offered as a subprotocol must be well-formed and unambiguous: one at
+ * most, and not next to an Authorization header.
+ */
 export function checkHandshake(headers: IncomingHttpHeaders, allowedOrigin: (origin: string) => boolean): HandshakeCheck {
   if (headers['sec-websocket-version'] !== '13') return { ok: false, status: 426, reason: 'Sec-WebSocket-Version 13 required' };
-  const protocols = String(headers['sec-websocket-protocol'] ?? '')
+  const offered = String(headers['sec-websocket-protocol'] ?? '')
     .split(',')
     .map((p) => p.trim());
-  if (!protocols.includes(WS_SUBPROTOCOL)) return { ok: false, status: 400, reason: `subprotocol ${WS_SUBPROTOCOL} required` };
+  if (!offered.includes(WS_SUBPROTOCOL)) return { ok: false, status: 400, reason: `subprotocol ${WS_SUBPROTOCOL} required` };
   const origin = headers.origin;
   if (typeof origin === 'string' && !allowedOrigin(origin)) return { ok: false, status: 403, reason: 'origin not allowed' };
-  return { ok: true, status: 200 };
+  const credentials = offered.filter((p) => p.startsWith(WS_AUTH_PREFIX));
+  const protocols = offered.filter((p) => !p.startsWith(WS_AUTH_PREFIX));
+  if (credentials.length === 0) return { ok: true, status: 200, protocols };
+  if (credentials.length > 1) return { ok: false, status: 400, reason: `more than one ${WS_AUTH_PREFIX} subprotocol` };
+  if (headers.authorization !== undefined) return { ok: false, status: 400, reason: `credentials both in Authorization and in a ${WS_AUTH_PREFIX} subprotocol` };
+  const authorization = parseWsAuthProtocol(credentials[0]!);
+  if (authorization === undefined) return { ok: false, status: 400, reason: `malformed ${WS_AUTH_PREFIX} subprotocol` };
+  return { ok: true, status: 200, authorization, protocols };
 }

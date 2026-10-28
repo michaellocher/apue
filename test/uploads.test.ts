@@ -10,7 +10,7 @@ import { ApueClient, fetchTransport, type Transport, type TransportRequest } fro
 import { ApueError } from '../src/protocol.ts';
 import { http2Transport } from '../src/transport-http2.ts';
 import { t } from '../src/schema.ts';
-import { createApueServer, type Handlers } from '../src/server.ts';
+import { createApueServer, type ApueServerOptions, type Handlers } from '../src/server.ts';
 import { UploadStore } from '../src/uploads.ts';
 import { FrameDecoder, FrameType } from '../src/frame.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
@@ -182,8 +182,8 @@ describe('resumable uploads (draft-14)', () => {
   });
 
   /** A server with small quotas; `at` sends one raw request to it. */
-  async function quotaServer(uploads: Record<string, unknown>) {
-    const small = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, scopeBytes: 1 * MiB, scopeUploads: 3, ...uploads } });
+  async function quotaServer(uploads: Record<string, unknown>, server: Partial<ApueServerOptions> = {}) {
+    const small = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 10 * MiB, scopeBytes: 1 * MiB, scopeUploads: 3, ...uploads }, ...server });
     const at = (method: string, path: string, headers: Record<string, string>, body?: Uint8Array) =>
       new Promise<Reply>((resolve, reject) => {
         const session = http2.connect(small.url, { ca: testCert().cert });
@@ -215,8 +215,8 @@ describe('resumable uploads (draft-14)', () => {
     }
   });
 
-  test('clientKey: an application that authenticates gives each user a quota (bytes and uploads)', async () => {
-    const { small, at } = await quotaServer({ clientKey: ({ headers }: { headers: http2.IncomingHttpHeaders }) => String(headers.authorization) });
+  test('principal: an application that authenticates gives each user a quota (bytes and uploads)', async () => {
+    const { small, at } = await quotaServer({}, { principal: ({ headers }) => String(headers.authorization) });
     try {
       const alice = { authorization: 'Bearer alice', 'upload-complete': '?1' };
       assert.equal((await at('POST', '/$uploads', { ...alice, 'upload-length': String(MiB + 1) }, new Uint8Array(0))).status, 413); // can never fit

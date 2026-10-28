@@ -43,6 +43,8 @@ export interface CallContext {
   readonly headers: http2.IncomingHttpHeaders;
   readonly httpVersion: string;
   readonly method: string;
+  /** The caller's identity from the server's `principal` hook (undefined: anonymous or no hook). */
+  readonly principal?: string;
   /** Resumable streams: the cursor of the last checkpoint the client received, if resuming. */
   readonly resumeFrom?: string;
   /**
@@ -124,6 +126,18 @@ export interface ApueServerOptions {
   compression?: false | { codings?: readonly Coding[]; minBytes?: number };
   /** Cross-origin access for browsers. Same-origin deployment needs none (and saves preflights). */
   cors?: CorsOptions;
+  /**
+   * Who is calling: a stable identity (user or account id — not the credential itself, which
+   * changes on every token refresh), or undefined for anonymous callers. apü defines no
+   * authentication; this hook connects the application's. Idempotency keys, uploads (visibility
+   * and quota) and resume tokens are scoped to it, and handlers get it as `ctx.principal`.
+   * Called once per op, batch or upload request (not for the manifest, preflights or `fallback`);
+   * an ApueError it throws (e.g. 401) is the response. Over WebSocket (tier T3) `headers` carries
+   * the credentials offered as an `apue.auth.` subprotocol as `authorization`.
+   * Without the hook, these scopes are the raw `Authorization` header (a refreshed token is
+   * another scope), resume tokens are not bound to a caller, and upload quotas count per address.
+   */
+  principal?: (request: PrincipalRequest) => string | undefined | Promise<string | undefined>;
   /** Resume tokens: share `secret` between replicas so any instance can resume a stream. */
   resume?: ResumeOptions;
   /**
@@ -131,6 +145,19 @@ export interface ApueServerOptions {
    * app from the same origin, which needs no CORS preflights. Return true when handled.
    */
   fallback?: (exchange: Exchange) => boolean | Promise<boolean>;
+}
+
+export interface PrincipalRequest {
+  headers: http2.IncomingHttpHeaders;
+  remoteAddress: string | undefined;
+}
+
+/** Who a request is from, resolved once per request (see `principal`). */
+interface Caller {
+  /** Scope for idempotency keys and uploads. */
+  scope: string;
+  /** The principal hook's answer (undefined: anonymous, or no hook). */
+  principal: string | undefined;
 }
 
 export interface CorsOptions {
@@ -351,16 +378,34 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       throw new Error(`${name} has bytes in a unary input: they arrive as upload references, enable options.uploads`);
     }
   }
-  /** Who is asking — uploads, like idempotency keys, are scoped to the credentials. */
-  const credentialScope = (req: Exchange) => hash(String(req.headers.authorization ?? ''));
+  const principalHook = options.principal;
+  const toCaller = (principal: unknown): Caller => {
+    if (principal === undefined || principal === null) return { scope: 'anonymous', principal: undefined };
+    if (typeof principal !== 'string' || principal === '') throw new TypeError('principal() must return a non-empty string or undefined');
+    return { scope: `principal:${principal}`, principal };
+  };
+  /** Who is asking (see `principal`). Without a hook the scope is hashed only if something needs it. */
+  const identify = (req: Exchange): Caller | Promise<Caller> => {
+    if (!principalHook) {
+      const authorization = String(req.headers.authorization ?? '');
+      let scope: string | undefined;
+      return {
+        principal: undefined,
+        get scope() {
+          return (scope ??= `credentials:${hash(authorization)}`);
+        },
+      };
+    }
+    const answer = principalHook({ headers: req.headers, remoteAddress: req.remoteAddress });
+    return answer instanceof Promise ? answer.then(toCaller) : toCaller(answer);
+  };
   /**
    * Upload references → bytes at t.bytes() positions (400 with the field path if one doesn't
    * resolve), plus the input's identity for idempotency and resume tokens: references replaced by
    * the content's SHA-256 — the same bytes uploaded again (new id) are the same input.
    */
-  const resolveUploads = async (def: OpDef, input: unknown, req: Exchange): Promise<{ input: unknown; identity: unknown }> => {
+  const resolveUploads = async (def: OpDef, input: unknown, scope: string): Promise<{ input: unknown; identity: unknown }> => {
     if (!uploads || !containsBytes(def.input)) return { input, identity: input };
-    const scope = credentialScope(req);
     const digests = new Map<string, string>();
     const unusable = (path: string) =>
       new ApueError(400, 'Validation Failed', 'input does not match the schema', { type: ProblemType.VALIDATION, fields: [{ path, message: 'unknown, incomplete or expired upload' }] });
@@ -430,8 +475,15 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
   /** Tier T3: validates the handshake, then runs the call over the WebSocket like any request. */
   function acceptWebSocket(upgrade: WebSocketUpgrade): void {
-    const headers = upgrade.kind === 'h2' ? upgrade.headers : upgrade.req.headers;
-    const authority = String(headers[':authority'] ?? headers.host ?? '');
+    const received = upgrade.kind === 'h2' ? upgrade.headers : upgrade.req.headers;
+    const authority = String(received[':authority'] ?? received.host ?? '');
+    // A browser sends cookies (and cached HTTP credentials) with every WebSocket handshake — no CORS
+    // check stops it. As with fetch, a cross-origin call gets them only if CORS allows credentials;
+    // otherwise any site could call with the user's session (cross-site WebSocket hijacking).
+    // Credentials the page offers explicitly (an apue.auth. subprotocol) are not ambient.
+    const crossOrigin = typeof received.origin === 'string' && received.origin !== `https://${authority}`;
+    const { cookie: _cookie, authorization: _authorization, ...withoutAmbient } = received;
+    const headers = crossOrigin && !cors?.credentials ? withoutAmbient : received;
     const check = checkHandshake(headers, (origin) =>
       cors ? cors.origins === '*' || cors.origins.includes(origin) : origin === `https://${authority}`,
     );
@@ -465,7 +517,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     }
     webSockets.add(conn);
     conn.onClose(() => webSockets.delete(conn));
-    const exchange = new WsExchange(conn, path, headers, upgrade.kind === 'h2' ? '2.0' : '1.1');
+    // The call sees subprotocol credentials as `authorization`, like on every other tier, and
+    // never the subprotocol carrying them (it would end up wherever headers get logged).
+    const { 'sec-websocket-protocol': _offered, ...rest } = headers;
+    const callHeaders = { ...rest, 'sec-websocket-protocol': check.protocols!.join(', '), ...(check.authorization === undefined ? {} : { authorization: check.authorization }) };
+    const exchange = new WsExchange(conn, path, callHeaders, upgrade.kind === 'h2' ? '2.0' : '1.1');
     void handle(exchange, exchange);
   }
 
@@ -510,13 +566,15 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         // Uploads are plain HTTP requests (resumable by design); a WebSocket call has no address to
         // count against and nothing to resume.
         if (req instanceof WsExchange) throw new ApueError(400, 'Bad Request', 'uploads use plain HTTP requests, not WebSocket');
-        const scope = credentialScope(req);
-        const quota = options.uploads?.clientKey?.({ headers: req.headers, remoteAddress: req.remoteAddress }) ?? `addr:${req.remoteAddress ?? ''}`;
-        const response = await handleUpload(req, uploads, scope, quota, url.pathname);
+        const caller = await identify(req);
+        // Quotas need an identity the application vouches for: without the hook, a made-up
+        // Authorization header would buy a fresh quota — so it is the address then.
+        const quota = caller.principal !== undefined ? caller.scope : `addr:${req.remoteAddress ?? ''}`;
+        const response = await handleUpload(req, uploads, caller.scope, quota, url.pathname);
         complete();
         return void res.send(response.status, response.headers, head ? undefined : response.body);
       }
-      if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete);
+      if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete, await identify(req));
       const opName = decodePathSegment(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
       if (!def && options.fallback && (await options.fallback(req))) {
@@ -524,6 +582,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         return;
       }
       if (!def) throw new ApueError(404, 'Unknown Operation', opName, { type: ProblemType.UNKNOWN_OPERATION });
+      const identified = identify(req);
+      const caller = identified instanceof Promise ? await identified : identified; // no await unless the hook is async
       const read = isCacheableRead(def);
       const allow = read ? 'GET, HEAD, QUERY, POST' : 'POST';
       if (!allow.split(', ').includes(method)) throw methodNotAllowed(method, allow);
@@ -550,7 +610,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       // resolved bytes (canonical JSON of a 64 MiB Uint8Array would be a huge object).
       let identity: unknown;
       if (!hasRequestStream(def)) {
-        const resolved = await resolveUploads(def, input, req);
+        const resolved = await resolveUploads(def, input, caller.scope);
         input = validateInput(def, resolved.input);
         identity = containsBytes(def.input) ? resolved.identity : input;
       }
@@ -561,8 +621,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const checkpoints: string[] = [];
       let emitCheckpoint: ((token: string) => void) | undefined;
       if (def.resumable) {
-        // 128 bits are plenty to bind a token to its input and keep tokens compact.
-        const inputHash = hash(canonicalJson(identity ?? null)).slice(0, 22);
+        // 128 bits are plenty to bind a token to its input and keep tokens compact. With a
+        // principal hook also to the caller: a stream's identity includes who is asking (the
+        // raw Authorization would invalidate tokens on every refresh, so not without the hook).
+        const bound = principalHook ? `${caller.scope}\n${canonicalJson(identity ?? null)}` : canonicalJson(identity ?? null);
+        const inputHash = hash(bound).slice(0, 22);
         const token = req.headers[Header.RESUME] ?? req.headers['last-event-id'];
         if (typeof token === 'string' && token !== '') resumeFrom = resumeTokens.verify(token, opName, inputHash);
         checkpoint = (cursor) => {
@@ -577,6 +640,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         headers: req.headers,
         httpVersion: req.httpVersion,
         method,
+        ...(caller.principal === undefined ? {} : { principal: caller.principal }),
         checkpoint,
         ...(resumeFrom === undefined ? {} : { resumeFrom }),
       };
@@ -585,7 +649,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         const keyHeader = req.headers[IDEMPOTENCY_KEY];
         const keyed = typeof keyHeader === 'string' && def.effect !== 'safe' && def.stream === 'none';
         const key = keyed ? parseIdempotencyKey(keyHeader) : undefined;
-        const outcome = await runUnary(opName, def, input, ctx, key, selection, identity);
+        const outcome = await runUnary(opName, def, input, ctx, caller, key, selection, identity);
         if (outcome.aborted) return;
         complete();
         if (outcome.status === 200 && read) {
@@ -644,13 +708,14 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     def: OpDef,
     input: unknown,
     ctx: CallContext,
+    caller: Caller,
     key: string | undefined,
     selection?: Selection,
     identity: unknown = input,
   ): Promise<Outcome> {
     let scope: string | undefined;
     if (key !== undefined && idempotency && def.effect !== 'safe') {
-      scope = `${opName}\n${hash(String(ctx.headers.authorization ?? ''))}\n${key}`;
+      scope = `${opName}\n${caller.scope}\n${key}`;
       const claim = idempotency.begin(scope, hash(canonicalJson(identity ?? null)));
       if (claim.state === 'replay') {
         const stored = claim.response;
@@ -707,6 +772,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     signal: AbortSignal,
     gone: AbortSignal,
     complete: () => void,
+    caller: Caller,
   ): Promise<void> {
     const method = req.method;
     if (method !== 'POST' && method !== 'QUERY') throw methodNotAllowed(method, 'QUERY, POST');
@@ -728,7 +794,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
             await writer.end({ status: 424, problem }, lane);
             return { ok: false };
           }
-          return runLane(lane, call, (dep) => deps[[...call.deps].indexOf(dep)]!.value, writer, signal, req);
+          return runLane(lane, call, (dep) => deps[[...call.deps].indexOf(dep)]!.value, writer, signal, req, caller);
         })(),
       );
     }
@@ -743,14 +809,23 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     writer: FrameWriter,
     signal: AbortSignal,
     req: Exchange,
+    caller: Caller,
   ): Promise<{ ok: boolean; value?: unknown }> {
     // Batch lanes are not resumable (a batch is one request); checkpoints are ignored there.
-    const ctx: CallContext = { op: call.op, signal, headers: req.headers, httpVersion: req.httpVersion, method: req.method, checkpoint: () => {} };
+    const ctx: CallContext = {
+      op: call.op,
+      signal,
+      headers: req.headers,
+      httpVersion: req.httpVersion,
+      method: req.method,
+      ...(caller.principal === undefined ? {} : { principal: caller.principal }),
+      checkpoint: () => {},
+    };
     try {
-      const resolved = await resolveUploads(call.def, resolveRefs(call.input, output), req);
+      const resolved = await resolveUploads(call.def, resolveRefs(call.input, output), caller.scope);
       const input = validateInput(call.def, resolved.input);
       if (call.def.stream === 'none') {
-        const outcome = await runUnary(call.op, call.def, input, ctx, call.key, call.selection, containsBytes(call.def.input) ? resolved.identity : input);
+        const outcome = await runUnary(call.op, call.def, input, ctx, caller, call.key, call.selection, containsBytes(call.def.input) ? resolved.identity : input);
         if (outcome.status !== 200) {
           await writer.end({ status: outcome.status, problem: outcome.payload as Problem }, lane);
           return { ok: false };

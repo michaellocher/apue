@@ -2,7 +2,7 @@
 // errors the protocol itself can answer with, and placeholder examples. Nothing here is written by
 // hand and nothing changes the API; it is computed once, with the manifest.
 import { hasRequestStream, hasResponseStream, isCacheableRead, MAX_GET_URL, type OpDef } from './api.ts';
-import { Header, MediaType, ProblemType } from './protocol.ts';
+import { Header, MediaType, ProblemType, WS_AUTH_PREFIX, WS_SUBPROTOCOL } from './protocol.ts';
 import { containsBytes, type Schema } from './schema.ts';
 
 /** A problem a call can be answered with: status and RFC 9457 type (`about:blank` when generic). */
@@ -35,6 +35,7 @@ export const HTTP_CONVENTIONS = {
   headers: { deadline: Header.TIMEOUT, idempotencyKey: 'idempotency-key', resume: Header.RESUME },
   streams: `${MediaType.STREAM_JSON}: 8-byte frame header (type, flags, lane, length) + payload; examples show single messages`,
   bytes: 'inputs: {"$upload": "<id>"} after POST /$uploads (when enabled); outputs: BLOB frames',
+  webSocket: `request streams from browsers: wss://<host>/<op>?timeout=<ms>, subprotocols ${WS_SUBPROTOCOL} and ${WS_AUTH_PREFIX}<Authorization value, base64url without padding>`,
 } as const;
 
 export interface OpHttp {

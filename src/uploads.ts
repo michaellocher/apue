@@ -4,7 +4,6 @@
 import { createHash, randomBytes, type Hash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { mkdtemp, open, readFile, rm, unlink, type FileHandle } from 'node:fs/promises';
-import type { IncomingHttpHeaders } from 'node:http';
 import { join } from 'node:path';
 import type { FileValue } from './schema.ts';
 import type { Exchange } from './exchange.ts';
@@ -26,17 +25,12 @@ export interface UploadOptions {
   ttlMs?: number;
   /**
    * Bytes one client may hold, received or announced (Upload-Length), so one client can't lock
-   * out the rest. Default storeBytes / 4. Who "one client" is: see `clientKey`.
+   * out the rest. Default storeBytes / 4. One client is one principal when the server has a
+   * `principal` hook, else one address.
    */
   scopeBytes?: number;
   /** Upload resources one client may hold, complete or not. Default 100. */
   scopeUploads?: number;
-  /**
-   * Whose quota a request counts against. Default: its address — an Authorization header can't be
-   * trusted here (nothing checks it), so a made-up one must not buy a fresh quota; behind a proxy
-   * that is the proxy's address for everyone. Applications that authenticate can return their user id.
-   */
-  clientKey?: (request: { headers: IncomingHttpHeaders; remoteAddress: string | undefined }) => string;
   /**
    * Keep upload content in files under this directory instead of memory (spike S20): uploads in
    * progress cost no RAM, and t.file() inputs reach handlers as streams from these files. A

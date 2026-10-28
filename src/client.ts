@@ -91,6 +91,24 @@ export interface ClientOptions {
   /** Base backoff; attempt n waits a random time in [0, base·2ⁿ] (full jitter), capped at maxBackoffMs. */
   backoffMs?: number;
   maxBackoffMs?: number;
+  /**
+   * The `Authorization` value for every request (calls, batches, uploads), or a function asked
+   * before each request — so a refreshed token is used from the next request on. Undefined sends
+   * none. Over WebSocket (tier T3) it travels as an `apue.auth.` subprotocol.
+   */
+  authorization?: string | (() => string | undefined | Promise<string | undefined>);
+}
+
+/** Adds the caller's credentials to every request the client sends through `transport`. */
+function withAuthorization(transport: Transport, authorization: NonNullable<ClientOptions['authorization']>): Transport {
+  const current = typeof authorization === 'string' ? () => authorization : authorization;
+  return {
+    async request(req) {
+      const value = await current();
+      return transport.request(value === undefined ? req : { ...req, headers: { ...req.headers, authorization: value } });
+    },
+    close: () => transport.close?.() ?? Promise.resolve(),
+  };
 }
 
 export type OpsOf<A extends Api, S extends StreamKind> = {
@@ -126,7 +144,7 @@ export class ApueClient<A extends Api> {
 
   constructor(api: A, transport: Transport, options: ClientOptions = {}) {
     this.#api = api;
-    this.#transport = transport;
+    this.#transport = options.authorization === undefined ? transport : withAuthorization(transport, options.authorization);
     this.#retries = options.retries ?? 2;
     this.#backoffMs = options.backoffMs ?? 100;
     this.#maxBackoffMs = options.maxBackoffMs ?? 2_000;

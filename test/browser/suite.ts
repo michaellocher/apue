@@ -104,6 +104,16 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     // fetch would revalidate a cached GET; cache: private + no-cache keeps this fresh.
     return `server saw the WebSocket over ${await client.call('stats.lastDuplexVersion')}`;
   });
+  await check('credentials on every tier: Authorization over fetch, apue.auth. subprotocol over WebSocket (S21)', async () => {
+    const authed = new ApueClient(browserApi, webSocketTransport(apiUrl), { authorization: 'Bearer browser-user' });
+    equal(await authed.call('who.am'), { principal: 'browser-user', authorization: 'Bearer browser-user', protocols: null }); // fetch, preflighted
+    async function* one() {
+      yield 1;
+    }
+    // The server selected only apue.v1 (the transport checks ws.protocol) and hid the token.
+    equal(await Array.fromAsync(authed.duplex('who.streaming', one())), [{ principal: 'browser-user', authorization: 'Bearer browser-user', protocols: 'apue.v1' }]);
+    await authed.close();
+  });
   await check('WebSocket shares the h2 connection when fetch sends credentials (RFC 8441)', async () => {
     const credentialed = new ApueClient(browserApi, fetchTransport(apiUrl, { credentials: 'include' }));
     await credentialed.call('users.get', { id: 'warm-up' }); // h2 session with the WebSocket's key

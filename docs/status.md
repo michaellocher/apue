@@ -36,7 +36,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 302 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 320 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -122,7 +122,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 
 CBOR · message-level CREDIT (T3 byte windows done) · WebTransport / HTTP/3 (the official Node 26 build
 is compiled without QUIC: `node_use_quic: false`) · uploads surviving a restart · generators for other
-languages · problem-type namespace (needs your domain) · auth guidance.
+languages · problem-type namespace (needs your domain) · DPoP profile (deferred, S21).
 (Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),
 resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14),
-derived manifest docs (S19), spike `t.file()` + file-backed upload store (S20, research/09).)
+derived manifest docs (S19), spike `t.file()` + file-backed upload store (S20, research/09),
+callers: `principal` hook, credentials over WebSocket, no ambient credentials cross-origin (S21, research/10).)

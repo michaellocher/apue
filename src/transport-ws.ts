@@ -3,7 +3,8 @@
 // Flow control as in src/websocket.ts: binary bytes use up a window, text messages ("65536")
 // extend it; the browser API can't pause receiving, so the window is what bounds client memory.
 import { fetchTransport, type Transport, type TransportResponse } from './client.ts';
-import { concatBytes } from './frame.ts';import { checkWindow, Header, MediaType, parseCredit, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { concatBytes } from './frame.ts';
+import { checkWindow, Header, MediaType, parseCredit, parseWsAuthProtocol, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL, wsAuthProtocol } from './protocol.ts';
 
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
 export const WS_CLOSE_CANCELLED = 4000;
@@ -49,10 +50,18 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       if (req.body === undefined || req.body instanceof Uint8Array || req.body instanceof Blob) return http.request(req);
       const { path, headers, body, signal } = req;
       signal.throwIfAborted(); // an already-aborted signal never fires 'abort'
-      // Browsers can't set WebSocket headers: the deadline travels as a query parameter.
+      // Browsers can't set WebSocket headers: the deadline travels as a query parameter, the
+      // credentials as a second offered subprotocol (never selected by the server). Request streams
+      // carry no other header that matters here: Idempotency-Key and resume tokens only apply to
+      // calls without a request stream, which go over fetch.
       const timeout = headers[Header.TIMEOUT];
       const url = `${base}${path}${timeout ? `${path.includes('?') ? '&' : '?'}timeout=${encodeURIComponent(timeout)}` : ''}`;
-      const ws = new WebSocketImpl(url, WS_SUBPROTOCOL);
+      const authorization = headers.authorization;
+      const credentials = authorization === undefined ? undefined : wsAuthProtocol(authorization);
+      if (credentials !== undefined && parseWsAuthProtocol(credentials) !== authorization) {
+        throw new TypeError('Authorization must be visible ASCII (spaces inside) to travel over WebSocket');
+      }
+      const ws = new WebSocketImpl(url, credentials === undefined ? WS_SUBPROTOCOL : [WS_SUBPROTOCOL, credentials]);
       ws.binaryType = 'arraybuffer';
       live.add(ws);
       let input: AsyncIterator<Uint8Array> | undefined;

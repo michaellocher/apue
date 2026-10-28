@@ -72,6 +72,11 @@ const handlers: Handlers<typeof browserApi> = {
   },
   'stats.flooded': () => flooded,
   'files.store': ({ data }) => ({ size: data.byteLength, sha256: createHash('sha256').update(data).digest('hex') }),
+  'who.am': (_, ctx) => ({ principal: ctx.principal ?? null, authorization: (ctx.headers.authorization as string | undefined) ?? null, protocols: null }),
+  'who.streaming': async (inputs, ctx) => {
+    for await (const _ of inputs);
+    return { principal: ctx.principal ?? null, authorization: (ctx.headers.authorization as string | undefined) ?? null, protocols: (ctx.headers['sec-websocket-protocol'] as string | undefined) ?? null };
+  },
   'echo.duplex': async function* (inputs, ctx) {
     lastDuplexVersion = `HTTP/${ctx.httpVersion}`;
     for await (const value of inputs) yield { echo: value };
@@ -83,7 +88,12 @@ let api: { url: string; close(): Promise<void> };
 
 before(async () => {
   page = await startPageServer();
-  api = await startServer(browserApi, handlers, { cors: { origins: [page.url], credentials: true }, uploads: {} });
+  api = await startServer(browserApi, handlers, {
+    cors: { origins: [page.url], credentials: true },
+    uploads: {},
+    // "Bearer <user>" names the user (S21): checks that the principal reaches handlers on every tier.
+    principal: ({ headers }) => (typeof headers.authorization === 'string' && headers.authorization.startsWith('Bearer ') ? headers.authorization.slice(7) : undefined),
+  });
 });
 after(async () => {
   await api?.close();

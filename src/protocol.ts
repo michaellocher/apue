@@ -70,6 +70,33 @@ export function baseMediaType(contentType: string | null | undefined): string {
 // WebSocket tier (T3, SPEC-DRAFT §8): subprotocol and flow-control rules, shared by the Node server
 // (websocket.ts) and the web client (transport-ws.ts) so the two can't drift apart.
 export const WS_SUBPROTOCOL = 'apue.v1';
+/**
+ * Browsers can't set WebSocket headers, only subprotocols: an `Authorization` value travels as one
+ * more offered subprotocol, `apue.auth.<base64url without padding>` (the Kubernetes pattern). The
+ * server never selects (echoes) it and hands it to the call as the `authorization` header.
+ */
+export const WS_AUTH_PREFIX = 'apue.auth.';
+
+/** `Authorization` value → offered subprotocol (base64url: token characters only, RFC 6455 §4.1). */
+export function wsAuthProtocol(authorization: string): string {
+  const bytes = new TextEncoder().encode(authorization);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return WS_AUTH_PREFIX + btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/**
+ * Offered subprotocol → `Authorization` value; undefined unless it is canonical base64url without
+ * padding of a valid field value (visible ASCII, spaces and tabs inside: RFC 9110 §5.5), so nothing
+ * a header could not carry (CR, LF, NUL) reaches the call this way.
+ */
+export function parseWsAuthProtocol(protocol: string): string | undefined {
+  const encoded = protocol.slice(WS_AUTH_PREFIX.length);
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded) || encoded.length % 4 === 1) return undefined;
+  const binary = atob(encoded.replace(/-/g, '+').replace(/_/g, '/'));
+  if (wsAuthProtocol(binary) !== protocol) return undefined; // non-canonical (stray low bits)
+  return /^[\x21-\x7e](?:[\x20-\x7e\t]*[\x21-\x7e])?$/.test(binary) ? binary : undefined;
+}
 /** Window each side may use before the peer's first credit (HTTP/2's default is 65,535). */
 export const WS_INITIAL_WINDOW = 64 * 1024;
 /** Upper bound of a window and of one increment (HTTP/2: 2^31 - 1). */

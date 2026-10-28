@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { defineApi, op } from '../src/api.ts';
-import { ApueClient } from '../src/client.ts';
+import { ApueClient, type Transport, type TransportRequest } from '../src/client.ts';
+import { replicaOf } from '../src/protocol.ts';
 import { createApueServer } from '../src/server.ts';
 import { download } from '../src/downloads.ts';
 import { t } from '../src/schema.ts';
@@ -38,4 +39,32 @@ test('instance names are validated (they become part of URLs)', () => {
   for (const instance of ['', 'a.b', 'x'.repeat(33), 'a/b', 'ü']) {
     assert.throws(() => createApueServer(api, handlers, { ...testCert(), uploads: {}, instance }), RangeError, instance);
   }
+});
+
+test('calls and batches that reference uploads on one replica carry apue-replica (a routing hint)', async (ctx) => {
+  const server = await startServer(api, handlers, { uploads: {}, instance: 'eu-2' });
+  const inner = http2Transport(server.url, { ca: testCert().cert });
+  const sent: TransportRequest[] = [];
+  const transport: Transport = { request: (req) => (sent.push(req), inner.request(req)), close: () => inner.close?.() ?? Promise.resolve() };
+  const client = new ApueClient(api, transport);
+  ctx.after(async () => {
+    await client.close();
+    await server.close();
+  });
+  await client.call('files.size', { data: new Uint8Array(5) });
+  const call = sent.find((r) => r.path === '/files.size')!;
+  assert.equal(call.headers['apue-replica'], 'eu-2');
+  const ref = await client.upload(new Uint8Array(3));
+  const batch = client.batch();
+  batch.call('files.size', { data: ref });
+  await batch.send();
+  assert.equal(sent.find((r) => r.path === '/$batch')!.headers['apue-replica'], 'eu-2');
+  assert.equal(sent.find((r) => r.path === '/export.get' || r.method === 'GET')?.headers['apue-replica'], undefined);
+});
+
+test('replicaOf: one replica, none, unprefixed or mixed', () => {
+  assert.equal(replicaOf({ a: { $upload: 'eu-1.x' }, b: [{ $upload: 'eu-1.y' }] }), 'eu-1');
+  assert.equal(replicaOf({ a: 1 }), undefined);
+  assert.equal(replicaOf({ a: { $upload: 'plainid' } }), undefined);
+  assert.equal(replicaOf({ a: { $upload: 'eu-1.x' }, b: { $upload: 'eu-2.y' } }), undefined);
 });

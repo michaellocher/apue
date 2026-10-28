@@ -4,7 +4,7 @@ import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from
 import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type ClientOutputOf, type OpsOf, type Prepared, type WithUploadRefs } from './client.ts';
 import { decodeFrameBatches, decodeJson, FrameError, FrameType, type EndInfo } from './frame.ts';
 import { containsBytes } from './schema.ts';
-import { ApueError, baseMediaType, isUploadRef, MediaType, ProblemType, type UploadRef } from './protocol.ts';
+import { ApueError, baseMediaType, Header, isUploadRef, MediaType, ProblemType, replicaOf, type UploadRef } from './protocol.ts';
 import { BlobAssembler } from './blobs.ts';
 import { containsRef, encodeArgs, Ref } from './refs.ts';
 
@@ -208,6 +208,8 @@ export class Batch<A extends Api> {
     }));
     const headers: Record<string, string> = { accept: ACCEPT, 'content-type': MediaType.JSON };
     if (options.timeoutMs !== undefined) headers['apue-timeout'] = String(options.timeoutMs);
+    const replica = replicaOf(inputs); // the replica holding the uploads the calls reference
+    if (replica !== undefined) headers[Header.REPLICA] = replica;
     const prepared: Prepared = {
       method: allSafe && this.#client.queryAllowed ? 'QUERY' : 'POST',
       path: '/$batch',

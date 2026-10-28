@@ -13,7 +13,7 @@ import {
   type StreamKind,
 } from './api.ts';
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
-import { ApueError, baseMediaType, Header, isUploadRef, MediaType, ProblemType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH, type UploadRef } from './protocol.ts';
+import { ApueError, baseMediaType, Header, isUploadRef, MediaType, ProblemType, replicaOf, UPLOAD_INTEROP_VERSION, UPLOADS_PATH, type UploadRef } from './protocol.ts';
 import { BlobAssembler, messageFrames } from './blobs.ts';
 import { containsBytes, containsDownload, isDownloadRef, mapBytes, mapDownloads, ValidationError, type DownloadSource, type FileValue } from './schema.ts';
 import { Download } from './download.ts';
@@ -353,6 +353,9 @@ export class ApueClient<A extends Api> {
     const headers: Record<string, string> = { accept: ACCEPT };
     if (options.timeoutMs !== undefined) headers[Header.TIMEOUT] = String(options.timeoutMs);
     if (resumeToken !== undefined) headers[Header.RESUME] = resumeToken;
+    // Uploads live on the replica that received them: tell a load balancer where to send the call.
+    const replica = containsBytes(def.input) && !hasRequestStream(def) ? replicaOf(input) : undefined;
+    if (replica !== undefined) headers[Header.REPLICA] = replica;
     if (hasRequestStream(def)) {
       headers['content-type'] = MediaType.STREAM_JSON;
       // RFC 10036 §3: must be set on the request too, or intermediaries may buffer the upload.

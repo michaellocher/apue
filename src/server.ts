@@ -1429,7 +1429,7 @@ function hash(text: string | Uint8Array): string {
 
 // PATCH/DELETE and the Upload-* fields are for resumable uploads (`/$uploads`).
 const CORS_ALLOW_METHODS = 'DELETE, GET, HEAD, PATCH, POST, QUERY';
-const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'dpop', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version', 'range', 'if-range']);
+const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'dpop', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version', 'range', 'if-range', Header.REPLICA]);
 const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding, location, upload-offset, upload-complete, upload-limit, upload-length, www-authenticate, dpop-nonce, accept-ranges, content-range, content-disposition, repr-digest';
 
 /**

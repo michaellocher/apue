@@ -11,7 +11,31 @@ export const MediaType = {
 export const Header = {
   TIMEOUT: 'apue-timeout',
   RESUME: 'apue-resume',
+  /** The replica holding the uploads a call references (server option `instance`): a load-balancer routing hint. */
+  REPLICA: 'apue-replica',
 } as const;
+
+/**
+ * The replica that holds every upload referenced in `input` (ids `<instance>.<random>`), or
+ * undefined when there are none, they are unprefixed, or they live on different replicas.
+ */
+export function replicaOf(input: unknown): string | undefined {
+  let replica: string | undefined;
+  let mixed = false;
+  const visit = (value: unknown): void => {
+    if (mixed || value === null || typeof value !== 'object' || value instanceof Uint8Array) return;
+    if (isUploadRef(value)) {
+      const dot = value.$upload.indexOf('.');
+      const prefix = dot > 0 ? value.$upload.slice(0, dot) : undefined;
+      if (prefix === undefined || (replica !== undefined && replica !== prefix)) mixed = true;
+      else replica = prefix;
+      return;
+    }
+    for (const item of Array.isArray(value) ? value : Object.values(value)) visit(item);
+  };
+  visit(input);
+  return mixed ? undefined : replica;
+}
 
 /**
  * Problem type URIs for apü-specific errors (RFC 9457 §3.1.1). Generic errors use the default

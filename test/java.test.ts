@@ -55,6 +55,7 @@ const api = defineApi({
   'files.ingest': op({ effect: 'unsafe', input: t.object({ file: t.file() }), output: t.object({ size: t.number({ int: true }), sha256: t.string() }) }),
   'export.get': op({ effect: 'safe', input: t.void(), output: t.object({ archive: t.download() }) }),
   'export.big': op({ effect: 'safe', input: t.void(), output: t.object({ archive: t.download() }) }),
+  'export.bad': op({ effect: 'safe', input: t.void(), output: t.object({ archive: t.download() }) }),
   'slow.get': op({ effect: 'safe', input: t.void(), output: t.string() }),
   'flaky.get': op({ effect: 'safe', input: t.void(), output: t.string() }),
   'class': op({ effect: 'safe', input: t.void(), output: t.object({ 'odd-key': t.nullable(t.number()) }) }),
@@ -130,6 +131,7 @@ function handlers(s: ReturnType<typeof state>): Handlers<typeof api> {
         } satisfies DownloadSource,
       };
     },
+    'export.bad': () => ({ archive: { ...download.fromBytes(new Uint8Array(1000)), sha256: '0'.repeat(64) } }),
     'slow.get': async () => {
       await sleep(500);
       return 'late';
@@ -301,6 +303,7 @@ public class Run {
         Download d = c.exportGet().archive();
         return List.of(d.url().toString().startsWith(base + "/$downloads/"), d.size(), d.type(), sha(d.readAllBytes()), d.sha256(), d.expires().isAfter(java.time.Instant.now()));
       });
+      run("download_corrupt", () -> sha(c.exportBad().archive().readAllBytes()));
       run("deadline", () -> c.slowGet(new CallOptions().timeout(Duration.ofMillis(50))));
       run("retry", () -> {
         long start = System.nanoTime();
@@ -407,6 +410,7 @@ test('a generated Java client against a live server', { skip }, async (ctx) => {
   assert.deepEqual(out.file_path, { ok: { sha256: sha('y'.repeat(500000)), size: 500000 } });
   assert.deepEqual(out.file_stream, { ok: { sha256: sha('x'.repeat(300000)), size: 300000 } });
   assert.deepEqual(out.download, { ok: [true, EXPORT.byteLength, 'application/x-test', sha(EXPORT), sha(EXPORT), true] });
+  assert.deepEqual([out.download_corrupt!.error, out.download_corrupt!.detail], [502, 'download content does not match its SHA-256']);
   assert.equal(out.deadline!.error, 504);
   const [warm, waited] = out.retry!.ok as [string, number];
   assert.equal(warm, 'warm');

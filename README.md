@@ -6,6 +6,8 @@ with maximum throughput, short TTFB, compression, multiplexing, duplex streaming
 Spikes in Node 26 with native TypeScript and no build step.
 
 - Design: [`SPEC-DRAFT.md`](SPEC-DRAFT.md) (draft 01, marks what is implemented vs planned)
+- On the wire: [`docs/wire.md`](docs/wire.md) — real curl sessions (idempotent replay, ETag/304, QUERY,
+  selection, problem details, SSE view, a batch in hex)
 - Research: [`research/`](research/) — problems of existing API styles, HTTP/2 and modern HTTP,
   data plane performance, Node 26 platform, verified normative details
 - Measurements: [`docs/benchmarks.md`](docs/benchmarks.md) (local, constrained Docker, WAN

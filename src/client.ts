@@ -276,7 +276,9 @@ export class ApueClient<A extends Api> {
       const bytes = await readAll(res.body);
       const problem = safeJson(bytes) as Partial<Problem> | undefined;
       if (problem?.retryable === true) return this.#backoff(attempt);
+      // The body is consumed: both accessors must now serve the buffered bytes.
       res.body = single(bytes);
+      res.bytes = () => Promise.resolve(bytes);
     }
     return undefined;
   }

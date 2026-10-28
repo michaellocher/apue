@@ -43,6 +43,18 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     const { orderId } = await client.call('orders.create', { item: 'book' });
     if (typeof orderId !== 'number') throw new Error('no order id');
   });
+  await check('a long server stream over fetch (> 1 MiB: beyond every flow-control window)', async () => {
+    // 60,000 items ≈ 1.3 MiB of frames. Reports how far it got if the stream stalls.
+    let received = 0;
+    const stalled = new Promise<string>((resolve) => setTimeout(() => resolve('stalled'), 20_000));
+    const read = (async () => {
+      for await (const n of client.stream('count.up', { to: 60_000 })) received = n;
+      return 'done';
+    })();
+    const outcome = await Promise.race([read, stalled]);
+    if (outcome !== 'done' || received !== 60_000) throw new Error(`stream ${outcome} after ${received} of 60000 items`);
+    return '60000 items';
+  });
   await check('server stream', async () => {
     equal(await Array.fromAsync(client.stream('count.up', { to: 100 })), Array.from({ length: 100 }, (_, i) => i + 1));
   });

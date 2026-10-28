@@ -64,6 +64,24 @@ on the same HTTP/2 connection, for three client stream windows. Idle: 0.17 / 0.4
   window — it is `JSON.parse`/`stringify` of 8 MiB values on both sides. Large data belongs in
   `t.bytes()` (BLOB frames) or in streams of smaller messages.
 
+### Window auto-tuning (gRPC's BDP estimator) — tried, not the default
+
+`windowTuning: 'bdp'` in the node:http2 transport starts at 256 KiB and grows the window from PING
+round trips (grow to 2× the sample when it fills > 2/3 of the window and the implied bandwidth is
+a new maximum). Measured (2 × 16 MiB downloads; 40 ms RTT via an in-process latency proxy):
+
+| | fixed 256 KiB | bdp auto | fixed 4 MiB |
+|---|---|---|---|
+| local throughput | 370 MiB/s | 536 MiB/s (window settles at 1 MiB) | 660 MiB/s |
+| 40 ms RTT throughput | 2.8 MiB/s | 20.8 MiB/s (grows to 7.5 MiB) | 41.8 MiB/s |
+| small-call p50 next to binary bulk (local) | 0.20 ms | 2.16 ms | 2.46 ms |
+| small-call p50 next to JSON bulk (local) | 0.37 ms | 8.05 ms | 2.34 ms |
+
+Without the bandwidth check the estimator was worse still (8–18 ms): PINGs queue behind data under
+load, inflating sample and RTT together. Even with it, auto-tuning loses the ramp-up on WAN
+transfers and doesn't keep small calls fast locally, so the default stays a fixed 4 MiB window;
+latency-sensitive LAN deployments can choose a smaller fixed window.
+
 ## Conclusions
 
 1. **On real networks the protocol design dominates, not CPU.** With 63 ms RTT the unary overhead

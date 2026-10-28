@@ -235,7 +235,7 @@ export async function window(ports: Ports, { ca }: Options, kb = 4096, repeats =
     ['client window 64 KiB (RFC default)', 65_535, 65_535],
     ['client window 4 MiB / 32 MiB (apü default)', 4 * 1024 * 1024, 32 * 1024 * 1024],
   ] as const) {
-    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, streamWindow, connectionWindow, acceptEncoding: '' }));
+    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, windowTuning: 'fixed', streamWindow, connectionWindow, acceptEncoding: '' }));
     await client.call('blob.get', { kb: 64 });
     const t0 = performance.now();
     for (let i = 0; i < repeats; i++) await client.call('blob.get', { kb });
@@ -310,8 +310,9 @@ export async function grpcComparison(ports: Ports & { grpc: number }, options: O
  */
 export async function multiplex(ports: Ports, { ca }: Options): Promise<Row[]> {
   const rows: Row[] = [];
-  for (const window of [4 * 1024 * 1024, 1024 * 1024, 256 * 1024]) {
-    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, acceptEncoding: '', streamWindow: window }));
+  for (const window of [4 * 1024 * 1024, 1024 * 1024, 256 * 1024, 'auto'] as const) {
+    const tuning = window === 'auto' ? { windowTuning: 'bdp' as const } : { windowTuning: 'fixed' as const, streamWindow: window };
+    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, acceptEncoding: '', ...tuning }));
     const latencies = async (calls: number) => {
       const samples: number[] = [];
       for (let i = 0; i < calls; i++) {
@@ -322,7 +323,7 @@ export async function multiplex(ports: Ports, { ca }: Options): Promise<Row[]> {
       return { p50: percentile(samples, 0.5), p99: percentile(samples, 0.99) };
     };
     await latencies(200); // warm-up
-    const scenario = `multiplexing, one connection, stream window ${window / 1024} KiB`;
+    const scenario = `multiplexing, one connection, stream window ${window === 'auto' ? 'auto (BDP)' : `${window / 1024} KiB`}`;
     if (window === 4 * 1024 * 1024) {
       const alone = await latencies(500);
       rows.push({ scenario, variant: 'unary latency, idle connection', unit: 'ms', value: alone.p50, p50: alone.p50, p99: alone.p99 });

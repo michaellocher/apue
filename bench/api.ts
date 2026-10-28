@@ -19,6 +19,7 @@ export const benchApi = defineApi({
   'items.stream': op({ effect: 'safe', stream: 'server', input: t.object({ n: t.number() }), output: Item }),
   'blob.get': op({ effect: 'safe', input: t.object({ kb: t.number() }), output: t.object({ data: t.string() }) }),
   'chain.step': op({ effect: 'safe', input: t.object({ n: t.number() }), output: t.object({ n: t.number() }) }),
+  'bytes.get': op({ effect: 'safe', input: t.object({ kb: t.number() }), output: t.object({ data: t.bytes() }) }),
 });
 
 export function user(id: string) {
@@ -54,4 +55,12 @@ export const benchHandlers: Handlers<typeof benchApi> = {
   },
   'blob.get': ({ kb }) => ({ data: blob(kb) }),
   'chain.step': ({ n }) => ({ n: n + 1 }),
+  'bytes.get': ({ kb }) => ({ data: bytes(kb) }),
 };
+
+const byteCache = new Map<number, Uint8Array>();
+function bytes(kb: number): Uint8Array {
+  let value = byteCache.get(kb);
+  if (!value) byteCache.set(kb, (value = new Uint8Array(kb * 1024).map((_, i) => (i * 31) % 256)));
+  return value;
+}

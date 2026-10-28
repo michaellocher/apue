@@ -1,6 +1,6 @@
 // Benchmark orchestrator: starts bench/server.ts as a separate process, runs the scenarios,
 // prints a Markdown table and writes JSON results.
-//   node bench/run.ts [--label local] [--duration 3000] [--only unary,stream,bulk,chain,compression,window,grpc]
+//   node bench/run.ts [--label local] [--duration 3000] [--only unary,stream,bulk,chain,compression,window,multiplex,grpc]
 //                     [--server-args="--coalesce 0"] [--stream-n 200000] [--notes "..."]
 //   Remote server (e.g. another container): --remote 8443,8444 --ca certs/cert.pem
 import { spawn } from 'node:child_process';
@@ -10,13 +10,13 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { testCert } from '../test/helpers.ts';
-import { bulk, chain, compression, grpcComparison, stream, unary, window, type Ports, type Row } from './scenarios.ts';
+import { bulk, chain, compression, grpcComparison, multiplex, stream, unary, window, type Ports, type Row } from './scenarios.ts';
 
 const { values } = parseArgs({
   options: {
     label: { type: 'string', default: 'local' },
     duration: { type: 'string', default: '3000' },
-    only: { type: 'string', default: 'unary,stream,bulk,chain,compression,window' },
+    only: { type: 'string', default: 'unary,stream,bulk,chain,compression,window,multiplex' },
     'server-args': { type: 'string', default: '' },
     'stream-n': { type: 'string', default: '200000' },
     notes: { type: 'string', default: '' },
@@ -61,6 +61,7 @@ try {
   if (only.has('chain')) rows.push(...(await chain(ports, options)));
   if (only.has('compression')) rows.push(...(await compression(ports, options)));
   if (only.has('window')) rows.push(...(await window(ports, options)));
+  if (only.has('multiplex')) rows.push(...(await multiplex(ports, options)));
   if (only.has('grpc')) {
     // gRPC baseline server in its own process (dev dependency @grpc/grpc-js; local runs only).
     const certDir = join(values.out, '.certs');

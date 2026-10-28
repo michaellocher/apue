@@ -43,6 +43,27 @@ server, and with `for await` or `'data'` events on the client, grpc-js stayed at
 (single-process check). apü's frame coalescing, batched decoding and single-allocation encoding
 (below) make the difference. This says nothing about gRPC in Go, C++ or Rust.
 
+## Multiplexing: small calls next to bulk transfers on one connection
+
+`node bench/run.ts --only multiplex` (local): unary p50/p99 while 8 MiB downloads run concurrently
+on the same HTTP/2 connection, for three client stream windows. Idle: 0.17 / 0.48 ms.
+
+| stream window | during 8 MiB JSON downloads | during 8 MiB binary (BLOB) downloads | bulk throughput alongside (binary) |
+|---|---|---|---|
+| 4 MiB (default) | 2.44 / 14.65 ms | 2.47 / 6.65 ms | 761 MiB/s |
+| 1 MiB | 0.80 / 12.32 ms | 1.28 / 3.03 ms | 708 MiB/s |
+| 256 KiB | 0.36 / 11.48 ms | 0.21 / 1.46 ms | 899 MiB/s |
+
+- **Window vs. latency**: everything a bulk stream may have in flight queues ahead of a small
+  response in the shared TCP/TLS path (TCP head-of-line). A 256 KiB window keeps small calls at idle
+  latency even next to 900 MiB/s of bulk — on loopback. On a WAN the window must be ≥ the
+  bandwidth-delay product (63 ms × 100 Mbit/s ≈ 790 KB), or throughput collapses (12× in the WAN
+  profile). The window should therefore track the BDP (gRPC-style BDP probing — planned), not be as
+  large as possible; apü's 4 MiB default favours WAN throughput.
+- **Large JSON blocks the event loop**: the p99 of 11–15 ms with JSON downloads doesn't depend on the
+  window — it is `JSON.parse`/`stringify` of 8 MiB values on both sides. Large data belongs in
+  `t.bytes()` (BLOB frames) or in streams of smaller messages.
+
 ## Conclusions
 
 1. **On real networks the protocol design dominates, not CPU.** With 63 ms RTT the unary overhead

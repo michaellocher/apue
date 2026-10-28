@@ -303,3 +303,57 @@ export async function grpcComparison(ports: Ports & { grpc: number }, options: O
   await apue.close();
   return rows;
 }
+
+/**
+ * Head-of-line check: unary latency alone vs. while bulk downloads run on the same connection,
+ * for several client stream windows (bytes of one stream allowed in flight).
+ */
+export async function multiplex(ports: Ports, { ca }: Options): Promise<Row[]> {
+  const rows: Row[] = [];
+  for (const window of [4 * 1024 * 1024, 1024 * 1024, 256 * 1024]) {
+    const client = new ApueClient(benchApi, http2Transport(`https://127.0.0.1:${ports.apue}`, { ca, acceptEncoding: '', streamWindow: window }));
+    const latencies = async (calls: number) => {
+      const samples: number[] = [];
+      for (let i = 0; i < calls; i++) {
+        const t0 = performance.now();
+        await client.call('users.get', { id: String(i) });
+        samples.push(performance.now() - t0);
+      }
+      return { p50: percentile(samples, 0.5), p99: percentile(samples, 0.99) };
+    };
+    await latencies(200); // warm-up
+    const scenario = `multiplexing, one connection, stream window ${window / 1024} KiB`;
+    if (window === 4 * 1024 * 1024) {
+      const alone = await latencies(500);
+      rows.push({ scenario, variant: 'unary latency, idle connection', unit: 'ms', value: alone.p50, p50: alone.p50, p99: alone.p99 });
+    }
+    for (const [label, download] of [
+      // 8 MiB JSON: stringify/hash/parse block both event loops for milliseconds per response.
+      ['8 MiB JSON downloads', async () => (await client.call('blob.get', { kb: 8192 })).data.length],
+      // 8 MiB as BLOB frames: no large JSON work, so mostly transport queuing remains.
+      ['8 MiB binary downloads', async () => (await client.call('bytes.get', { kb: 8192 })).data.byteLength],
+    ] as const) {
+      let downloading = true;
+      let downloaded = 0;
+      const bulk = (async () => {
+        while (downloading) downloaded += await download();
+      })();
+      await new Promise((resolve) => setTimeout(resolve, 100)); // let the downloads get going
+      const t0 = performance.now();
+      const loaded = await latencies(500);
+      const seconds = (performance.now() - t0) / 1000;
+      downloading = false;
+      await bulk;
+      rows.push({
+        scenario,
+        variant: `unary latency during ${label} (${Math.round(downloaded / 1048576 / seconds)} MiB/s alongside)`,
+        unit: 'ms',
+        value: loaded.p50,
+        p50: loaded.p50,
+        p99: loaded.p99,
+      });
+    }
+    await client.close();
+  }
+  return rows;
+}

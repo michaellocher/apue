@@ -82,8 +82,8 @@ node bench/micro.ts  # data-path micro-benchmarks
 | Pipelined batches with `$ref`, out-of-order lanes, 424 | `src/refs.ts`, `src/batch.ts` |
 | Resumable streams with HMAC checkpoints (stateless, exactly-once) | `src/resume.ts` |
 | Compression: zstd/br/gzip, per-burst flush | `src/compression.ts` |
-| Transports: HTTP/2 core API + HTTP/1.1, fetch, node:http2 (full duplex), WebSocket (RFC 8441/6455) | `src/exchange.ts`, `src/transport-http2.ts`, `src/websocket.ts`, `src/transport-ws.ts` |
+| Transports: HTTP/2 core API + HTTP/1.1, fetch, node:http2 (full duplex), WebSocket (RFC 8441/6455) with HTTP/2-style byte windows (`apue.v1`) | `src/exchange.ts`, `src/transport-http2.ts`, `src/websocket.ts`, `src/transport-ws.ts` |
 | CORS, resource limits (streams, idle, body time), manifest + RFC 9727 catalog | `src/server.ts` |
 | Typed client contract from a running server's manifest (`node bin/apue-types.ts <url>`) | `src/codegen.ts`, `bin/apue-types.ts` |
 
-Planned (see spec §13): CBOR, CREDIT flow control, WebTransport, resumable uploads, CDN cache headers.
+Also implemented: CDN-Cache-Control and cache groups (RFC 9213/9875). Planned (see spec §13): CBOR, message-level CREDIT across tiers, WebTransport, resumable uploads.

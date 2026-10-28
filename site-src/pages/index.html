@@ -23,7 +23,7 @@ $ npm install apue@beta
         <div class="node client">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2.5"/><path d="M3 8h18M8 21h8"/></svg>
           <b>Client</b>
-          <span>browser · Node · Python · Go · Java</span>
+          <span>browser · Node · Python · Go · Java · Swift</span>
         </div>
         <div class="pipe" aria-hidden="true">
           <div class="lane req"><span class="lane-label">request</span><span class="chip">GET <i>/todos.watch</i></span></div>
@@ -189,6 +189,7 @@ $ npx apue-types https://api.example --out api.ts
 $ npx apue-types https://api.example --lang python --out api.py
 $ npx apue-types https://api.example --lang go --package api --out api.go
 $ npx apue-types https://api.example --lang java --package com.example.api --out Api.java
+$ npx apue-types https://api.example --lang swift --out Api.swift
 {{/pre}}
     <p class="footnote">The release check generates Python, Go, Java and Swift clients with the installed CLI and compiles them. Usage for each language: <a href="docs/manifest.html">Clients, manifest &amp; OpenAPI</a>.</p>
   </div>
@@ -204,7 +205,7 @@ $ npx apue-types https://api.example --lang java --package com.example.api --out
     <div class="news">
       <div class="card"><h3>Replicas</h3><p>A shared <code>resume.secret</code> lets any replica resume a stream; an idempotency store over shared storage (its contract allows promises) replays a retry wherever it lands. Uploads and downloads carry the replica’s <code>instance</code> name, and clients send <code>apue-replica</code>, so the balancer routes to the data: 30 of 30 calls through nginx across two replicas, 0 of 30 with plain round robin.</p></div>
       <div class="card"><h3>Shutdown and failures</h3><p><code>close()</code> lets calls finish for <code>shutdownGraceMs</code> (10 s), then ends the rest with a retryable 503 — clients retry or resume elsewhere. A <code>logger</code> option receives server-side failures; client mistakes and disconnects are not logged.</p></div>
-      <div class="card"><h3>Limits and callers</h3><p>Body size, JSON depth, batch size, concurrent streams, idle and body timeouts, upload quotas — all bounded by default. A <code>principal</code> hook names the caller; quotas, keys, uploads and resume tokens are scoped to it.</p></div>
+      <div class="card"><h3>Limits and callers</h3><p>Body size, JSON depth, batch size, concurrent streams, idle and body timeouts, upload quotas — all bounded by default. A <code>principal</code> hook names the caller; quotas, keys, uploads and resume tokens are scoped to it. DPoP proofs bind tokens to the client’s key (<a href="docs/auth.html#dpop">verifier and signer</a>).</p></div>
     </div>
     <div class="actions">
       <a class="btn btn-ghost" href="docs/deployment.html">Deployment guide</a>

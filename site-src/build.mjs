@@ -270,7 +270,7 @@ function header(path) {
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="${rel(path, 'index.html')}" aria-label="apü home">${WORDMARK}<span class="draft-tag">beta</span></a>
-    <nav class="site-nav" aria-label="Main"><ul>${nav}<li><a class="nav-gh" href="${GITHUB}">${GH_ICON}GitHub <span class="tag tag-planned">private for now</span></a></li></ul></nav>
+    <nav class="site-nav" aria-label="Main"><ul>${nav}<li><a class="nav-gh" href="${GITHUB}">${GH_ICON}<span class="nav-gh-label">GitHub</span> <span class="tag tag-planned">private for now</span></a></li></ul></nav>
   </div>
 </header>`;
 }

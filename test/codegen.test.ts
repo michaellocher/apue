@@ -34,6 +34,8 @@ const original = defineApi({
   'users.old': op({ effect: 'safe', input: t.void(), output: t.string(), deprecated: { since: new Date('2026-01-01T00:00:00Z'), sunset: new Date('2027-01-01T00:00:00Z'), link: 'https://example.com/m' } }),
   'users.watch': op({ effect: 'safe', stream: 'server', resumable: true, input: t.void(), output: t.array(Rich) }),
   'files.put': op({ effect: 'unsafe', stream: 'client', input: t.object({ data: t.bytes() }), output: t.number() }),
+  'users.rename': op({ effect: 'unsafe', input: t.object({ id: t.string() }), output: t.string(), invalidates: ['users'] }),
+  'users.cached': op({ effect: 'safe', input: t.void(), output: t.string(), cache: { maxAge: 5, cdnMaxAge: 600, groups: ['users'] } }),
   'chat': op({ effect: 'idempotent', stream: 'bidi', input: t.string(), output: t.nullable(t.string()) }),
 });
 
@@ -71,6 +73,8 @@ test('CLI against a running server; the generated contract drives a typed client
       for await (const { data } of inputs) n += data.byteLength;
       return n;
     },
+    'users.rename': ({ id }) => id,
+    'users.cached': () => 'c',
     'chat': async function* (inputs) {
       for await (const s of inputs) yield s;
     },

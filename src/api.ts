@@ -11,6 +11,10 @@ export interface CachePolicy {
   staleWhileRevalidate?: number;
   /** Responses depend on the caller (e.g. Authorization) → `private`. */
   private?: boolean;
+  /** Freshness for CDNs only (RFC 9213 `CDN-Cache-Control`); browsers keep using `maxAge`. */
+  cdnMaxAge?: number;
+  /** RFC 9875 cache groups this response belongs to (invalidated together, see `invalidates`). */
+  groups?: readonly string[];
 }
 
 export interface Deprecation {
@@ -34,6 +38,8 @@ export interface OpDef<I = any, O = any, S extends StreamKind = StreamKind> {
   description?: string;
   /** Server streams only: the handler emits checkpoints, clients resume after disconnects. */
   resumable?: boolean;
+  /** Non-safe ops: cache groups whose stored responses caches may drop (RFC 9875). */
+  invalidates?: readonly string[];
 }
 
 export type Api = Record<string, OpDef>;
@@ -49,6 +55,7 @@ interface OpInit<IS extends Schema<any>, OS extends Schema<any>> {
   deprecated?: Deprecation;
   description?: string;
   resumable?: boolean;
+  invalidates?: readonly string[];
 }
 
 /**
@@ -63,6 +70,11 @@ export function op(def: OpInit<Schema<unknown>, Schema<unknown>> & { stream?: St
   const { since, sunset } = def.deprecated ?? {};
   if (since && sunset && sunset < since) throw new Error('deprecated.sunset must not be earlier than deprecated.since (RFC 9745 §4)');
   if (def.resumable && def.stream !== 'server') throw new Error('only server-streaming ops can be resumable');
+  checkGroups(def.cache?.groups, 'cache.groups');
+  checkGroups(def.invalidates, 'invalidates');
+  if (def.cache?.cdnMaxAge !== undefined && def.cache.private) throw new Error('cache.cdnMaxAge makes no sense for private responses');
+  if (def.cache && def.effect !== 'safe') throw new Error('only safe ops are cacheable');
+  if (def.invalidates?.length && def.effect === 'safe') throw new Error('invalidates is ignored on safe methods (RFC 9875 §3): use it on idempotent/unsafe ops');
   if ((def.stream === undefined || def.stream === 'none' || def.stream === 'server') && containsBytes(def.input)) {
     throw new Error('bytes in the input need a request stream (stream: client or bidi): a JSON body or URL cannot carry them');
   }
@@ -75,6 +87,15 @@ export function defineApi<A extends Api>(ops: A): A {
     if (!/^[A-Za-z][\w-]*(\.[A-Za-z][\w-]*)*$/.test(name)) throw new Error(`invalid op name: ${name}`);
   }
   return ops;
+}
+
+/** RFC 9875 limits caches must support (32 groups of 32 characters); kept to printable ASCII. */
+function checkGroups(groups: readonly string[] | undefined, what: string): void {
+  if (!groups) return;
+  if (groups.length > 32) throw new Error(`${what}: at most 32 groups`);
+  for (const group of groups) {
+    if (!/^[\x20-\x7e]{1,32}$/.test(group)) throw new Error(`${what}: "${group}" must be 1–32 printable ASCII characters`);
+  }
 }
 
 /** Ops that may be read with GET/QUERY: safe and without a request stream. */

@@ -12,6 +12,7 @@ export interface ManifestOp {
   cache?: Record<string, unknown>;
   deprecated?: { since: string; sunset?: string; link?: string };
   resumable?: boolean;
+  invalidates?: string[];
 }
 
 export interface Manifest {
@@ -37,6 +38,7 @@ export function generateApi(manifest: Manifest, options: CodegenOptions): string
       `input: ${schemaCode(def.input)}`,
       `output: ${schemaCode(def.output)}`,
       ...(def.cache ? [`cache: ${JSON.stringify(def.cache)}`] : []),
+      ...(def.invalidates ? [`invalidates: ${JSON.stringify(def.invalidates)}`] : []),
       ...(def.deprecated ? [`deprecated: ${deprecationCode(def.deprecated)}`] : []),
       ...(def.description ? [`description: ${JSON.stringify(def.description)}`] : []),
     ];

@@ -160,7 +160,8 @@ Built only from implemented features (resolves the AIP-151 / MCP-"Tasks" questio
 ## 9. Caching
 
 - Implemented: `Cache-Control` from the op's `cache` declaration (`max-age`, `stale-while-revalidate`, `private`), strong `ETag` per representation (content-coding and selection included), `If-None-Match` → 304, `Vary` for `accept`, `accept-encoding`, `origin` as applicable, HEAD.
-- Planned: `CDN-Cache-Control` (RFC 9213), `Cache-Groups` (RFC 9875) for invalidation; QUERY responses with `Location` / `Content-Location` → GET-able URL. Note: no CDN caches QUERY today (research/05).
+- Implemented (S15): `cache.cdnMaxAge` → `CDN-Cache-Control: max-age=N` (RFC 9213: CDNs use it instead of `Cache-Control`, browsers keep `max-age`); `cache.groups` → `Cache-Groups` and `invalidates` on non-safe ops → `Cache-Group-Invalidation` on successful responses (RFC 9875, SF lists of strings; ≤ 32 groups of ≤ 32 printable ASCII chars, checked in `op()`; only safe ops may declare `cache`, only non-safe ops `invalidates`).
+- Planned: QUERY responses with `Location` / `Content-Location` → GET-able URL. Note: no CDN caches QUERY today (research/05).
 
 ## 10. Pipelined batches (promise pipelining)
 

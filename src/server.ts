@@ -509,8 +509,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         if (outcome.aborted) return;
         complete();
         if (outcome.status === 200 && read) {
-          return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, 'cache-control': cacheControl(def) }, outcome.body, true);
+          return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, ...cacheHeaders(def) }, outcome.body, true);
         }
+        if (def.invalidates?.length && outcome.status < 400) res.setHeader('cache-group-invalidation', sfStringList(def.invalidates));
         const headers = outcome.replayed ? { ...outcome.headers, [REPLAYED]: '?1' } : outcome.headers;
         return await sendBody(req, res, outcome.status, headers, outcome.body, false);
       }
@@ -960,6 +961,7 @@ export function buildManifest(api: Api): Record<string, unknown> {
           output: def.output.toJSONSchema(),
           ...(def.cache ? { cache: def.cache } : {}),
           ...(def.resumable ? { resumable: true } : {}),
+          ...(def.invalidates?.length ? { invalidates: [...def.invalidates] } : {}),
           ...(def.deprecated
             ? {
                 deprecated: {
@@ -1109,6 +1111,19 @@ function parseIdempotencyKey(value: string): string {
     throw new ApueError(400, 'Bad Request', 'invalid Idempotency-Key');
   }
   return key;
+}
+
+/** Cache-Control plus the RFC 9213 / RFC 9875 CDN headers of a safe op's policy. */
+function cacheHeaders(def: OpDef): Record<string, string> {
+  const headers: Record<string, string> = { 'cache-control': cacheControl(def) };
+  if (def.cache?.cdnMaxAge !== undefined) headers['cdn-cache-control'] = `max-age=${def.cache.cdnMaxAge}`;
+  if (def.cache?.groups?.length) headers['cache-groups'] = sfStringList(def.cache.groups);
+  return headers;
+}
+
+/** RFC 9651 List of Strings (group names are validated as printable ASCII in op()). */
+function sfStringList(values: readonly string[]): string {
+  return values.map((value) => `"${value.replace(/[\\"]/g, '\\$&')}"`).join(', ');
 }
 
 function cacheControl(def: OpDef): string {

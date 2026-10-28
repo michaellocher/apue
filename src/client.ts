@@ -29,6 +29,8 @@ export interface TransportResponse {
   status: number;
   headers: { get(name: string): string | null };
   body: AsyncIterable<Uint8Array>;
+  /** Optional fast path for reading the whole body (unary responses); consumes `body`. */
+  bytes?(): Promise<Uint8Array>;
 }
 
 export interface Transport {
@@ -98,7 +100,7 @@ export class ApueClient<A extends Api> {
     try {
       const res = await this.#send(op, def, input, options, controller.signal);
       const type = baseMediaType(res.headers.get('content-type'));
-      const bytes = await readAll(res.body);
+      const bytes = res.bytes ? await res.bytes() : await readAll(res.body);
       if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
       if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
       return decodeJson(bytes) as OutputOf<A[K]>;

@@ -76,7 +76,20 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
             stream.pipe(decompressor);
             body = decompressor;
           }
+          const source = body;
           resolve({
+            // Event-based collection skips creating a Readable async iterator per response.
+            bytes: () =>
+              new Promise<Uint8Array>((done, fail) => {
+                const readable = source as NodeJS.ReadableStream & import('node:stream').Readable;
+                const chunks: Buffer[] = [];
+                readable.on('data', (chunk: Buffer) => chunks.push(chunk));
+                readable.once('end', () => done(chunks.length === 1 ? chunks[0]! : Buffer.concat(chunks)));
+                readable.once('error', fail);
+                readable.once('close', () => {
+                  if (!readable.readableEnded) fail(new Error(`stream closed before the response ended (rst code ${stream.rstCode})`));
+                });
+              }),
             status: Number(responseHeaders[':status']),
             headers: {
               get(name) {

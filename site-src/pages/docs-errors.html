@@ -27,22 +27,22 @@ cache-control: no-store
 <p>The generated Python client raises <code>ApueError</code> as well, with <code>status</code>, <code>type</code>, <code>title</code>, <code>detail</code>, <code>retryable</code> and the whole <code>problem</code>.</p>
 
 <h2>Problem types</h2>
-<p>These URIs are identifiers in the <code>https://apue.dev/problems/</code> namespace. The draft does not yet publish a document at each URI; this table is their description.</p>
+<p>These URIs are identifiers in the <code>https://apue.dev/problems/</code> namespace, and each one resolves to a page with its members, an example and how clients should react — all of them are listed under <a href="../problems/index.html">Problem types</a>.</p>
 <table data-label="apü problem types">
   <thead><tr><th scope="col">Type (after <code>/problems/</code>)</th><th scope="col">Status</th><th scope="col">When</th></tr></thead>
   <tbody>
-    <tr id="validation-failed"><td><code>validation-failed</code></td><td>400</td><td>Input doesn’t match the schema (<code>fields</code> lists each problem); also an unknown, incomplete or expired upload reference</td></tr>
-    <tr id="unknown-operation"><td><code>unknown-operation</code></td><td>404</td><td>No operation with that name</td></tr>
-    <tr id="invalid-selection"><td><code>invalid-selection</code></td><td>400</td><td>A <code>?s=</code> path isn’t in the output schema, or more than 64 paths</td></tr>
-    <tr id="malformed-stream"><td><code>malformed-stream</code></td><td>400 (request) · 502 (client, response)</td><td>Frames that can’t be decoded: invalid JSON, a BLOB frame for an operation without bytes, a lane other than 0 in a request stream, an END without status</td></tr>
-    <tr id="truncated-stream"><td><code>truncated-stream</code></td><td>400 (request) · 502 (client, response)</td><td>A framed body ended without its END frame — e.g. a proxy cut the connection</td></tr>
-    <tr id="deadline-exceeded"><td><code>deadline-exceeded</code></td><td>504</td><td>The <code>apue-timeout</code> deadline passed; not retried by clients</td></tr>
-    <tr id="idempotency-key-in-progress"><td><code>idempotency-key-in-progress</code></td><td>409</td><td>A call with the same key is still running; <code>retryable: true</code></td></tr>
-    <tr id="idempotency-key-reused"><td><code>idempotency-key-reused</code></td><td>422</td><td>The key was used before with a different payload</td></tr>
-    <tr id="invalid-batch"><td><code>invalid-batch</code></td><td>400</td><td>A batch failed structural validation (all or nothing)</td></tr>
-    <tr id="unresolvable-reference"><td><code>unresolvable-reference</code></td><td>400</td><td>A <code>$ref</code> path doesn’t exist in the referenced output</td></tr>
-    <tr id="failed-dependency"><td><code>failed-dependency</code></td><td>424</td><td>A batch call whose dependency failed (transitively)</td></tr>
-    <tr id="invalid-resume-token"><td><code>invalid-resume-token</code></td><td>400</td><td>A resume token that is invalid, foreign, expired or for another input</td></tr>
+    <tr id="validation-failed"><td><a href="../problems/validation-failed.html"><code>validation-failed</code></a></td><td>400</td><td>Input doesn’t match the schema (<code>fields</code> lists each problem); also an unknown, incomplete or expired upload reference</td></tr>
+    <tr id="unknown-operation"><td><a href="../problems/unknown-operation.html"><code>unknown-operation</code></a></td><td>404</td><td>No operation with that name</td></tr>
+    <tr id="invalid-selection"><td><a href="../problems/invalid-selection.html"><code>invalid-selection</code></a></td><td>400</td><td>A <code>?s=</code> path isn’t in the output schema, or more than 64 paths</td></tr>
+    <tr id="malformed-stream"><td><a href="../problems/malformed-stream.html"><code>malformed-stream</code></a></td><td>400 (request) · 502 (client, response)</td><td>Frames that can’t be decoded: invalid JSON, a BLOB frame for an operation without bytes, a lane other than 0 in a request stream, an END without status</td></tr>
+    <tr id="truncated-stream"><td><a href="../problems/truncated-stream.html"><code>truncated-stream</code></a></td><td>400 (request) · 502 (client, response)</td><td>A framed body ended without its END frame — e.g. a proxy cut the connection</td></tr>
+    <tr id="deadline-exceeded"><td><a href="../problems/deadline-exceeded.html"><code>deadline-exceeded</code></a></td><td>504</td><td>The <code>apue-timeout</code> deadline passed; not retried by clients</td></tr>
+    <tr id="idempotency-key-in-progress"><td><a href="../problems/idempotency-key-in-progress.html"><code>idempotency-key-in-progress</code></a></td><td>409</td><td>A call with the same key is still running; <code>retryable: true</code></td></tr>
+    <tr id="idempotency-key-reused"><td><a href="../problems/idempotency-key-reused.html"><code>idempotency-key-reused</code></a></td><td>422</td><td>The key was used before with a different payload</td></tr>
+    <tr id="invalid-batch"><td><a href="../problems/invalid-batch.html"><code>invalid-batch</code></a></td><td>400</td><td>A batch failed structural validation (all or nothing)</td></tr>
+    <tr id="unresolvable-reference"><td><a href="../problems/unresolvable-reference.html"><code>unresolvable-reference</code></a></td><td>400</td><td>A <code>$ref</code> path doesn’t exist in the referenced output</td></tr>
+    <tr id="failed-dependency"><td><a href="../problems/failed-dependency.html"><code>failed-dependency</code></a></td><td>424</td><td>A batch call whose dependency failed (transitively)</td></tr>
+    <tr id="invalid-resume-token"><td><a href="../problems/invalid-resume-token.html"><code>invalid-resume-token</code></a></td><td>400</td><td>A resume token that is invalid, foreign, expired or for another input</td></tr>
   </tbody>
 </table>
 <p>Other statuses you will see: <code>429</code>/<code>503</code> (retried by clients, honouring <code>Retry-After</code>), <code>503</code> with <code>retryable: true</code> when a server shuts down, <code>507</code> when a client’s upload quota is full (retrying won’t help, deleting will), and resumable-upload problems from the IANA registry such as <code>mismatching-upload-offset</code> (409) and <code>inconsistent-upload-length</code> (400).</p>

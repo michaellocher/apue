@@ -74,7 +74,7 @@ describe('in real browsers', () => {
     ['Firefox (headless, WebDriver BiDi)', FIREFOX, runInFirefox],
   ] as const) {
     test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 90_000 }, async (t) => {
-      const results = await drive(binary, `${page.url}/`, api.url);
+      const results = (await drive(binary, `${page.url}/`, "typeof window.__run === 'function'", `window.__run(${JSON.stringify(api.url)}).then(JSON.stringify)`)) as CheckResult[];
       for (const r of results) t.diagnostic(`${r.ok ? (r.skipped ? 'SKIP' : 'ok  ') : 'FAIL'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
       const failed = results.filter((r) => !r.ok);
       assert.deepEqual(failed, [], `${name}: ${failed.map((f) => `${f.name}: ${f.detail}`).join('; ')}`);
@@ -84,6 +84,50 @@ describe('in real browsers', () => {
 });
 
 void ApueError;
+
+describe('examples/todo in real browsers (same-origin app + API)', () => {
+  let example: { url: string; stop(): void } | undefined;
+  before(async () => {
+    const { spawn } = await import('node:child_process');
+    const { createInterface } = await import('node:readline');
+    const child = spawn(process.execPath, [join(ROOT, 'examples/todo/server.ts')], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] });
+    const line = await new Promise<string>((resolve, reject) => {
+      createInterface({ input: child.stdout! }).once('line', resolve);
+      child.once('exit', (code) => reject(new Error(`example server exited with ${code}`)));
+    });
+    example = { url: `https://localhost:${/localhost:(\d+)/.exec(line)![1]}`, stop: () => child.kill() };
+  });
+  after(() => example?.stop());
+
+  // Drives the page like a user: add a todo through the form, import 100 via a client stream,
+  // and wait for the live change stream to render all of them.
+  const script = `(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const count = () => document.querySelectorAll('#list li').length;
+    const until = async (fn) => { for (let i = 0; i < 250 && !fn(); i++) await sleep(20); return fn(); };
+    const before = count();
+    const form = document.querySelector('#add');
+    form.title.value = 'from the browser';
+    form.requestSubmit();
+    const added = await until(() => count() >= before + 1);
+    document.querySelector('#import').click();
+    const imported = await until(() => count() >= before + 101);
+    return JSON.stringify({ added, imported, count: count() - before, log: document.querySelector('#log').textContent.split('\\n')[0] });
+  })()`;
+
+  for (const [name, binary, drive] of [
+    ['Chrome', CHROME, runInChrome],
+    ['Firefox', FIREFOX, runInFirefox],
+  ] as const) {
+    test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
+      const result = (await drive(binary, `${example!.url}/`, "document.querySelector('#log') !== null && document.readyState === 'complete'", script)) as { added: boolean; imported: boolean; count: number; log: string };
+      t.diagnostic(JSON.stringify(result));
+      assert.equal(result.added, true);
+      assert.equal(result.imported, true);
+      assert.equal(result.count, 101);
+    });
+  }
+});
 
 // ---------------------------------------------------------------------------------------------
 // Page server: index.html plus type-stripped .ts modules from src/ and test/browser/.
@@ -171,7 +215,8 @@ async function stop(proc: ChildProcess, dir: string): Promise<void> {
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
-async function runInChrome(binary: string, pageUrl: string, apiUrl: string): Promise<CheckResult[]> {
+/** Opens pageUrl, waits until `ready` is truthy, then evaluates `expression` (a promise of a JSON string). */
+async function runInChrome(binary: string, pageUrl: string, ready: string, expression: string): Promise<unknown> {
   const dir = mkdtempSync(join(tmpdir(), 'apue-chrome-'));
   const proc = spawn(
     binary,
@@ -186,9 +231,9 @@ async function runInChrome(binary: string, pageUrl: string, apiUrl: string): Pro
     });
     const cdp = await rpc(target.webSocketDebuggerUrl);
     await cdp.send('Page.navigate', { url: pageUrl });
-    await until('suite module', async () => ((await cdp.send('Runtime.evaluate', { expression: "typeof window.__run === 'function'", returnByValue: true })).result.value ? true : undefined));
+    await until('page ready', async () => ((await cdp.send('Runtime.evaluate', { expression: ready, returnByValue: true })).result.value ? true : undefined));
     const evaluated = await cdp.send('Runtime.evaluate', {
-      expression: `window.__run(${JSON.stringify(apiUrl)}).then(JSON.stringify)`,
+      expression,
       awaitPromise: true,
       returnByValue: true,
     });
@@ -208,7 +253,7 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-async function runInFirefox(binary: string, pageUrl: string, apiUrl: string): Promise<CheckResult[]> {
+async function runInFirefox(binary: string, pageUrl: string, ready: string, expression: string): Promise<unknown> {
   const dir = mkdtempSync(join(tmpdir(), 'apue-firefox-'));
   const port = await freePort();
   const proc = spawn(binary, ['--headless', '--no-remote', '--profile', dir, '--remote-debugging-port', String(port)], { stdio: 'ignore' });
@@ -219,8 +264,8 @@ async function runInFirefox(binary: string, pageUrl: string, apiUrl: string): Pr
     const context = tree.contexts[0].context;
     await bidi.send('browsingContext.navigate', { context, url: pageUrl, wait: 'complete' });
     const evaluate = (expression: string, awaitPromise: boolean) => bidi.send('script.evaluate', { expression, target: { context }, awaitPromise });
-    await until('suite module', async () => ((await evaluate("typeof window.__run === 'function'", false)).result.value ? true : undefined));
-    const evaluated = await evaluate(`window.__run(${JSON.stringify(apiUrl)}).then(JSON.stringify)`, true);
+    await until('page ready', async () => ((await evaluate(ready, false)).result.value ? true : undefined));
+    const evaluated = await evaluate(expression, true);
     await bidi.send('session.end', {}).catch(() => {});
     bidi.close();
     if (evaluated.type === 'exception') throw new Error(`suite threw: ${JSON.stringify(evaluated.exceptionDetails).slice(0, 500)}`);

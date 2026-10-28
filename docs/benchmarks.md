@@ -119,8 +119,9 @@ closures (no eval): 140 → 103 ns for a 3-field item but 421 → 448 ns for a n
 native `JSON.stringify` after validation stays. Coalescing small client→server WebSocket sends (16 KiB or
 the next macrotask): 100k-message client stream 436k → 972k msg/s (HTTP/2: 905k), bulk unchanged — but
 with it WebKit lost the last frames of a credit-limited server stream (close 1006) in 4 of 19 browser-suite
-runs, against 0 of 16 without; same with `setTimeout` instead of `MessageChannel`. Not adopted until the
-mechanism is understood (open question; the client's input pump is idle at the moment of failure).
+runs. Further runs then showed the same failure without coalescing (1 of 31): a WebKit issue with a
+server-initiated close over RFC 8441, fixed separately by letting the client close after END (spec §8).
+Coalescing was not re-measured after that fix and stays out for now.
 
 ## Caveats
 

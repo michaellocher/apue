@@ -8,7 +8,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 229 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 230 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -50,11 +50,15 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 | WebSocket leak test | unary calls over `webSocketTransport` answered 415 (now routed over fetch); invalid stream input surfaced as 502 over T3 instead of 400; **client crash** (`setLocalWindowSize` on a session destroyed while connecting); client resets of request streams logged as server errors (now 499) |
 | code review | unbounded request-stream blob memory; bytes lost on idempotent replay; CORS `Vary`/preflight gaps; missing `Retry-After` retried with no delay; duplicate items after two losses in one resume; quadratic WebSocket buffering; WebSocket writes hanging on close; regex flags dropped from the manifest |
 
-## Known flake (not reproduced)
+## Flakes found and fixed
 
-`examples/todo in real browsers › Chrome` failed once in ~16 full runs at 04:4x (a thrown error, not
-an assertion; output not kept). 10 stress runs under CPU load and 5 further full runs passed.
-If it shows up again, keep the full `npm test` log.
+- `examples/todo in real browsers`: the page replays earlier browsers' todos after it reports ready;
+  counting mid-replay gave 102 instead of 101 (seen in Firefox). The test now waits until the list
+  is stable. Chrome once threw "Inspected target navigated or closed": most likely a native form
+  submit before the app's handler was installed (not verified); the test now waits for the handler.
+- WebKit lost the last messages of a WebSocket stream and reported 1006 in ~1 of 10 runs: a
+  server-initiated close right after the data, over RFC 8441. Reproduced with a raw WebSocket page
+  (3–4 of 40), gone after letting the client close after END (0 of 40; spec §8).
 
 ## Decisions taken without you (easy to revisit)
 
@@ -65,6 +69,15 @@ If it shows up again, keep the full `npm test` log.
 - Cross-origin writes pay a CORS preflight instead of accepting simple content types (CSRF).
 - Fixed 4 MiB stream window by default; gRPC-style auto-tuning implemented but measured no better.
 - `@grpc/grpc-js` + `@grpc/proto-loader` added as dev dependencies for the comparison benchmark only.
+- WebSocket tier flow control as HTTP/2-style **byte** windows with credit in WebSocket **text**
+  messages, mandatory, subprotocol bumped to `apue.v1` (no deployed clients). Message-count CREDIT
+  frames across all tiers stay planned (spec §8 explains why bytes first and why not in-band).
+- Window defaults: browser `receiveWindow` 4 MiB, server `webSocketWindow` 1 MiB (uploads ≤ window /
+  RTT, ~16 MiB/s at 63 ms RTT — raise it for fast long links).
+- `webSocketTransport` sends calls without a request stream over fetch (unary over WebSocket had
+  no way to carry a JSON body or GET input).
+- Rejected after measuring: coalescing small WebSocket sends (2.2× small-message uploads) — WebKit
+  lost frames in some runs with it; see docs/benchmarks.md.
 
 ## Open (spec §13)
 

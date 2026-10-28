@@ -13,6 +13,10 @@ import type { Duplex } from 'node:stream';
 import { Writable } from 'node:stream';
 import { ApueError, checkWindow, parseCredit, ProblemType, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
+/** How long the server waits for the peer's close frame before ending the transport anyway. */
+const CLOSE_HANDSHAKE_TIMEOUT_MS = 2000;
+/** After END, how long the server waits for the client to close before closing itself. */
+const CLIENT_CLOSE_WAIT_MS = 2000;
 /** Payloads from this size are written without copying them into the frame buffer. */
 const ZERO_COPY_MIN = 16 * 1024;
 /** Our own unsent bytes beyond which the reader pauses (a peer that doesn't read, e.g. ping flood). */
@@ -185,6 +189,9 @@ export class WsConnection {
   #sendCredit = WS_INITIAL_WINDOW;
   /** A sink write waiting for credit (the Writable issues one write at a time). */
   #blocked: (() => void) | undefined;
+  #peerClosed = false;
+  #closeTimer: NodeJS.Timeout | undefined;
+  #lingerTimer: NodeJS.Timeout | undefined;
 
   constructor(io: Duplex, { maxPayload = 16 * 1024 * 1024, window = 1024 * 1024, head = new Uint8Array(0) as Uint8Array } = {}) {
     this.#io = io;
@@ -192,7 +199,11 @@ export class WsConnection {
     this.sink = new Writable({
       write: (chunk: Buffer, _encoding, callback) => this.#send(chunk, 0, callback),
       final: (callback) => {
-        this.close(WsClose.NORMAL);
+        // Everything (incl. END) is written: let the client close once its consumer has the END —
+        // a server-initiated close made WebKit (over RFC 8441) drop the last messages it had not
+        // yet dispatched and report 1006 (~1 in 10 runs). Clients that never close get ours.
+        if (this.#peerClosed) this.close(WsClose.NORMAL);
+        else this.#lingerTimer = setTimeout(() => this.close(WsClose.NORMAL), CLIENT_CLOSE_WAIT_MS).unref();
         callback();
       },
     });
@@ -285,6 +296,7 @@ export class WsConnection {
   }
 
   close(code: number = WsClose.NORMAL, reason = ''): void {
+    clearTimeout(this.#lingerTimer);
     if (this.#closeSent || this.#io.destroyed) return;
     this.#closeSent = true;
     const reasonBytes = Buffer.from(reason).subarray(0, 123);
@@ -292,7 +304,10 @@ export class WsConnection {
     payload.writeUInt16BE(code, 0);
     payload.set(reasonBytes, 2);
     this.#io.write(encodeWsFrame(WsOpcode.CLOSE, payload));
-    this.#io.end();
+    // RFC 6455 §5.5.1: the transport ends after both close frames; a peer that never answers its
+    // close frame gets a timeout.
+    if (this.#peerClosed) this.#io.end();
+    else this.#closeTimer = setTimeout(() => this.#io.end(), CLOSE_HANDSHAKE_TIMEOUT_MS).unref();
   }
 
   onClose(callback: () => void): void {
@@ -322,7 +337,13 @@ export class WsConnection {
           } else if (frame.opcode === WsOpcode.CLOSE) {
             const code = frame.payload.byteLength >= 2 ? (frame.payload[0]! << 8) | frame.payload[1]! : WsClose.NORMAL;
             this.#endInput(code === WsClose.NORMAL ? undefined : new ApueError(499, 'Client Closed Request', `WebSocket closed by peer (${code})`));
-            this.close(code === 1005 || code === 1006 || code === 1015 ? WsClose.NORMAL : code);
+            this.#peerClosed = true;
+            if (this.#closeSent) {
+              clearTimeout(this.#closeTimer);
+              this.#io.end(); // handshake complete
+            } else {
+              this.close(code === 1005 || code === 1006 || code === 1015 ? WsClose.NORMAL : code);
+            }
             return;
           } else if (frame.opcode === WsOpcode.TEXT) {
             // Text messages carry credit only; unfragmented, so a continuation is always binary data.
@@ -379,6 +400,8 @@ export class WsConnection {
 
   #onIoClose(): void {
     this.#closed = true;
+    clearTimeout(this.#closeTimer);
+    clearTimeout(this.#lingerTimer);
     const blocked = this.#blocked; // a write waiting for credit completes (as a no-op) instead of hanging
     this.#blocked = undefined;
     blocked?.();

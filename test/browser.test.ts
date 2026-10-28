@@ -121,7 +121,9 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
   after(() => example?.stop());
 
   // Drives the page like a user: add a todo through the form, import 100 via a client stream,
-  // and wait for the live change stream to render all of them.
+  // and wait for the live change stream to render all of them. Ready means the app's submit handler is
+  // installed: a requestSubmit() before that submits the form natively and navigates (seen once in
+  // Chrome as "Inspected target navigated or closed").
   const script = `(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const count = () => document.querySelectorAll('#list li').length;
@@ -147,7 +149,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
     ['WebKit', WEBKIT, runInWebKit],
   ] as const) {
     test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
-      const result = (await drive(binary, `${example!.url}/`, "document.querySelector('#log') !== null && document.readyState === 'complete'", script)) as { added: boolean; imported: boolean; count: number; log: string };
+      const result = (await drive(binary, `${example!.url}/`, "document.readyState === 'complete' && document.querySelector('#add')?.onsubmit != null", script)) as { added: boolean; imported: boolean; count: number; log: string };
       t.diagnostic(JSON.stringify(result));
       assert.equal(result.added, true);
       assert.equal(result.imported, true);

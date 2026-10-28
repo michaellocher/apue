@@ -255,6 +255,33 @@ describe('WebSocket protocol details (HTTP/1.1 Upgrade)', () => {
     assert.equal(closeCode, 1000);
   });
 
+  test('closing: the client closes after END and the server answers at once; otherwise the server closes after ~2 s', async () => {
+    for (const clientCloses of [true, false]) {
+      const ws = await rawWs('/sum.client');
+      ws.send(0x2, concatBytes([msgFrame(1), endFrame({ status: 200 })]));
+      const decoder = new FrameDecoder();
+      let endAt = 0;
+      let closeAt = 0;
+      let closeCode = 0;
+      for await (const frame of ws.frames()) {
+        if (frame.opcode === 0x2 && decoder.push(frame.payload).some((f) => f.type === FrameType.END)) {
+          endAt = performance.now();
+          if (clientCloses) ws.send(0x8, Buffer.from([0x03, 0xe8])); // 1000, as the apü client does after END
+        }
+        if (frame.opcode === 0x8) {
+          closeAt = performance.now();
+          closeCode = Buffer.from(frame.payload).readUInt16BE(0);
+          if (!clientCloses) ws.send(0x8, frame.payload);
+        }
+      }
+      // the server ended the transport after the handshake (frames() returned)
+      assert.equal(closeCode, 1000);
+      const waited = closeAt - endAt;
+      if (clientCloses) assert.ok(waited < 500, `server answered the close after ${waited.toFixed(0)} ms`);
+      else assert.ok(waited > 1900 && waited < 3000, `server closed after ${waited.toFixed(0)} ms`);
+    }
+  });
+
   const closeCodeFor = async (ws: RawWs) => {
     for await (const frame of ws.frames()) if (frame.opcode === 0x8) return Buffer.from(frame.payload).readUInt16BE(0);
     return 0;

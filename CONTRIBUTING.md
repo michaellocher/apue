@@ -33,13 +33,16 @@ Run all of it before pushing: CI runs on Linux, and some browser behaviour diffe
 Versions follow semver; tags have **no `v` prefix**. Betas are `0.1.0-beta.N`.
 
 1. Update `version` in package.json and add a `## <version> — <date>` section at the top of
-   CHANGELOG.md (the release notes are taken from it).
-2. Commit (`Release <version>`), push `main`, wait for CI to pass.
+   CHANGELOG.md (the release notes are taken from it; a section still marked `unreleased` stops
+   the release).
+2. Commit (`Release <version>`), push `main`, wait for CI to pass. Optionally run the **Release**
+   workflow by hand (Actions → Release → Run workflow, or `gh workflow run release.yml`): a dry
+   run of the whole pipeline up to `npm publish --dry-run`, publishing nothing.
 3. Tag and push: `git tag -a <version> -m "<version>" && git push origin <version>`.
 4. The **Release** workflow verifies that tag, package.json and changelog agree, runs the full
-   checks, publishes to npm with provenance (pre-releases under the `beta` dist-tag, so
-   `npm install apue` keeps getting the latest stable) and creates a GitHub release with the
-   tarball.
+   checks, publishes to npm (pre-releases under the `beta` dist-tag, so `npm install apue` keeps
+   getting the latest stable) and creates a GitHub release with the tarball. Provenance is
+   attached once the repository is public: npm generates none for private repositories.
 
 One-time setup: an npm automation token as the repository secret `NPM_TOKEN` (Settings → Secrets
 and variables → Actions), in an environment named `npm` (Settings → Environments) — require a

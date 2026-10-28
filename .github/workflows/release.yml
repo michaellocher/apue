@@ -1,6 +1,9 @@
 # Releases on a version tag without "v" prefix (e.g. 0.1.0-beta.1, 0.1.0): verifies everything,
-# publishes to npm with provenance (pre-releases under the "beta" dist-tag), and creates a GitHub
-# release with the package tarball and the changelog section. Needs the repository secret NPM_TOKEN.
+# publishes to npm (pre-releases under the "beta" dist-tag; with provenance once the repository is
+# public — npm generates none for private repositories) and creates a GitHub release with the
+# package tarball and the changelog section. Needs the secret NPM_TOKEN (environment "npm").
+# Run it by hand (Actions → Release → Run workflow) for a dry run of the whole pipeline: everything
+# up to `npm publish --dry-run`, no secret needed, nothing published.
 name: Release
 
 on:
@@ -8,6 +11,7 @@ on:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+'
       - '[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,7 +21,10 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    environment: npm
+    # The dry run needs no secret, so it doesn't wait for the environment's reviewer.
+    environment: ${{ github.event_name == 'push' && 'npm' || '' }}
+    env:
+      DRY_RUN: ${{ github.event_name != 'push' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -39,12 +46,18 @@ jobs:
       - name: The tag is the package version
         run: |
           version=$(node -p "require('./package.json').version")
-          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          if [ "$DRY_RUN" != true ] && [ "$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
             exit 1
           fi
-      - name: The changelog has an entry for this version
-        run: grep -q "^## $GITHUB_REF_NAME" CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## $GITHUB_REF_NAME' section"; exit 1; }
+      - name: The changelog has a dated entry for this version
+        run: |
+          grep -q "^## $VERSION " CHANGELOG.md || { echo "::error::CHANGELOG.md has no '## $VERSION' section"; exit 1; }
+          if grep -q "^## $VERSION .*unreleased" CHANGELOG.md; then
+            if [ "$DRY_RUN" = true ]; then echo "::warning::the CHANGELOG entry for $VERSION is still marked unreleased"
+            else echo "::error::date the CHANGELOG entry for $VERSION before tagging"; exit 1; fi
+          fi
       - run: npm ci
       - run: npx playwright-core install --with-deps webkit
       - run: npm run typecheck
@@ -58,16 +71,26 @@ jobs:
         run: npm pack --ignore-scripts
       - name: Publish to npm
         run: |
-          case "$GITHUB_REF_NAME" in
+          case "$VERSION" in
             *-*) tag=beta ;;
             *) tag=latest ;;
           esac
-          npm publish --ignore-scripts --provenance --access public --tag "$tag"
+          # npm generates no provenance for private repositories (the publish would fail with it).
+          provenance=--provenance
+          [ "$PRIVATE" = true ] && provenance=
+          dry=
+          [ "$DRY_RUN" = true ] && dry=--dry-run
+          npm publish --ignore-scripts $provenance $dry --access public --tag "$tag"
         env:
+          PRIVATE: ${{ github.event.repository.private }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Release notes from the changelog
-        run: awk -v v="## $GITHUB_REF_NAME" 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > release-notes.md
-      - uses: softprops/action-gh-release@v3
+        run: |
+          awk -v v="## $VERSION " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > release-notes.md
+          test -s release-notes.md || { echo "::error::empty release notes"; exit 1; }
+          cat release-notes.md
+      - if: env.DRY_RUN != 'true'
+        uses: softprops/action-gh-release@v3
         with:
           body_path: release-notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}

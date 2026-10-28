@@ -11,7 +11,8 @@
   WebKit on Linux runs locally with `scripts/test-linux-webkit.sh`. Every fix has a test that fails
   without it (mutation-checked).
 - **CI/CD** (GitHub Actions): CI on every push (Linux: typecheck, tests incl. browsers, site,
-  package), Release on a version tag (npm with provenance, GitHub release), Pages (opt-in).
+  package), Release on a version tag (npm, with provenance once the repository is public;
+  GitHub release; run by hand it is a dry run of all of it), Pages (opt-in).
 - **Production**: replicas (shared idempotency stores, instance routing verified through nginx),
   bounded shutdown, logging hook, deployment guide ([deployment.md](deployment.md)).
 - **Website**: `site/` (built from `site-src/`), with docs and a page per problem type.

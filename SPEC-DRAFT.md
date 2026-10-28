@@ -221,7 +221,7 @@ Open:
 2. ~~Resumable uploads~~ → implemented (S18, `/$uploads` + references; client batches upload too). File-backed store and streaming `t.file()` inputs: spike S20. Open: uploads surviving a restart, out-of-band download URLs for very large outputs. (`server.close()` deadline: S22.)
 3. CREDIT frames for message-level consumer pacing across tiers (T3 byte windows: done in S17).
 4. WebTransport (T4) once a server implementation exists for Node; HTTP/3 in Node — checked 2026-10-28: the official Node 26.12.1 build has `node_use_quic: false` (no ngtcp2/nghttp3); `node:quic` is unknown even with `--experimental-quic`, so it needs a custom build.
-5. Problem type namespace (placeholder `https://apue.dev/problems/`).
+5. Problem type namespace: stays `https://apue.dev/problems/` (your decision, 2026-10-28; the domain was unregistered that day — checked via Google Registry RDAP — and will be bought if the results are good). Until then the URIs are identifiers only, not resolvable.
 6. ~~Auth~~ → callers (S21, research/10): `principal` hook, credentials over T3 as a subprotocol, no ambient credentials on cross-origin handshakes without CORS credentials. Cross-site cookies (probed in Chrome, Firefox, WebKit): a WebSocket handshake gets exactly the cookies fetch gets. Open: a DPoP profile (deferred).
 7. ~~Long-running operations~~ → a pattern of start (idempotent) + resumable watch stream + cacheable get (§8).
 8. Generators for other languages (the manifest is JSON Schema; TypeScript generation exists).

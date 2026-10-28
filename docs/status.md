@@ -103,7 +103,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 - Operation-based, TS-first schemas, working name apü (as agreed).
 - JSON default, CBOR not built (generic binary codecs aren't faster in V8; see research/03).
 - 8-byte frame header (lane field for batches) instead of Connect's 5 bytes.
-- Batch endpoint at `/$batch`; problem type namespace `https://apue.dev/problems/` is a placeholder.
+- Batch endpoint at `/$batch`; problem type namespace `https://apue.dev/problems/` (domain not bought yet).
 - Cross-origin writes pay a CORS preflight instead of accepting simple content types (CSRF).
 - Fixed 4 MiB stream window by default; gRPC-style auto-tuning implemented but measured no better.
 - `@grpc/grpc-js` + `@grpc/proto-loader` added as dev dependencies for the comparison benchmark only.
@@ -122,7 +122,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 
 CBOR · message-level CREDIT (T3 byte windows done) · WebTransport / HTTP/3 (the official Node 26 build
 is compiled without QUIC: `node_use_quic: false`) · uploads surviving a restart · generators for other
-languages · problem-type namespace (needs your domain) · DPoP profile (deferred, S21).
+languages · problem-type namespace (apue.dev kept, to be bought if the results are good) · DPoP profile (deferred, S21).
 (Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),
 resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14),
 derived manifest docs (S19), spike `t.file()` + file-backed upload store (S20, research/09),

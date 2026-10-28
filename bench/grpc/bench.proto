@@ -1,0 +1,21 @@
+// Same shapes as bench/api.ts, for an apples-to-apples gRPC comparison.
+syntax = "proto3";
+package bench;
+
+message GetUserRequest { string id = 1; }
+message Address { string street = 1; string city = 2; string zip = 3; }
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  repeated string tags = 4;
+  double total = 5;
+  Address address = 6;
+}
+message ItemsRequest { int32 n = 1; }
+message Item { int32 i = 1; string name = 2; bool ok = 3; }
+
+service Bench {
+  rpc GetUser (GetUserRequest) returns (User);
+  rpc Items (ItemsRequest) returns (stream Item);
+}

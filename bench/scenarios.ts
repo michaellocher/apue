@@ -244,3 +244,62 @@ export async function window(ports: Ports, { ca }: Options, kb = 4096, repeats =
   }
   return rows;
 }
+
+/** gRPC (@grpc/grpc-js, TLS) vs apü on the same shapes: unary c=1/c=32 and a server stream. */
+export async function grpcComparison(ports: Ports & { grpc: number }, options: Options, n = 200_000): Promise<Row[]> {
+  const { grpc, proto } = await import('./grpc/load.ts');
+  // Node refuses an IP address as TLS servername; the cert also covers DNS:localhost.
+  const client = new proto.bench.Bench(`127.0.0.1:${ports.grpc}`, grpc.credentials.createSsl(Buffer.from(options.ca)), {
+    'grpc.ssl_target_name_override': 'localhost',
+  }) as unknown as {
+    GetUser(request: { id: string }, callback: (error: Error | null, value: unknown) => void): void;
+    Items(request: { n: number }): AsyncIterable<unknown>;
+    close(): void;
+  };
+  const getUser = () => new Promise<unknown>((resolve, reject) => client.GetUser({ id: '42' }, (error, value) => (error ? reject(error) : resolve(value))));
+  const apue = apueClient(ports.apue, options.ca);
+  const rows: Row[] = [];
+  for (const concurrency of [1, 32]) {
+    for (const [variant, fn] of [
+      ['gRPC (grpc-js) unary', getUser],
+      ['apü safe op (GET)', () => apue.call('users.get', { id: '42' })],
+    ] as const) {
+      const result = await load(concurrency, options.durationMs, fn);
+      rows.push({ scenario: `vs gRPC: unary c=${concurrency}`, variant, value: result.opsPerSec, unit: 'req/s', p50: result.p50, p99: result.p99 });
+    }
+  }
+  const best = async (fn: () => Promise<number>) => {
+    await fn();
+    const rates: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now();
+      const count = await fn();
+      if (count !== n) throw new Error(`expected ${n} items, got ${count}`);
+      rates.push(count / ((performance.now() - t0) / 1000));
+    }
+    return Math.max(...rates);
+  };
+  rows.push({
+    scenario: `vs gRPC: server stream ${n / 1000}k small msgs`,
+    variant: 'gRPC (grpc-js) server stream',
+    unit: 'msg/s',
+    value: await best(async () => {
+      let count = 0;
+      for await (const _ of client.Items({ n })) count++;
+      return count;
+    }),
+  });
+  rows.push({
+    scenario: `vs gRPC: server stream ${n / 1000}k small msgs`,
+    variant: 'apü stream (validated)',
+    unit: 'msg/s',
+    value: await best(async () => {
+      let count = 0;
+      for await (const _ of apue.stream('items.stream', { n })) count++;
+      return count;
+    }),
+  });
+  client.close();
+  await apue.close();
+  return rows;
+}

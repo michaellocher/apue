@@ -1,6 +1,6 @@
 // Benchmark orchestrator: starts bench/server.ts as a separate process, runs the scenarios,
 // prints a Markdown table and writes JSON results.
-//   node bench/run.ts [--label local] [--duration 3000] [--only unary,stream,bulk,chain,compression,window]
+//   node bench/run.ts [--label local] [--duration 3000] [--only unary,stream,bulk,chain,compression,window,grpc]
 //                     [--server-args="--coalesce 0"] [--stream-n 200000] [--notes "..."]
 //   Remote server (e.g. another container): --remote 8443,8444 --ca certs/cert.pem
 import { spawn } from 'node:child_process';
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { testCert } from '../test/helpers.ts';
-import { bulk, chain, compression, stream, unary, window, type Ports, type Row } from './scenarios.ts';
+import { bulk, chain, compression, grpcComparison, stream, unary, window, type Ports, type Row } from './scenarios.ts';
 
 const { values } = parseArgs({
   options: {
@@ -61,6 +61,22 @@ try {
   if (only.has('chain')) rows.push(...(await chain(ports, options)));
   if (only.has('compression')) rows.push(...(await compression(ports, options)));
   if (only.has('window')) rows.push(...(await window(ports, options)));
+  if (only.has('grpc')) {
+    // gRPC baseline server in its own process (dev dependency @grpc/grpc-js; local runs only).
+    const certDir = join(values.out, '.certs');
+    const grpcServer = spawn(process.execPath, [join(import.meta.dirname, 'grpc', 'server.ts'), '--key', join(certDir, 'key.pem'), '--cert', join(certDir, 'cert.pem')], {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    try {
+      const { grpc } = await new Promise<{ grpc: number }>((resolve, reject) => {
+        createInterface({ input: grpcServer.stdout! }).once('line', (line) => resolve(JSON.parse(line)));
+        grpcServer.once('exit', (code) => reject(new Error(`grpc server exited with ${code}`)));
+      });
+      rows.push(...(await grpcComparison({ ...ports, grpc }, options, Number(values['stream-n']))));
+    } finally {
+      grpcServer.kill('SIGTERM');
+    }
+  }
 } finally {
   child?.kill('SIGTERM');
 }

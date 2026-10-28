@@ -1533,7 +1533,8 @@ function toProblem(error: unknown): Problem {
     return { title: 'Internal Server Error', status: 500 };
   }
   if (error instanceof DOMException && error.name === 'TimeoutError') {
-    return { type: ProblemType.DEADLINE, title: 'Deadline Exceeded', status: 504, retryable: true };
+    // Not `retryable`: the deadline is the caller's whole budget (§5) — retrying overshoots it.
+    return { type: ProblemType.DEADLINE, title: 'Deadline Exceeded', status: 504 };
   }
   console.error('apü handler error:', error);
   return { title: 'Internal Server Error', status: 500 };

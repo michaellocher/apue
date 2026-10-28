@@ -19,6 +19,7 @@ export function containsBytes(schema: Schema<unknown>): boolean {
   bytesCache.set(schema, false); // cycle guard
   const result =
     schema.kind === 'bytes' ||
+    schema.kind === 'file' ||
     (schema.element !== undefined && containsBytes(schema.element)) ||
     (schema.inner !== undefined && containsBytes(schema.inner)) ||
     (schema.fields !== undefined && Object.values(schema.fields).some(containsBytes));
@@ -26,14 +27,29 @@ export function containsBytes(schema: Schema<unknown>): boolean {
   return result;
 }
 
+/** Whether the schema has a t.file() anywhere. */
+export function containsFile(schema: Schema<unknown>): boolean {
+  return (
+    schema.kind === 'file' ||
+    (schema.element !== undefined && containsFile(schema.element)) ||
+    (schema.inner !== undefined && containsFile(schema.inner)) ||
+    (schema.fields !== undefined && Object.values(schema.fields).some(containsFile))
+  );
+}
+
 /**
  * Rebuilds `value` with `fn` applied at every position the schema types as t.bytes() (object fields,
  * array elements, optional/nullable values; absent and null values are left alone). Schema-directed,
  * so no escaping is needed: a bytes position cannot hold arbitrary JSON. Unchanged parts are shared.
  */
-export async function mapBytes(schema: Schema<unknown>, value: unknown, fn: (value: unknown, path: string) => unknown | Promise<unknown>, path = ''): Promise<unknown> {
+export async function mapBytes(
+  schema: Schema<unknown>,
+  value: unknown,
+  fn: (value: unknown, path: string, kind: 'bytes' | 'file') => unknown | Promise<unknown>,
+  path = '',
+): Promise<unknown> {
   if (!containsBytes(schema) || value === undefined || value === null) return value;
-  if (schema.kind === 'bytes') return fn(value, path);
+  if (schema.kind === 'bytes' || schema.kind === 'file') return fn(value, path, schema.kind);
   if (schema.inner) return mapBytes(schema.inner, value, fn, path);
   if (schema.element && Array.isArray(value)) {
     const items = await Promise.all(value.map((item, i) => mapBytes(schema.element!, item, fn, `${path}[${i}]`)));
@@ -51,6 +67,23 @@ export async function mapBytes(schema: Schema<unknown>, value: unknown, fn: (val
     return out ?? value;
   }
   return value; // shape mismatch: validation reports it
+}
+
+/** What a handler gets for a t.file() input: the upload's size, digest, and its content as a stream. */
+export interface FileValue {
+  readonly size: number;
+  /** SHA-256 of the content, hex. */
+  readonly sha256: string;
+  /** The content, read from the upload store each time it is called. */
+  stream(): AsyncIterable<Uint8Array>;
+}
+
+function isFileValue(value: unknown): value is FileValue {
+  return typeof value === 'object' && value !== null && typeof (value as FileValue).size === 'number' && typeof (value as FileValue).stream === 'function';
+}
+
+function isBlob(value: unknown): value is Blob {
+  return typeof Blob !== 'undefined' && value instanceof Blob;
 }
 
 export class ValidationError extends Error {
@@ -287,6 +320,26 @@ export const t = {
    * Binary data. Travels as raw BLOB frames in framed streams (no base64, chunked); unary ops
    * whose output contains bytes are answered framed as well.
    */
+  /**
+   * A large binary input (spike S20): uploaded resumably like t.bytes(), but the handler reads it
+   * as a stream — it is never held in memory (with `uploads.directory`, not even while uploading).
+   * Clients pass a Blob (a browser File) or a Uint8Array. Unary inputs only.
+   */
+  file(options: { max?: number } = {}): Schema<FileValue> {
+    const { max } = options;
+    return define(
+      'file',
+      (value, ctx) => {
+        // Client side: what is about to be uploaded; server side: the resolved upload.
+        const size = value instanceof Uint8Array ? value.byteLength : isBlob(value) ? value.size : isFileValue(value) ? value.size : undefined;
+        if (size === undefined) return report(ctx, `expected a file, got ${typeOf(value)}`);
+        if (max !== undefined && size > max) report(ctx, `more than ${max} bytes`);
+        return value as FileValue;
+      },
+      () => ({ type: 'string', contentMediaType: 'application/octet-stream', 'x-apue-transfer': 'upload', ...(max === undefined ? {} : { 'x-apue-max-size': max }) }),
+    );
+  },
+
   bytes(options: { max?: number } = {}): Schema<Uint8Array> {
     const { max } = options;
     return define(

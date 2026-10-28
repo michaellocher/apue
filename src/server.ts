@@ -362,10 +362,19 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     if (!uploads || !containsBytes(def.input)) return { input, identity: input };
     const scope = credentialScope(req);
     const digests = new Map<string, string>();
-    const resolved = await mapBytes(def.input, input, (value, path) => {
+    const unusable = (path: string) =>
+      new ApueError(400, 'Validation Failed', 'input does not match the schema', { type: ProblemType.VALIDATION, fields: [{ path, message: 'unknown, incomplete or expired upload' }] });
+    const resolved = await mapBytes(def.input, input, async (value, path, kind) => {
       if (!isUploadRef(value)) return value; // validation reports it
-      const upload = uploads.resolve(value.$upload, scope);
-      if (!upload) throw new ApueError(400, 'Validation Failed', 'input does not match the schema', { type: ProblemType.VALIDATION, fields: [{ path, message: 'unknown, incomplete or expired upload' }] });
+      if (kind === 'file') {
+        // t.file(): a stream from the upload store — never read into memory here.
+        const file = uploads.file(value.$upload, scope);
+        if (!file) throw unusable(path);
+        digests.set(value.$upload, file.sha256);
+        return file;
+      }
+      const upload = await uploads.resolve(value.$upload, scope);
+      if (!upload) throw unusable(path);
       digests.set(value.$upload, upload.digest);
       return upload.bytes;
     });
@@ -1017,6 +1026,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       );
       for (const socket of sockets) socket.destroy();
       await closed;
+      await uploads?.close();
     },
   };
 }

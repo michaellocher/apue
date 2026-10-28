@@ -1,7 +1,7 @@
 // Manifest → generated API definition → identical manifest (and it works as a typed client contract).
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -38,13 +38,18 @@ const original = defineApi({
   'users.rename': op({ effect: 'unsafe', input: t.object({ id: t.string() }), output: t.string(), invalidates: ['users'] }),
   'users.cached': op({ effect: 'safe', input: t.void(), output: t.string(), cache: { maxAge: 5, cdnMaxAge: 600, groups: ['users'] } }),
   'chat': op({ effect: 'idempotent', stream: 'bidi', input: t.string(), output: t.nullable(t.string()) }),
+  'docs.ingest': op({ effect: 'unsafe', input: t.object({ doc: t.file({ max: 1000 }), cover: t.optional(t.file()) }), output: t.number() }),
 });
 
 async function importGenerated(code: string): Promise<Api> {
   const dir = mkdtempSync(join(tmpdir(), 'apue-codegen-'));
-  const file = join(dir, 'api.ts');
-  writeFileSync(file, code);
-  return ((await import(pathToFileURL(file).href)) as { api: Api }).api;
+  try {
+    const file = join(dir, 'api.ts');
+    writeFileSync(file, code);
+    return ((await import(pathToFileURL(file).href)) as { api: Api }).api;
+  } finally {
+    rmSync(dir, { recursive: true, force: true }); // a loaded module no longer needs its file
+  }
 }
 
 test('round trip: manifest → generated code → identical manifest', async () => {
@@ -71,7 +76,7 @@ test('unsupported JSON Schema is an error, not a silent unknown', () => {
   assert.equal(schemaCode({}), 't.unknown()');
 });
 
-test('CLI against a running server; the generated contract drives a typed client', async () => {
+test('CLI against a running server; the generated contract drives a typed client', async (ctx) => {
   const handlers: Handlers<typeof original> = {
     'users.get': ({ id }) => ({ id, score: 1, role: 'admin', tags: [], manager: null, extra: { any: 'thing' }, active: true, code: 'AB/1' }),
     'users.old': () => 'old',
@@ -86,9 +91,11 @@ test('CLI against a running server; the generated contract drives a typed client
     'chat': async function* (inputs) {
       for await (const s of inputs) yield s;
     },
+    'docs.ingest': ({ doc }) => doc.size,
   };
-  const server = await startServer(original, handlers);
+  const server = await startServer(original, handlers, { uploads: {} });
   const dir = mkdtempSync(join(tmpdir(), 'apue-cli-'));
+  ctx.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, 'ca.pem'), testCert().cert);
   const out = join(dir, 'api.ts');
   await promisify(execFile)(process.execPath, [join(import.meta.dirname, '..', 'bin', 'apue-types.ts'), server.url, '--runtime', runtime, '--ca', join(dir, 'ca.pem'), '--out', out]);

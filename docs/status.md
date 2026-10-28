@@ -36,7 +36,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 292 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 302 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -80,6 +80,10 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## Flakes found and fixed
 
+- Upload tests hung intermittently under full-suite load (2 of 24 loaded runs): an append refused
+  mid-content left its body iterator attached, so the unread rest was never drained and the
+  connection and `server.close()` never ended. A real server bug since S18, fixed in S20 (0 of 24).
+
 - `examples/todo in real browsers`: the page replays earlier browsers' todos after it reports ready;
   counting mid-replay gave 102 instead of 101 (seen in Firefox). The test now waits until the list
   is stable. Chrome occasionally (~1 in 40 runs) fails to load **one module** of the page
@@ -117,7 +121,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 ## Open (spec §13)
 
 CBOR · message-level CREDIT (T3 byte windows done) · WebTransport / HTTP/3 (the official Node 26 build
-is compiled without QUIC: `node_use_quic: false`) · persistent upload store · generators for other
+is compiled without QUIC: `node_use_quic: false`) · uploads surviving a restart · generators for other
 languages · problem-type namespace (needs your domain) · auth guidance.
 (Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),
-resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14).)
+resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14),
+derived manifest docs (S19), spike `t.file()` + file-backed upload store (S20, research/09).)

@@ -74,7 +74,7 @@ function deprecationCode(d: NonNullable<ManifestOp['deprecated']>): string {
 }
 
 const ALLOWED: Record<string, readonly string[]> = {
-  string: ['type', 'minLength', 'maxLength', 'pattern', 'x-apue-flags', 'enum', 'contentEncoding', 'contentMediaType', 'x-apue-transfer'],
+  string: ['type', 'minLength', 'maxLength', 'pattern', 'x-apue-flags', 'enum', 'contentEncoding', 'contentMediaType', 'x-apue-transfer', 'x-apue-max-size'],
   integer: ['type', 'minimum', 'maximum'],
   number: ['type', 'minimum', 'maximum'],
   boolean: ['type'],
@@ -108,6 +108,7 @@ export function schemaCode(schema: JsonSchema): string {
       return 't.boolean()';
     case 'string':
       if (schema['x-apue-transfer'] === 'blob-frames') return 't.bytes()';
+      if (schema['x-apue-transfer'] === 'upload') return `t.file(${opts([['max', schema['x-apue-max-size']]])})`;
       if (Array.isArray(schema.enum)) return `t.enum(${JSON.stringify(schema.enum)})`;
       return `t.string(${opts([['min', schema.minLength], ['max', schema.maxLength], ['pattern', schema.pattern === undefined ? undefined : new RegExp(schema.pattern, schema['x-apue-flags'] ?? '')]])})`;
     case 'integer':

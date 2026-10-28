@@ -340,16 +340,52 @@ describe('resumable uploads (draft-14)', () => {
   });
 });
 
-test('UploadStore: appending to a deleted upload is refused and leaves the accounting alone', () => {
+test('an append refused before its content is complete still ends its stream, its connection and the server', async () => {
+  // Found by a full-suite hang: the refusal (503/413) left the request's body iterator attached, and
+  // resume() has no effect while a 'readable' listener exists — the unread rest was never drained,
+  // so the stream, the client's session and server.close() waited forever (2 of 3 probe runs).
+  const small = await startServer(api, handlers, { uploads: { maxBytes: 4 * MiB, storeBytes: 1 * MiB, scopeBytes: 4 * MiB } });
+  const within = <T>(promise: Promise<T>, what: string) => Promise.race([promise, sleep(3000).then(() => assert.fail(`${what} never happened`))]);
+  for (let i = 0; i < 4; i++) {
+    const session = http2.connect(small.url, { ca: testCert().cert });
+    session.on('error', () => {});
+    const created = session.request({ ':method': 'POST', ':path': '/$uploads', 'upload-complete': '?0' });
+    created.end();
+    const location = await new Promise<string>((resolve) => created.on('response', (h) => resolve(String(h.location))));
+    created.resume();
+    const req = session.request({ ':method': 'PATCH', ':path': location, 'content-type': 'application/partial-upload', 'upload-offset': '0', 'upload-complete': '?1' });
+    req.on('error', () => {});
+    req.write(new Uint8Array(2 * MiB)); // more than the store holds: refused mid-content
+    const status = await within(new Promise((resolve) => req.on('response', (h) => resolve(h[':status']))), 'a response');
+    assert.equal(status, 503);
+    req.resume();
+    await sleep(200);
+    req.end(new Uint8Array(MiB)); // the client finishes its body anyway
+    await within(new Promise((resolve) => req.on('close', resolve)), `the refused stream closing (run ${i})`);
+    const closed = new Promise((resolve) => session.on('close', resolve));
+    session.close(); // the last time, the server shuts down while the connection is still closing
+    if (i === 3) await within(small.close(), 'server.close()');
+    await within(closed, `the connection closing (run ${i})`);
+  }
+});
+
+test('UploadStore: appending to a deleted upload is refused and leaves the accounting alone', async () => {
   const store = new UploadStore({ scopeBytes: 100, scopeUploads: 1 });
-  const upload = store.create('s', 'q', undefined);
-  store.append(upload, new Uint8Array(10));
+  const upload = await store.create('s', 'q', undefined);
+  await store.append(upload, new Uint8Array(10));
   store.delete(upload);
   assert.equal(store.storedBytes, 0);
-  assert.throws(() => store.append(upload, new Uint8Array(10)), (e: ApueError) => e.status === 404);
+  await assert.rejects(store.append(upload, new Uint8Array(10)), (e: ApueError) => e.status === 404);
   assert.equal(store.storedBytes, 0);
-  const next = store.create('s', 'q', undefined); // the quota was freed completely (1 upload, 100 bytes)
-  store.append(next, new Uint8Array(100));
+  const next = await store.create('s', 'q', undefined); // the quota was freed completely (1 upload, 100 bytes)
+  await store.append(next, new Uint8Array(100));
+});
+
+test('UploadStore: limits must be positive integers (2 << 30 overflows to a negative number)', () => {
+  for (const options of [{ maxBytes: 2 << 30 }, { storeBytes: 0 }, { ttlMs: 1.5 }, { scopeBytes: Number.NaN }, { scopeUploads: Infinity }]) {
+    assert.throws(() => new UploadStore(options), RangeError, JSON.stringify(options));
+  }
+  assert.equal(new UploadStore({ maxBytes: 2 * 2 ** 30 }).maxBytes, 2147483648);
 });
 
 describe('upload references in op inputs', () => {

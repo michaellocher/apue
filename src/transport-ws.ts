@@ -46,7 +46,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       if (ownsHttp) await http.close?.();
     },
     async request(req) {
-      if (req.body === undefined || req.body instanceof Uint8Array) return http.request(req);
+      if (req.body === undefined || req.body instanceof Uint8Array || req.body instanceof Blob) return http.request(req);
       const { path, headers, body, signal } = req;
       signal.throwIfAborted(); // an already-aborted signal never fires 'abort'
       // Browsers can't set WebSocket headers: the deadline travels as a query parameter.
@@ -278,7 +278,7 @@ export function autoTransport(baseUrl: string): Transport {
       await http.close?.();
     },
     request(req) {
-      const requestStream = req.body !== undefined && !(req.body instanceof Uint8Array);
+      const requestStream = req.body !== undefined && !(req.body instanceof Uint8Array) && !(req.body instanceof Blob);
       return requestStream && !streamingFetch ? ws.request(req) : http.request(req);
     },
   };

@@ -2,7 +2,11 @@
 // values are uploaded to `/$uploads` — resumably, over plain HTTP requests — and op inputs reference
 // them as { "$upload": id } where the schema says t.bytes() (SPEC-DRAFT §6). Node-only.
 import { createHash, randomBytes, type Hash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, open, readFile, rm, unlink, type FileHandle } from 'node:fs/promises';
 import type { IncomingHttpHeaders } from 'node:http';
+import { join } from 'node:path';
+import type { FileValue } from './schema.ts';
 import type { Exchange } from './exchange.ts';
 import { concatBytes } from './frame.ts';
 import { ApueError, baseMediaType, MediaType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH } from './protocol.ts';
@@ -10,6 +14,8 @@ import { ApueError, baseMediaType, MediaType, UPLOAD_INTEROP_VERSION, UPLOADS_PA
 export { UPLOAD_INTEROP_VERSION, UPLOADS_PATH };
 export const PARTIAL_UPLOAD = 'application/partial-upload';
 const PROBLEMS = 'https://iana.org/assignments/http-problem-types';
+/** File-backed uploads are written in blocks of this size. */
+const WRITE_BLOCK = 1024 * 1024;
 
 export interface UploadOptions {
   /** Largest upload (Upload-Limit max-size). Default 64 MiB. */
@@ -31,6 +37,12 @@ export interface UploadOptions {
    * that is the proxy's address for everyone. Applications that authenticate can return their user id.
    */
   clientKey?: (request: { headers: IncomingHttpHeaders; remoteAddress: string | undefined }) => string;
+  /**
+   * Keep upload content in files under this directory instead of memory (spike S20): uploads in
+   * progress cost no RAM, and t.file() inputs reach handlers as streams from these files. A
+   * per-process subdirectory is created and removed on close; uploads don't survive a restart.
+   */
+  directory?: string;
   now?: () => number;
 }
 
@@ -51,6 +63,8 @@ interface Upload {
   bytes: Uint8Array | undefined;
   /** Announced (Upload-Length) but not yet received: already counted against the client's quota. */
   reserved: number;
+  /** With `directory`: the file holding the content (instead of `chunks`), and data not yet written. */
+  file: { path: string; handle: FileHandle; pending: Uint8Array[]; pendingBytes: number } | undefined;
   /** SHA-256 over the content in offset order, fed as data arrives; hex once complete. */
   hash: Hash;
   digest: string | undefined;
@@ -77,8 +91,15 @@ export class UploadStore {
   #uploads = new Map<string, Upload>(); // insertion order = creation order = expiry order
   #stored = 0;
   #usage = new Map<string, Usage>();
+  #directory: string | undefined;
+  #files: Promise<string> | undefined; // the per-process subdirectory, created on first use
 
-  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, now = Date.now }: UploadOptions = {}) {
+  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, directory, now = Date.now }: UploadOptions = {}) {
+    // A typo like `2 << 30` (negative) or a fraction would silently refuse or misaccount everything.
+    for (const [name, value] of Object.entries({ maxBytes, storeBytes, ttlMs, scopeBytes, scopeUploads })) {
+      if (value !== undefined && !(Number.isSafeInteger(value) && value > 0)) throw new RangeError(`uploads.${name} must be a positive integer, got ${value}`);
+    }
+    this.#directory = directory;
     this.maxBytes = maxBytes;
     this.storeBytes = storeBytes;
     this.ttlMs = ttlMs;
@@ -97,7 +118,7 @@ export class UploadStore {
     return Math.min(this.maxBytes, this.scopeBytes);
   }
 
-  create(scope: string, quota: string, length: number | undefined): Upload {
+  async create(scope: string, quota: string, length: number | undefined): Promise<Upload> {
     this.#sweep();
     if (length !== undefined && length > this.maxSize) throw tooLarge(this.maxSize);
     const usage = this.#usageOf(quota);
@@ -118,7 +139,13 @@ export class UploadStore {
       hash: createHash('sha256'),
       digest: undefined,
       reserved: length ?? 0,
+      file: undefined,
     };
+    if (this.#directory) {
+      this.#files ??= mkdtemp(join(this.#directory, 'apue-uploads-'));
+      const path = join(await this.#files, upload.id);
+      upload.file = { path, handle: await open(path, 'wx'), pending: [], pendingBytes: 0 };
+    }
     this.#uploads.set(upload.id, upload);
     usage.uploads++;
     usage.bytes += upload.reserved;
@@ -151,15 +178,37 @@ export class UploadStore {
    * input can't corrupt later references or replays — and its SHA-256 (the reference's identity
    * for idempotency: the same content uploaded again is the same input). Undefined if not usable.
    */
-  resolve(id: string, scope: string): { bytes: Uint8Array; digest: string } | undefined {
+  async resolve(id: string, scope: string): Promise<{ bytes: Uint8Array; digest: string } | undefined> {
     const upload = this.get(id, scope);
     if (!upload?.complete) return undefined;
+    if (upload.file) return { bytes: new Uint8Array(await readFile(upload.file.path)), digest: upload.digest! }; // a fresh buffer each time
     upload.bytes ??= concatBytes(upload.chunks, upload.offset);
     upload.chunks = [upload.bytes];
     return { bytes: upload.bytes.slice(), digest: upload.digest! };
   }
 
-  append(upload: Upload, chunk: Uint8Array): void {
+  /** The complete upload as a t.file() value: read as a stream, never held in memory (with `directory`). */
+  file(id: string, scope: string): FileValue | undefined {
+    const upload = this.get(id, scope);
+    if (!upload?.complete) return undefined;
+    const { file, offset: size, digest } = upload;
+    const chunks = upload.chunks;
+    return {
+      size,
+      sha256: digest!,
+      // Copies from memory, like resolve(): a handler writing into a chunk must not change the upload.
+      stream: () => (file ? (createReadStream(file.path) as AsyncIterable<Uint8Array>) : (async function* () { for (const chunk of chunks) yield chunk.slice(); })()),
+    };
+  }
+
+  /** Removes the per-process directory (and every upload file in it). */
+  async close(): Promise<void> {
+    const directory = await this.#files;
+    for (const upload of this.#uploads.values()) await upload.file?.handle.close().catch(() => {});
+    if (directory) await rm(directory, { recursive: true, force: true });
+  }
+
+  async append(upload: Upload, chunk: Uint8Array): Promise<void> {
     // Deleted meanwhile (DELETE, expiry): counting its bytes would recreate a usage entry nothing frees.
     if (this.#uploads.get(upload.id) !== upload) throw notFound();
     if (upload.length !== undefined && upload.offset + chunk.byteLength > upload.length) {
@@ -178,12 +227,38 @@ export class UploadStore {
     if (this.#stored + chunk.byteLength > this.storeBytes) {
       throw new ApueError(503, 'Service Unavailable', 'upload storage is full', { retryable: true }, { 'retry-after': '60' });
     }
-    upload.chunks.push(chunk);
+    if (upload.file) {
+      // Coalesced: one async write per ~16 KiB HTTP/2 chunk ran at 46 MiB/s (the libuv thread pool).
+      upload.file.pending.push(chunk);
+      upload.file.pendingBytes += chunk.byteLength;
+      if (upload.file.pendingBytes >= WRITE_BLOCK) await this.flush(upload);
+    } else {
+      upload.chunks.push(chunk);
+    }
     upload.hash.update(chunk);
     upload.offset += chunk.byteLength;
     upload.reserved -= covered;
     this.#stored += chunk.byteLength;
     usage.bytes += extra;
+  }
+
+  /** Writes what is buffered for a file-backed upload (end of each request; before it is read). */
+  async flush(upload: Upload): Promise<void> {
+    const file = upload.file;
+    if (!file || file.pendingBytes === 0) return;
+    const block = concatBytes(file.pending, file.pendingBytes);
+    file.pending = [];
+    file.pendingBytes = 0;
+    try {
+      await file.handle.write(block);
+    } catch (error) {
+      // The offset already counts these bytes: an upload missing them on disk must not be resumed
+      // (it would complete with corrupt content) — it is gone, the client starts over.
+      this.delete(upload);
+      throw new ApueError(507, 'Insufficient Storage', `writing the upload failed: ${(error as Error).message}`);
+    }
+    // Deleted while the write was pending: its accounting is already gone — don't add to it.
+    if (this.#uploads.get(upload.id) !== upload) throw notFound();
   }
 
   /** Marks the upload complete: its content and digest are final. */
@@ -201,6 +276,10 @@ export class UploadStore {
     usage.bytes -= upload.offset + upload.reserved;
     if (--usage.uploads === 0) this.#usage.delete(upload.quota);
     upload.writer?.abort();
+    if (upload.file) {
+      const { handle, path } = upload.file;
+      void handle.close().catch(() => {}).then(() => unlink(path)).catch(() => {});
+    }
   }
 
   #usageOf(scope: string): Usage {
@@ -260,7 +339,7 @@ async function create(req: Exchange, store: UploadStore, scope: string, quota: s
   // Without Upload-Complete this is a plain (non-resumable) upload of the whole content.
   const complete = parseBoolean(req.headers['upload-complete'], 'Upload-Complete') ?? true;
   const length = parseInteger(req.headers['upload-length'], 'Upload-Length');
-  const upload = store.create(scope, quota, length);
+  const upload = await store.create(scope, quota, length);
   const location = `${UPLOADS_PATH}/${upload.id}`;
   if (req.headers['upload-draft-interop-version'] === UPLOAD_INTEROP_VERSION) {
     req.interim?.(104, { location, 'upload-limit': store.limits(upload), 'upload-draft-interop-version': UPLOAD_INTEROP_VERSION });
@@ -320,18 +399,22 @@ async function receive(req: Exchange, store: UploadStore, upload: Upload): Promi
   try {
     for (;;) {
       const next = await Promise.race([chunks.next(), aborted]);
-      if (next === 'aborted') {
-        void chunks.return?.()?.catch(() => {});
-        throw new ApueError(409, 'Conflict', 'superseded by a newer request to this upload (or cancelled)');
-      }
+      if (next === 'aborted') throw new ApueError(409, 'Conflict', 'superseded by a newer request to this upload (or cancelled)');
       if (next.done) break;
-      store.append(upload, new Uint8Array(next.value));
+      await store.append(upload, new Uint8Array(next.value));
     }
   } catch (error) {
     if (error instanceof ApueError) throw error;
     // The client went away mid-content: what arrived stays, the client resumes from Upload-Offset.
     throw new ApueError(499, 'Client Closed Request', 'upload interrupted');
   } finally {
+    // Release the body however the loop ended (refused, superseded, done): the iterator's 'readable'
+    // listener makes resume() a no-op, so the unread rest would never be drained and the stream —
+    // and with it the connection and server.close() — would never end. Not awaited: a superseded
+    // request's pending next() may never resolve.
+    void chunks.return?.()?.catch(() => {});
+    // What arrived is on disk before the next request (resume, superseding append) or a read.
+    await store.flush(upload).catch(() => {}); // a failed write deletes the upload (see flush)
     if (upload.writer === writer) upload.writer = undefined;
     settle();
   }

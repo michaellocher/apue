@@ -100,6 +100,7 @@ export function http2Transport(origin: string, options: Http2TransportOptions = 
         { endStream: body === undefined, signal },
       );
       if (body instanceof Uint8Array) stream.end(body);
+      else if (body instanceof Blob) void pump(body.stream() as AsyncIterable<Uint8Array>, stream); // read as it is sent
       else if (body !== undefined) void pump(body, stream);
       const owner = getSession();
       inFlight++;

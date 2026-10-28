@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import tls from 'node:tls';
@@ -14,12 +14,16 @@ let cached: { key: string; cert: string } | undefined;
 export function testCert(): { key: string; cert: string } {
   if (cached) return cached;
   const dir = mkdtempSync(join(tmpdir(), 'apue-cert-'));
-  execFileSync('openssl', [
-    'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
-    '-keyout', join(dir, 'key.pem'), '-out', join(dir, 'cert.pem'),
-    '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
-  ], { stdio: 'ignore' });
-  cached = { key: readFileSync(join(dir, 'key.pem'), 'utf8'), cert: readFileSync(join(dir, 'cert.pem'), 'utf8') };
+  try {
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
+      '-keyout', join(dir, 'key.pem'), '-out', join(dir, 'cert.pem'),
+      '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1',
+    ], { stdio: 'ignore' });
+    cached = { key: readFileSync(join(dir, 'key.pem'), 'utf8'), cert: readFileSync(join(dir, 'cert.pem'), 'utf8') };
+  } finally {
+    rmSync(dir, { recursive: true, force: true }); // the PEMs live on in memory only
+  }
   tls.setDefaultCACertificates([...tls.getCACertificates('default'), cached.cert]);
   return cached;
 }

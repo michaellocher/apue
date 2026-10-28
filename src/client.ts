@@ -15,7 +15,7 @@ import {
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, isUploadRef, MediaType, ProblemType, UPLOAD_INTEROP_VERSION, UPLOADS_PATH, type UploadRef } from './protocol.ts';
 import { BlobAssembler, messageFrames } from './blobs.ts';
-import { containsBytes, mapBytes, ValidationError } from './schema.ts';
+import { containsBytes, mapBytes, ValidationError, type FileValue } from './schema.ts';
 import { canonicalSelection } from './select.ts';
 import { Batch } from './batch.ts';
 
@@ -23,7 +23,8 @@ export interface TransportRequest {
   method: string;
   path: string;
   headers: Record<string, string>;
-  body?: Uint8Array | AsyncIterable<Uint8Array>;
+  /** A Blob is sent as a whole request body (fetch streams a browser File from disk; no duplex needed). */
+  body?: Uint8Array | Blob | AsyncIterable<Uint8Array>;
   signal: AbortSignal;
 }
 
@@ -48,7 +49,9 @@ export interface Transport {
 export type { UploadRef };
 
 /** Client-side inputs: wherever the schema has bytes, a reference from `upload()` may stand instead. */
-export type WithUploadRefs<T> = T extends Uint8Array
+export type WithUploadRefs<T> = T extends FileValue
+  ? Blob | Uint8Array | UploadRef // t.file(): what to upload, or a reference
+  : T extends Uint8Array
   ? T | UploadRef
   : T extends readonly (infer E)[]
     ? WithUploadRefs<E>[]
@@ -330,7 +333,7 @@ export class ApueClient<A extends Api> {
    * retried within `resumes`; after a failed PATCH the offset is retrieved (HEAD) and only the rest
    * is sent. The upload stays on the server until it expires or `deleteUpload()` removes it.
    */
-  async upload(bytes: Uint8Array, options: { signal?: AbortSignal; resumes?: number } = {}): Promise<UploadRef> {
+  async upload(bytes: Uint8Array | Blob, options: { signal?: AbortSignal; resumes?: number } = {}): Promise<UploadRef> {
     const controller = new AbortController();
     const unlink = linkSignal(options.signal, controller);
     try {
@@ -354,7 +357,10 @@ export class ApueClient<A extends Api> {
     }
   }
 
-  async #uploadBytes(bytes: Uint8Array, signal: AbortSignal, resumes = 5): Promise<UploadRef> {
+  async #uploadBytes(source: Uint8Array | Blob, signal: AbortSignal, resumes = 5): Promise<UploadRef> {
+    // A Blob (a browser File) is never read into memory here: each attempt sends `slice(offset)`.
+    const size = source instanceof Uint8Array ? source.byteLength : source.size;
+    const rest = (offset: number) => (source instanceof Uint8Array ? source.subarray(offset) : source.slice(offset));
     const interop = { 'upload-draft-interop-version': UPLOAD_INTEROP_VERSION };
     let attempt = 0;
     /** One more try within the budget, after the server's Retry-After or a backoff; else the last failure. */
@@ -386,7 +392,7 @@ export class ApueClient<A extends Api> {
       this.#transport.request({
         method: 'POST',
         path: UPLOADS_PATH,
-        headers: { ...interop, 'upload-complete': '?0', 'upload-length': String(bytes.byteLength), 'content-type': 'application/octet-stream' },
+        headers: { ...interop, 'upload-complete': '?0', 'upload-length': String(size), 'content-type': 'application/octet-stream' },
         body: new Uint8Array(0),
         signal,
       }),
@@ -409,7 +415,7 @@ export class ApueClient<A extends Api> {
             method: 'PATCH',
             path: location,
             headers: { ...interop, 'content-type': 'application/partial-upload', 'upload-offset': String(offset), 'upload-complete': '?1' },
-            body: bytes.subarray(offset),
+            body: rest(offset),
             signal,
           });
           body = await readAll(response.body);
@@ -454,7 +460,7 @@ export class ApueClient<A extends Api> {
     created: UploadRef[],
     what = 'input',
     validateFirst = true,
-    uploads = new Map<Uint8Array, Promise<UploadRef>>(), // shared by the calls of a batch: one buffer, one upload
+    uploads = new Map<Uint8Array | Blob, Promise<UploadRef>>(), // shared by the calls of a batch: one buffer, one upload
   ): Promise<unknown> {
     if (hasRequestStream(def) || !containsBytes(def.input)) return input;
     let value = input;
@@ -470,7 +476,7 @@ export class ApueClient<A extends Api> {
     }
     const local = new AbortController();
     const unlink = linkSignal(signal, local);
-    const start = (bytes: Uint8Array) => {
+    const start = (bytes: Uint8Array | Blob) => {
       let pending = uploads.get(bytes);
       if (!pending) {
         pending = this.#uploadBytes(bytes, local.signal).then((ref) => (created.push(ref), ref));
@@ -480,7 +486,8 @@ export class ApueClient<A extends Api> {
       return pending;
     };
     try {
-      return await mapBytes(def.input, value, (item) => placeholders.get(item as Uint8Array) ?? (item instanceof Uint8Array ? start(item) : item));
+      // t.bytes() takes a Uint8Array, t.file() also a Blob (validation has checked which fits where).
+      return await mapBytes(def.input, value, (item) => placeholders.get(item as Uint8Array) ?? (item instanceof Uint8Array || item instanceof Blob ? start(item) : item));
     } catch (error) {
       local.abort(error);
       await Promise.allSettled(uploads.values()); // every upload has finished or stopped: `created` is complete
@@ -710,7 +717,7 @@ export function fetchTransport(baseUrl: string, options: FetchTransportOptions |
   const base = baseUrl.replace(/\/$/, '');
   return {
     async request({ method, path, headers, body, signal }) {
-      const streaming = body !== undefined && !(body instanceof Uint8Array);
+      const streaming = body !== undefined && !(body instanceof Uint8Array) && !(body instanceof Blob);
       const init: RequestInit & { duplex?: 'half' } = {
         method,
         headers,

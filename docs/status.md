@@ -36,7 +36,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 244 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 267 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -116,6 +116,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## Open (spec §13)
 
-CBOR · message-level CREDIT (T3 byte windows done) · WebTransport (no Node server) · HTTP/3 in Node (no `node:quic`) ·
-resumable uploads · generators for other languages · problem-type namespace · auth guidance.
-(Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14).)
+CBOR · message-level CREDIT (T3 byte windows done) · WebTransport / HTTP/3 (the official Node 26 build
+is compiled without QUIC: `node_use_quic: false`) · persistent upload store · generators for other
+languages · problem-type namespace (needs your domain) · auth guidance.
+(Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14),
+resumable uploads with bytes in unary inputs (S18, draft-ietf-httpbis-resumable-upload-14).)

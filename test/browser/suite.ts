@@ -135,6 +135,21 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     equal(count, 500);
     return `server stopped ${ahead} × 64 KiB ahead of the stalled page, then delivered all 500`;
   });
+  await check('resumable upload: bytes in a unary input, cross-origin (PATCH + Upload-* through CORS)', async () => {
+    const data = crypto.getRandomValues(new Uint8Array(65_536)).slice(); // getRandomValues: ≤ 64 KiB per call
+    const big = new Uint8Array(1024 * 1024);
+    for (let i = 0; i < big.length; i += data.length) big.set(data, i);
+    const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', big))].map((b) => b.toString(16).padStart(2, '0')).join('');
+    const result = await client.call('files.store', { data: big });
+    equal(result, { size: big.byteLength, sha256: digest });
+    // The upload resource's state is readable cross-origin (exposed Upload-* headers).
+    const ref = await client.upload(new Uint8Array(1000));
+    const head = await fetch(`${apiUrl}/$uploads/${ref.$upload}`, { method: 'HEAD' });
+    if (head.headers.get('upload-offset') !== '1000' || head.headers.get('upload-complete') !== '?1') {
+      throw new Error(`offset retrieval: ${head.status} offset=${head.headers.get('upload-offset')} complete=${head.headers.get('upload-complete')}`);
+    }
+    return 'uploaded 1 MiB via careful creation + PATCH; HEAD shows Upload-Offset';
+  });
   await check('autoTransport: streaming upload in every browser (fetch T2 or WebSocket T3)', async () => {
     const auto = new ApueClient(browserApi, autoTransport(apiUrl));
     async function* numbers() {

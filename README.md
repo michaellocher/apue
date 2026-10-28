@@ -61,7 +61,7 @@ real-browser tests, Docker for constrained benchmarks and the proxy probes.
 
 ```sh
 npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 244 tests incl. headless Chrome, Firefox, WebKit (skipped if absent)
+npm test             # node --test: 267 tests incl. headless Chrome, Firefox, WebKit (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
 bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)
@@ -86,4 +86,4 @@ node bench/micro.ts  # data-path micro-benchmarks
 | CORS, resource limits (streams, idle, body time), manifest + RFC 9727 catalog | `src/server.ts` |
 | Typed client contract from a running server's manifest (`node bin/apue-types.ts <url>`) | `src/codegen.ts`, `bin/apue-types.ts` |
 
-Also implemented: CDN-Cache-Control and cache groups (RFC 9213/9875). Planned (see spec §13): CBOR, message-level CREDIT across tiers, WebTransport, resumable uploads.
+Also implemented: CDN-Cache-Control and cache groups (RFC 9213/9875); resumable uploads (draft-ietf-httpbis-resumable-upload, `/$uploads`, bytes in unary inputs). Planned (see spec §13): CBOR, message-level CREDIT across tiers, WebTransport.

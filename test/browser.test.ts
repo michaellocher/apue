@@ -3,6 +3,7 @@
 // src/*.ts modules are served type-stripped by node:module, so there is no build step here either.
 // Browsers that aren't installed are skipped.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http2 from 'node:http2';
@@ -70,6 +71,7 @@ const handlers: Handlers<typeof browserApi> = {
     }
   },
   'stats.flooded': () => flooded,
+  'files.store': ({ data }) => ({ size: data.byteLength, sha256: createHash('sha256').update(data).digest('hex') }),
   'echo.duplex': async function* (inputs, ctx) {
     lastDuplexVersion = `HTTP/${ctx.httpVersion}`;
     for await (const value of inputs) yield { echo: value };
@@ -81,7 +83,7 @@ let api: { url: string; close(): Promise<void> };
 
 before(async () => {
   page = await startPageServer();
-  api = await startServer(browserApi, handlers, { cors: { origins: [page.url], credentials: true } });
+  api = await startServer(browserApi, handlers, { cors: { origins: [page.url], credentials: true }, uploads: {} });
 });
 after(async () => {
   await api?.close();

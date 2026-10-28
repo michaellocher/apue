@@ -16,4 +16,5 @@ export const browserApi = defineApi({
   'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.object({ echo: t.number() }) }),
   'flood': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.string() }),
   'stats.flooded': op({ effect: 'safe', input: t.void(), output: t.number(), cache: { private: true } }),
+  'files.store': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.object({ size: t.number(), sha256: t.string() }) }),
 });

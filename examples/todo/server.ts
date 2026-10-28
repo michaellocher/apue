@@ -36,6 +36,8 @@ const handlers: Handlers<typeof todoApi> = {
   'todos.changes': async function* (_input, ctx) {
     // The change log is the cursor space: resuming replays everything after the checkpoint.
     let seq = ctx.resumeFrom === undefined ? 0 : Number(ctx.resumeFrom) + 1;
+    // Debug mode: which change the server got to when the stream ended (diagnoses a stall in CI).
+    if (process.env.APUE_DEBUG_STREAMS) ctx.signal.addEventListener('abort', () => console.error(`[changes] ended after yielding up to seq ${seq - 1} of ${changes.length - 1}`), { once: true });
     while (!ctx.signal.aborted) {
       while (seq < changes.length) {
         yield changes[seq]!;

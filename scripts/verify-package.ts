@@ -17,7 +17,7 @@ try {
   const paths = files.map((f) => f.path);
   const unexpected = paths.filter((p) => !/^(dist\/(src|bin)\/|README\.md$|LICENSE$|CHANGELOG\.md$|package\.json$)/.test(p));
   if (unexpected.length) throw new Error(`unexpected files in the package: ${unexpected.join(', ')}`);
-  for (const required of ['dist/src/index.js', 'dist/src/index.d.ts', 'dist/bin/apue-types.js', 'dist/src/python/runtime.py', 'dist/src/go/runtime.go', 'dist/src/java/Runtime.java', 'LICENSE', 'README.md']) {
+  for (const required of ['dist/src/index.js', 'dist/src/index.d.ts', 'dist/bin/apue-types.js', 'dist/src/python/runtime.py', 'dist/src/go/runtime.go', 'dist/src/java/Runtime.java', 'dist/src/swift/Runtime.swift', 'LICENSE', 'README.md']) {
     if (!paths.includes(required)) throw new Error(`missing from the package: ${required}`);
   }
   console.log(`package: ${filename}, ${paths.length} files, ${(size / 1024).toFixed(0)} KiB`);

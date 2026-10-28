@@ -328,7 +328,10 @@ out["canonical"] = .string(try JSONText.string(Node(canonicalInput), canonical: 
 print(String(decoding: try JSONEncoder().encode(JSONValue.object(out)), as: UTF8.self))
 `;
 
-test('a generated Swift client against a live server', { skip: swiftc ? false : 'swiftc not installed', timeout: 600_000 }, async (ctx) => {
+// The test trusts the server's self-signed certificate by pinning it, which the runtime implements
+// on Apple platforms only (Security framework); on Linux the generated client is untested.
+const skipReason = !swiftc ? 'swiftc not installed' : process.platform !== 'darwin' ? 'certificate pinning (needed for the test server) is Apple-only' : false;
+test('a generated Swift client against a live server', { skip: skipReason, timeout: 600_000 }, async (ctx) => {
   const { key, cert } = testCert();
   const apue = createApueServer(api, handlers, { key, cert, uploads: {} });
   const sessions = new Set<unknown>(); // HTTP/2 connections the Swift program used

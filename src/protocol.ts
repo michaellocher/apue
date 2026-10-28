@@ -66,3 +66,26 @@ export function isAsyncIterable(value: unknown): value is AsyncIterable<unknown>
 export function baseMediaType(contentType: string | null | undefined): string {
   return (contentType ?? '').split(';', 1)[0]!.trim().toLowerCase();
 }
+
+// WebSocket tier (T3, SPEC-DRAFT §8): subprotocol and flow-control rules, shared by the Node server
+// (websocket.ts) and the web client (transport-ws.ts) so the two can't drift apart.
+export const WS_SUBPROTOCOL = 'apue.v1';
+/** Window each side may use before the peer's first credit (HTTP/2's default is 65,535). */
+export const WS_INITIAL_WINDOW = 64 * 1024;
+/** Upper bound of a window and of one increment (HTTP/2: 2^31 - 1). */
+export const WS_MAX_WINDOW = 2 ** 31 - 1;
+
+/** Parses a credit text message: a decimal increment in 1..2^31-1, no sign, no leading zeros. */
+export function parseCredit(text: string): number | undefined {
+  if (!/^[1-9]\d{0,9}$/.test(text)) return undefined;
+  const n = Number(text);
+  return n <= WS_MAX_WINDOW ? n : undefined;
+}
+
+/** A configured window must be an integer in [WS_INITIAL_WINDOW, WS_MAX_WINDOW] (credits are integers). */
+export function checkWindow(name: string, value: number): number {
+  if (!Number.isInteger(value) || value < WS_INITIAL_WINDOW || value > WS_MAX_WINDOW) {
+    throw new RangeError(`${name} must be an integer from ${WS_INITIAL_WINDOW} to 2^31-1, got ${value}`);
+  }
+  return value;
+}

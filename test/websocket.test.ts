@@ -1,19 +1,21 @@
 // Tier T3: apü calls over WebSocket (RFC 8441 over HTTP/2 and RFC 6455 Upgrade over HTTP/1.1).
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
+import { getEventListeners } from 'node:events';
 import http2 from 'node:http2';
+import https from 'node:https';
 import { Duplex } from 'node:stream';
 import { after, before, describe, test } from 'node:test';
 import tls from 'node:tls';
 import { defineApi, op } from '../src/api.ts';
 import { ApueClient } from '../src/client.ts';
-import { decodeFrames, decodeJson, endFrame, FrameDecoder, FrameType, msgFrame, concatBytes } from '../src/frame.ts';
-import { ApueError } from '../src/protocol.ts';
-import { t } from '../src/schema.ts';
-import type { Handlers } from '../src/server.ts';
-import { webSocketTransport } from '../src/transport-ws.ts';
+import { concatBytes, decodeFrames, decodeJson, endFrame, FrameDecoder, FrameType, msgFrame } from '../src/frame.ts';
 import { drained } from '../src/node-streams.ts';
-import { encodeWsFrame, parseCredit, WS_INITIAL_WINDOW, WsConnection, WsParser } from '../src/websocket.ts';
+import { ApueError, checkWindow, parseCredit, WS_INITIAL_WINDOW } from '../src/protocol.ts';
+import { t } from '../src/schema.ts';
+import { createApueServer, type Handlers } from '../src/server.ts';
+import { MAX_UNSENT, webSocketTransport } from '../src/transport-ws.ts';
+import { encodeWsFrame, WsConnection, WsParser } from '../src/websocket.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const api = defineApi({
@@ -499,6 +501,177 @@ test('webSocketWindow sets the window the server grants (over RFC 8441 too)', as
   assert.equal(WS_INITIAL_WINDOW + parseCredit(credit)!, 256 * 1024);
   ws.close();
   await local.close();
+});
+
+describe('flow control hardening (review findings)', () => {
+  test('windows must be integers from 64 KiB to 2^31-1: server option, connection, client option', () => {
+    for (const bad of [Number.NaN, 1.5e6 + 0.5, 1024, 2 ** 31, Infinity]) {
+      assert.throws(() => checkWindow('w', bad), RangeError);
+      const { key, cert } = testCert();
+      assert.throws(() => createApueServer(api, handlers, { key, cert, webSocketWindow: bad }), /webSocketWindow must be an integer/);
+      assert.throws(() => webSocketTransport('https://x.example', { receiveWindow: bad }), /receiveWindow must be an integer/);
+    }
+    assert.equal(checkWindow('w', WS_INITIAL_WINDOW), WS_INITIAL_WINDOW);
+  });
+
+  test('data beyond the window and oversized credit are rejected from the header, before buffering', async () => {
+    const big = await rawWs('/stall.client');
+    // header of a 16 MiB binary frame (masked), no payload: must close now, not after 16 MiB
+    const header = Buffer.alloc(14);
+    header[0] = 0x82;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(16 * 1024 * 1024 - 1), 2);
+    big.socket.write(header);
+    assert.equal(await closeCodeForFrames(big.frames()), 1008);
+    const text = await rawWs('/stall.client');
+    const textHeader = Buffer.from([0x81, 0x80 | 120, 0, 0, 0, 0]); // 120-byte "credit"
+    text.socket.write(textHeader);
+    assert.equal(await closeCodeForFrames(text.frames()), 1002);
+  });
+
+  test('fragmentation rules (RFC 6455 §5.4): credit inside a message, stray continuation, nested message → 1002', async () => {
+    const inside = await rawWs('/sum.client');
+    inside.send(0x2, msgFrame(1).subarray(0, 3), { fin: false });
+    inside.send(0x1, Buffer.from('65536'));
+    assert.equal(await closeCodeForFrames(inside.frames()), 1002);
+    const stray = await rawWs('/sum.client');
+    stray.send(0x0, msgFrame(1));
+    assert.equal(await closeCodeForFrames(stray.frames()), 1002);
+    const nested = await rawWs('/sum.client');
+    nested.send(0x2, msgFrame(1).subarray(0, 3), { fin: false });
+    nested.send(0x2, msgFrame(1));
+    assert.equal(await closeCodeForFrames(nested.frames()), 1002);
+  });
+
+  test('a ping flood from a peer that never reads stops the reader instead of growing the write buffer', async () => {
+    const io = new Duplex({ read() {}, write() {} }); // our writes never complete: the peer doesn't read
+    new WsConnection(io);
+    const ping = Buffer.alloc(2 + 4 + 100);
+    ping[0] = 0x89;
+    ping[1] = 0x80 | 100; // masked, 100-byte payload, mask key 0
+    const flood = Buffer.concat(Array.from({ length: 1000 }, () => ping)); // 1000 pings per chunk
+    for (let i = 0; i < 40; i++) io.push(flood); // 40,000 pings → 4 MiB of pongs if all were answered
+    await sleep(100);
+    assert.ok(io.writableLength < 1.2 * 1024 * 1024, `write buffer grew to ${io.writableLength}`);
+    assert.ok(io.readableLength > 0, 'the reader kept reading');
+    io.destroy();
+  });
+
+  test('handshake without our subprotocol: clean error, no leaked listeners; already-aborted signal: no connection', async () => {
+    const { key, cert } = testCert();
+    let upgrades = 0;
+    const sockets: Array<{ destroy(): void }> = [];
+    const bare = https.createServer({ key, cert });
+    bare.on('upgrade', (req, socket) => {
+      upgrades++;
+      sockets.push(socket);
+      const accept = createHash('sha1').update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      socket.on('data', () => {});
+      socket.on('error', () => {});
+    });
+    await new Promise<void>((resolve) => bare.listen(0, '127.0.0.1', resolve));
+    const url = `https://127.0.0.1:${(bare.address() as { port: number }).port}`;
+    const transport = webSocketTransport(url);
+    const controller = new AbortController();
+    const request = { method: 'POST', path: '/x', headers: {}, signal: controller.signal } as Parameters<typeof transport.request>[0];
+    try {
+      // undici (like browsers, per the WHATWG spec) fails a handshake that omits a requested subprotocol
+      await assert.rejects(transport.request(request), /WebSocket connection to .* failed/);
+      assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+      controller.abort();
+      await assert.rejects(transport.request(request), (e: Error) => e.name === 'AbortError');
+      assert.equal(upgrades, 1);
+    } finally {
+      for (const socket of sockets) socket.destroy(); // upgraded sockets keep server.close() waiting
+      await new Promise((resolve) => bare.close(resolve));
+    }
+  });
+
+  test('an implementation that opens with another subprotocol: error, browser-legal close code', async () => {
+    const closes: number[] = [];
+    class OtherProtocol {
+      static OPEN = 1;
+      OPEN = 1;
+      CONNECTING = 0;
+      readyState = 0;
+      protocol = 'chat';
+      binaryType = 'blob';
+      onopen?: () => void;
+      onerror?: () => void;
+      onmessage?: () => void;
+      onclose?: () => void;
+      constructor() {
+        setTimeout(() => ((this.readyState = 1), this.onopen?.()), 1);
+      }
+      close(code: number) {
+        if (code !== 1000 && (code < 3000 || code > 4999)) throw new DOMException('invalid code', 'InvalidAccessError'); // as browsers do
+        closes.push(code);
+        this.readyState = 3;
+      }
+    }
+    const transport = webSocketTransport('https://x.example', { WebSocketImpl: OtherProtocol as unknown as typeof WebSocket });
+    const signal = new AbortController().signal;
+    await assert.rejects(transport.request({ method: 'POST', path: '/x', headers: {}, signal } as Parameters<typeof transport.request>[0]), /did not accept subprotocol apue\.v1/);
+    assert.deepEqual(closes, [4002]);
+    assert.equal(getEventListeners(signal, 'abort').length, 0);
+  });
+
+  test('a server granting a huge window cannot make the browser buffer the whole upload', async () => {
+    // Fake WebSocket: the server grants 1 GiB at once; the link drains 64 KiB per ms.
+    let maxUnsent = 0;
+    let sent = 0;
+    class SlowLink {
+      static OPEN = 1;
+      OPEN = 1;
+      readyState = 0;
+      protocol = 'apue.v1';
+      binaryType = 'blob';
+      onopen?: () => void;
+      onmessage?: (e: { data: unknown }) => void;
+      onclose?: (e: { code: number; reason: string }) => void;
+      onerror?: () => void;
+      #unsent = 0;
+      #last = performance.now();
+      constructor() {
+        setTimeout(() => {
+          this.readyState = 1;
+          this.onopen?.();
+          this.onmessage?.({ data: String(2 ** 30) });
+        }, 1);
+      }
+      get bufferedAmount() {
+        const now = performance.now();
+        const drained = Math.min(this.#unsent, (now - this.#last) * 64 * 1024);
+        this.#unsent -= drained;
+        sent += drained;
+        this.#last = now;
+        return this.#unsent;
+      }
+      send(data: string | Uint8Array) {
+        if (typeof data === 'string') return;
+        void this.bufferedAmount; // account for draining up to now
+        this.#unsent += data.byteLength;
+        maxUnsent = Math.max(maxUnsent, this.#unsent);
+      }
+      close() {
+        this.readyState = 3;
+      }
+    }
+    const transport = webSocketTransport('https://x.example', { WebSocketImpl: SlowLink as unknown as typeof WebSocket });
+    const total = 32 * 1024 * 1024;
+    async function* upload() {
+      for (let i = 0; i < total / (256 * 1024); i++) yield new Uint8Array(256 * 1024);
+    }
+    const controller = new AbortController();
+    await transport.request({ method: 'POST', path: '/up', headers: {}, body: upload(), signal: controller.signal } as Parameters<typeof transport.request>[0]);
+    const deadline = Date.now() + 5000;
+    let link: { bufferedAmount: number } | undefined;
+    while (sent < total - MAX_UNSENT - 256 * 1024 && Date.now() < deadline) await sleep(20);
+    void link;
+    assert.ok(maxUnsent <= MAX_UNSENT + 256 * 1024, `browser buffered up to ${(maxUnsent / 1048576).toFixed(1)} MiB`);
+    controller.abort();
+  });
 });
 
 async function closeCodeForFrames(frames: AsyncGenerator<{ opcode: number; payload: Uint8Array }>): Promise<number> {

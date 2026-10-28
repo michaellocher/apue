@@ -22,9 +22,9 @@ import { MemoryIdempotencyStore, type IdempotencyStore, type StoredResponse } fr
 import { compressAsync, compressSync, createCompressor, DEFAULT_CODINGS, flushCompressor, negotiate, type Coding } from './compression.ts';
 import { STATUS_CODES } from 'node:http';
 import { onExchange, WsExchange, type Exchange, type WebSocketUpgrade } from './exchange.ts';
-import { acceptKey, checkHandshake, WS_SUBPROTOCOL, WsClose, WsConnection } from './websocket.ts';
+import { acceptKey, checkHandshake, WsClose, WsConnection } from './websocket.ts';
 import { drained } from './node-streams.ts';
-import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
+import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, MediaType, ProblemType, WS_SUBPROTOCOL } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, project, SelectionError, type Selection } from './select.ts';
@@ -328,6 +328,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   const cors = options.cors;
   const resumeTokens = new ResumeTokens(options.resume);
   if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
+  checkWindow('webSocketWindow', webSocketWindow);
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
   for (const name of Object.keys(api)) {

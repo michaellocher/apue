@@ -11,20 +11,12 @@ import { hash } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Writable } from 'node:stream';
-import { ApueError, ProblemType } from './protocol.ts';
+import { ApueError, checkWindow, parseCredit, ProblemType, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
-export const WS_SUBPROTOCOL = 'apue.v1';
-/** Window each side may use before the peer's first credit (HTTP/2's default is 65,535). */
-export const WS_INITIAL_WINDOW = 64 * 1024;
-/** Upper bound of a window and of one increment (HTTP/2: 2^31 - 1). */
-export const WS_MAX_WINDOW = 2 ** 31 - 1;
-
-/** Parses a credit text message: a decimal increment in 1..2^31-1, no sign, no leading zeros. */
-export function parseCredit(text: string): number | undefined {
-  if (!/^[1-9]\d{0,9}$/.test(text)) return undefined;
-  const n = Number(text);
-  return n <= WS_MAX_WINDOW ? n : undefined;
-}
+/** Payloads from this size are written without copying them into the frame buffer. */
+const ZERO_COPY_MIN = 16 * 1024;
+/** Our own unsent bytes beyond which the reader pauses (a peer that doesn't read, e.g. ping flood). */
+const WRITE_BACKLOG_LIMIT = 1024 * 1024;
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 export const WsOpcode = { CONTINUATION: 0x0, TEXT: 0x1, BINARY: 0x2, CLOSE: 0x8, PING: 0x9, PONG: 0xa } as const;
@@ -53,10 +45,16 @@ export function acceptKey(key: string): string {
 
 /** Unmasked frame (server → client). */
 export function encodeWsFrame(opcode: number, payload: Uint8Array = new Uint8Array(0)): Buffer {
-  const length = payload.byteLength;
+  const out = wsHeader(opcode, payload.byteLength, payload.byteLength);
+  out.set(payload, out.byteLength - payload.byteLength);
+  return out;
+}
+
+/** A FIN frame header for `length` payload bytes, in a buffer with `extra` bytes of room after it. */
+function wsHeader(opcode: number, length: number, extra = 0): Buffer {
   const headerLength = length < 126 ? 2 : length < 65536 ? 4 : 10;
-  const out = Buffer.allocUnsafe(headerLength + length);
-  out[0] = 0x80 | opcode; // FIN
+  const out = Buffer.allocUnsafe(headerLength + extra);
+  out[0] = 0x80 | opcode;
   if (length < 126) {
     out[1] = length;
   } else if (length < 65536) {
@@ -66,7 +64,6 @@ export function encodeWsFrame(opcode: number, payload: Uint8Array = new Uint8Arr
     out[1] = 127;
     out.writeBigUInt64BE(BigInt(length), 2);
   }
-  out.set(payload, headerLength);
   return out;
 }
 
@@ -104,9 +101,12 @@ export class WsParser {
   #chunks: Uint8Array[] = [];
   #buffered = 0;
   #needed = 2;
+  #checkHeader: ((opcode: number, length: number) => void) | undefined;
 
-  constructor(maxPayload: number) {
+  /** `checkHeader` may throw to reject a frame from its header alone, before its payload is buffered. */
+  constructor(maxPayload: number, checkHeader?: (opcode: number, length: number) => void) {
     this.maxPayload = maxPayload;
+    this.#checkHeader = checkHeader;
   }
 
   push(chunk: Uint8Array): WsFrame[] {
@@ -144,6 +144,7 @@ export class WsParser {
         throw new WsProtocolError(WsClose.PROTOCOL_ERROR, `unknown opcode ${opcode}`);
       }
       if (length > this.maxPayload) throw new WsProtocolError(WsClose.TOO_BIG, 'frame too large');
+      this.#checkHeader?.(opcode, length);
       if (buf.byteLength - offset < (needed = header + 4 + length)) break;
       const start = offset + header + 4;
       frames.push({ fin, opcode, payload: unmask(buf, start, length, buf.subarray(offset + header, start)) });
@@ -169,7 +170,6 @@ export class WsConnection {
   readonly sink: Writable;
   #io: Duplex;
   #queue: Uint8Array[] = [];
-  #queued = 0;
   #inputEnded = false;
   #inputError: Error | undefined;
   #wake: (() => void) | undefined;
@@ -188,7 +188,7 @@ export class WsConnection {
 
   constructor(io: Duplex, { maxPayload = 16 * 1024 * 1024, window = 1024 * 1024, head = new Uint8Array(0) as Uint8Array } = {}) {
     this.#io = io;
-    this.#window = Math.min(Math.max(window, WS_INITIAL_WINDOW), WS_MAX_WINDOW);
+    this.#window = checkWindow('window', window);
     this.sink = new Writable({
       write: (chunk: Buffer, _encoding, callback) => this.#send(chunk, 0, callback),
       final: (callback) => {
@@ -200,7 +200,15 @@ export class WsConnection {
     io.once('close', () => this.#onIoClose());
     io.on('error', () => {});
     if (this.#window > WS_INITIAL_WINDOW) this.#grant(this.#window - WS_INITIAL_WINDOW);
-    void this.#read(new WsParser(maxPayload), head);
+    void this.#read(new WsParser(maxPayload, (opcode, length) => this.#checkHeader(opcode, length)), head);
+  }
+
+  /** Rejects oversized credit and data beyond the window from the header, before buffering. */
+  #checkHeader(opcode: number, length: number): void {
+    if (opcode === WsOpcode.TEXT && length > 10) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'invalid credit');
+    if ((opcode === WsOpcode.BINARY || opcode === WsOpcode.CONTINUATION) && length > this.#receiveAllowance) {
+      throw new WsProtocolError(WsClose.POLICY_VIOLATION, 'flow control: more data than the window allows');
+    }
   }
 
   /** Sends `chunk` from `offset` as binary frames, each within the credit; waits for credit and drain. */
@@ -213,7 +221,17 @@ export class WsConnection {
         return;
       }
       const n = Math.min(this.#sendCredit, chunk.byteLength - offset);
-      const flushed = io.write(encodeWsFrame(WsOpcode.BINARY, chunk.subarray(offset, offset + n)));
+      const piece = chunk.subarray(offset, offset + n);
+      let flushed: boolean;
+      if (n < ZERO_COPY_MIN) {
+        flushed = io.write(encodeWsFrame(WsOpcode.BINARY, piece));
+      } else {
+        // Header and payload as two writes in one writev: no copy of the payload.
+        io.cork();
+        io.write(wsHeader(WsOpcode.BINARY, n));
+        flushed = io.write(piece);
+        io.uncork();
+      }
       this.#sendCredit -= n;
       offset += n;
       if (!flushed) {
@@ -252,7 +270,6 @@ export class WsConnection {
     for (;;) {
       if (this.#queue.length > 0) {
         const chunk = this.#queue.shift()!;
-        this.#queued -= chunk.byteLength;
         this.#consumed += chunk.byteLength;
         if (this.#consumed >= this.#window / 2) {
           this.#grant(this.#consumed);
@@ -284,6 +301,7 @@ export class WsConnection {
   }
 
   async #read(parser: WsParser, head: Uint8Array): Promise<void> {
+    let inMessage = false; // a fragmented binary message is open (RFC 6455 §5.4)
     // destroyOnReturn: false — returning after a close frame must not destroy the transport
     // before our own close frame has been flushed.
     const chunks = this.#io.iterator({ destroyOnReturn: false }) as AsyncIterable<Uint8Array>;
@@ -293,6 +311,9 @@ export class WsConnection {
     }
     try {
       for await (const chunk of withHead()) {
+        // Pongs and credit are written without waiting; a peer that never reads its socket must
+        // not grow our write buffer without bound — stop reading until it drains.
+        if (this.#io.writableLength > WRITE_BACKLOG_LIMIT) await this.#writable();
         for (const frame of parser.push(chunk)) {
           if (frame.opcode === WsOpcode.PING) {
             if (!this.#closeSent) this.#io.write(encodeWsFrame(WsOpcode.PONG, frame.payload));
@@ -306,12 +327,15 @@ export class WsConnection {
           } else if (frame.opcode === WsOpcode.TEXT) {
             // Text messages carry credit only; unfragmented, so a continuation is always binary data.
             if (!frame.fin) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'credit messages must not be fragmented');
+            if (inMessage) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'credit inside a fragmented message');
             this.#onCredit(frame.payload);
           } else {
+            if (frame.opcode === WsOpcode.BINARY && inMessage) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'new message inside a fragmented message');
+            if (frame.opcode === WsOpcode.CONTINUATION && !inMessage) throw new WsProtocolError(WsClose.PROTOCOL_ERROR, 'continuation without a message');
+            inMessage = !frame.fin;
             this.#receiveAllowance -= frame.payload.byteLength;
             if (this.#receiveAllowance < 0) throw new WsProtocolError(WsClose.POLICY_VIOLATION, 'flow control: more data than the window allows');
             this.#queue.push(frame.payload);
-            this.#queued += frame.payload.byteLength;
             this.#notify();
           }
         }
@@ -323,6 +347,21 @@ export class WsConnection {
       this.#endInput(new ApueError(400, 'Malformed Stream', (error as Error).message, { type: ProblemType.MALFORMED_STREAM }));
       this.close(code, (error as Error).message);
     }
+  }
+
+  /** Resolves when our transport drains or closes. */
+  #writable(): Promise<void> {
+    const io = this.#io;
+    if (!io.writableNeedDrain || io.destroyed) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        io.off('drain', done);
+        io.off('close', done);
+        resolve();
+      };
+      io.on('drain', done);
+      io.on('close', done);
+    });
   }
 
   #endInput(error: Error | undefined): void {

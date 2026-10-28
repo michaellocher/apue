@@ -3,13 +3,20 @@
 // Flow control as in src/websocket.ts: binary bytes use up a window, text messages ("65536")
 // extend it; the browser API can't pause receiving, so the window is what bounds client memory.
 import { fetchTransport, type Transport, type TransportResponse } from './client.ts';
-import { Header, MediaType } from './protocol.ts';
+import { checkWindow, Header, MediaType, parseCredit, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
-export const WS_SUBPROTOCOL = 'apue.v1';
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
 export const WS_CLOSE_CANCELLED = 4000;
-const INITIAL_WINDOW = 64 * 1024; // = WS_INITIAL_WINDOW in websocket.ts (Node-only module)
-const MAX_WINDOW = 2 ** 31 - 1;
+/** Close codes for protocol errors: browsers may only send 1000 and 3000–4999 (1002/1008 + 3000). */
+const WS_CLOSE_PROTOCOL = 4002;
+const WS_CLOSE_POLICY = 4008;
+/**
+ * Unsent bytes in the browser beyond which uploads wait. Credit already bounds them by the
+ * server's window (1 MiB default) — this only engages for servers granting huge windows over slow
+ * links. WebSocket has no 'drain' event, so it polls, with a backing-off interval.
+ */
+export const MAX_UNSENT = 4 * 1024 * 1024;
+const MAX_POLL_MS = 64;
 
 export interface WebSocketTransportOptions {
   /** Bytes the server may send ahead of the consumer: the client-side memory bound per call. */
@@ -17,19 +24,13 @@ export interface WebSocketTransportOptions {
   WebSocketImpl?: typeof WebSocket;
 }
 
-/** Parses a credit text message (same rules as the server's parseCredit). */
-function parseCredit(text: string): number | undefined {
-  if (!/^[1-9]\d{0,9}$/.test(text)) return undefined;
-  const n = Number(text);
-  return n <= MAX_WINDOW ? n : undefined;
-}
-
 export function webSocketTransport(baseUrl: string, options: WebSocketTransportOptions = {}): Transport {
   const base = baseUrl.replace(/\/$/, '').replace(/^http/, 'ws');
   const WebSocketImpl = options.WebSocketImpl ?? WebSocket;
-  const receiveWindow = Math.min(Math.max(options.receiveWindow ?? 4 * 1024 * 1024, INITIAL_WINDOW), MAX_WINDOW);
+  const receiveWindow = checkWindow('receiveWindow', options.receiveWindow ?? 4 * 1024 * 1024);
   return {
     async request({ path, headers, body, signal }) {
+      signal.throwIfAborted(); // an already-aborted signal never fires 'abort'
       // Browsers can't set WebSocket headers: the deadline travels as a query parameter.
       const timeout = headers[Header.TIMEOUT];
       const url = `${base}${path}${timeout ? `${path.includes('?') ? '&' : '?'}timeout=${encodeURIComponent(timeout)}` : ''}`;
@@ -45,8 +46,8 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
         wake = undefined;
         w?.();
       };
-      let sendCredit = INITIAL_WINDOW; // bytes we may still send
-      let receiveAllowance = INITIAL_WINDOW; // bytes the server may still send
+      let sendCredit = WS_INITIAL_WINDOW; // bytes we may still send
+      let receiveAllowance = WS_INITIAL_WINDOW; // bytes the server may still send
       let consumed = 0; // bytes handed to the consumer since the last credit
       let creditWake: (() => void) | undefined;
       const wakeSender = () => {
@@ -56,13 +57,13 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       };
       const violation = (reason: string, code: number) => {
         failure ??= new Error(`WebSocket flow control: ${reason}`);
-        ws.close(code === 1002 ? 4002 : 4008, reason); // browsers may only send 1000 and 3000–4999
+        ws.close(code === 1002 ? WS_CLOSE_PROTOCOL : WS_CLOSE_POLICY, reason);
       };
       ws.onmessage = (event) => {
         if (typeof event.data === 'string') {
           const increment = parseCredit(event.data);
           if (increment === undefined) return violation('invalid credit', 1002);
-          if (sendCredit + increment > MAX_WINDOW) return violation('credit beyond 2^31-1', 1002);
+          if (sendCredit + increment > WS_MAX_WINDOW) return violation('credit beyond 2^31-1', 1002);
           sendCredit += increment;
           return wakeSender();
         }
@@ -92,8 +93,19 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
           ws.send(bytes.subarray(offset, offset + n) as Uint8Array<ArrayBuffer>);
           sendCredit -= n;
           offset += n;
+          if (ws.bufferedAmount > MAX_UNSENT) await unsent();
         }
         return true;
+      }
+      /** Waits until the browser has sent enough; halves the poll after idling, doubles while full. */
+      let pollMs = 4;
+      async function unsent(): Promise<void> {
+        while (ws.bufferedAmount > MAX_UNSENT && ws.readyState === ws.OPEN) {
+          await new Promise((resolve) => setTimeout(resolve, pollMs));
+          const left = ws.bufferedAmount;
+          if (left === 0) pollMs = Math.max(1, pollMs / 2);
+          else if (left > MAX_UNSENT) pollMs = Math.min(MAX_POLL_MS, pollMs * 2);
+        }
       }
       async function pump(body: AsyncIterable<Uint8Array>): Promise<void> {
         try {
@@ -105,19 +117,28 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       const onAbort = () => ws.close(WS_CLOSE_CANCELLED, 'cancelled');
       signal.addEventListener('abort', onAbort, { once: true });
 
-      await new Promise<void>((resolve, reject) => {
-        ws.onopen = () => resolve();
-        ws.onerror = () => reject(new Error(`WebSocket connection to ${url} failed`));
-        signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-      });
-      if (ws.protocol !== WS_SUBPROTOCOL) {
-        ws.close(1002);
-        throw new Error(`server did not accept subprotocol ${WS_SUBPROTOCOL}`);
+      let rejectOpen: ((reason: unknown) => void) | undefined;
+      const abortOpen = () => rejectOpen?.(signal.reason);
+      signal.addEventListener('abort', abortOpen, { once: true });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          rejectOpen = reject;
+          ws.onopen = () => resolve();
+          ws.onerror = () => reject(new Error(`WebSocket connection to ${url} failed`));
+        });
+        if (ws.protocol !== WS_SUBPROTOCOL) throw new Error(`server did not accept subprotocol ${WS_SUBPROTOCOL}`);
+      } catch (error) {
+        // No response body will run its cleanup: release the listeners and the socket here.
+        signal.removeEventListener('abort', onAbort);
+        if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close(signal.aborted ? WS_CLOSE_CANCELLED : WS_CLOSE_PROTOCOL, 'handshake failed');
+        throw error;
+      } finally {
+        signal.removeEventListener('abort', abortOpen);
       }
 
-      if (receiveWindow > INITIAL_WINDOW) {
-        ws.send(String(receiveWindow - INITIAL_WINDOW));
-        receiveAllowance += receiveWindow - INITIAL_WINDOW;
+      if (receiveWindow > WS_INITIAL_WINDOW) {
+        ws.send(String(receiveWindow - WS_INITIAL_WINDOW));
+        receiveAllowance += receiveWindow - WS_INITIAL_WINDOW;
       }
       if (body instanceof Uint8Array) void send(body);
       else if (body !== undefined) void pump(body);

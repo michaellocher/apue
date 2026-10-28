@@ -45,6 +45,7 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
           FIREFOX_PATH: /usr/bin/firefox
+          APUE_TEST_SYSTEM_CA: '1'  # the Swift client test trusts its server through the system store (sudo)
       - name: Website (build is reproducible, links, anchors, metadata, contrast)
         run: |
           node site-src/build.mjs

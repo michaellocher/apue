@@ -13,8 +13,9 @@
 // POSTed), field selection, client-side validation (the server validates), back-pressure on
 // response bodies (URLSession delivers into memory as fast as the network allows), integers beyond
 // 2^53 (numbers are Doubles on the wire, as in JavaScript).
-// Linux: written to compile against FoundationNetworking (no CryptoKit: a portable SHA-256; no
-// pinning: install the CA in the system trust store) — neither compiled nor tested there.
+// Linux (FoundationNetworking, tested with Swift 6.4): no CryptoKit (a portable SHA-256), no pinning
+// (the system trust store decides), and request streams are half duplex — their inputs are collected
+// and sent when they end, at most 64 MiB (FoundationNetworking can't pause a streamed body).
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -1408,6 +1409,8 @@ public final class ApueClient: Sendable {
   public let options: Options
   let session: URLSession
   static let clientKey = CodingUserInfoKey(rawValue: "apue.client")!
+  /// The most a request stream may send where it is collected first (FoundationNetworking).
+  static let maxCollectedStream = 64 * 1024 * 1024
 
   public init(baseURL: URL, options: Options = Options()) throws {
     guard baseURL.scheme == "https" else { throw ApueConfigurationError(description: "apü servers speak HTTPS") }
@@ -1680,6 +1683,23 @@ public final class ApueClient: Sendable {
   func requestStream<S: AsyncSequence & Sendable, O: Decodable & Sendable>(_ op: ApueOp, _ inputs: S, timeoutMs: Int?) -> AsyncThrowingStream<O, Error>
   where S.Element: Encodable {
     let call = StreamCall(self, op) { call in
+      var headers = ["accept": ApueClient.accept, "content-type": "application/vnd.apue.frames"]
+      if let timeoutMs { headers["apue-timeout"] = String(timeoutMs) }
+      #if canImport(FoundationNetworking)
+      // FoundationNetworking (Linux) can't pause a streamed request body: every URLSession of the
+      // process reads bodies on one shared serial queue, so waiting there for the next input would
+      // stall all networking (measured: a unary call held up 1.3 s by a waiting stream). The inputs
+      // are collected and sent when they end: half duplex, at most 64 MiB.
+      var body = Data()
+      for try await item in inputs {
+        body.append(try Frame.message(ApueClient.encode(item), bytes: op.inputBytes))
+        if body.count > ApueClient.maxCollectedStream {
+          throw ApueError(413, "Content Too Large", "request streams are collected before sending on this platform (FoundationNetworking), up to \(ApueClient.maxCollectedStream) bytes")
+        }
+      }
+      body.append(Frame.encode(Frame.end, Data("{\"status\":200}".utf8)))
+      return try await call.client.send("POST", "/\(op.name)", headers: headers, body: body)
+      #else
       var input: InputStream?
       var output: OutputStream?
       // 1 MiB per call: measured locally (256 × 1 MiB blobs) 145 MiB/s with 64 KiB, 295 with 256 KiB, 725 with 1 MiB.
@@ -1699,9 +1719,8 @@ public final class ApueClient: Sendable {
           call?.writerFailed(error)  // the inputs failed (their sequence threw, or encoding): so does the call
         }
       })
-      var headers = ["accept": ApueClient.accept, "content-type": "application/vnd.apue.frames"]
-      if let timeoutMs { headers["apue-timeout"] = String(timeoutMs) }
       return try await call.client.send("POST", "/\(op.name)", headers: headers, bodyStream: input)
+      #endif
     }
     return AsyncThrowingStream {
       guard let node = try await call.next() else { return nil }
@@ -1871,7 +1890,9 @@ final class DownloadReader: @unchecked Sendable {
         received += chunk.count
         hasher.update(chunk)
         return Data(chunk)
-      } catch let error where ApueClient.transient(error) {
+      } catch let error as URLError where error.code != .cancelled {
+        // Any failure mid-body resumes (Range + If-Range, the SHA-256 checks the result): libcurl's
+        // "stream not closed cleanly" (FoundationNetworking) is no networkConnectionLost, but the same.
         try await retry(error, client)
       }
     }

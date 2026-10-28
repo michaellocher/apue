@@ -26,7 +26,15 @@ npm run build && npm run verify:package && npm run site
 scripts/test-linux-webkit.sh    # the browser tests in WebKit on Linux (Docker), as CI runs them
 ```
 
-Run all of it before pushing: CI runs on Linux, and some browser behaviour differs there (S30).
+Run all of it before pushing: CI runs on Linux, and some browser behaviour differs there (S30). The
+Swift client behaves differently on Linux too (S32); CI runs its test with `APUE_TEST_SYSTEM_CA=1`
+(the test adds a throwaway certificate to the system trust store: root or passwordless sudo). To
+run it locally in Docker, with Node 26 for Linux unpacked into `node-linux/`:
+
+```sh
+docker run --rm -e APUE_TEST_SYSTEM_CA=1 -v "$PWD:/repo:ro" -v "$PWD/node-linux:/opt/node:ro" -w /repo \
+  swift:6.4.1-bookworm sh -c 'PATH=/opt/node/bin:$PATH node --test test/swift.test.ts'
+```
 
 ## Releasing
 

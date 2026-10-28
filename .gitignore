@@ -4,3 +4,4 @@ bench/results/
 dist/
 __pycache__/
 .claude/
+node-linux/

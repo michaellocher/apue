@@ -65,6 +65,7 @@ jobs:
         env:
           CHROME_PATH: /usr/bin/google-chrome
           FIREFOX_PATH: /usr/bin/firefox
+          APUE_TEST_SYSTEM_CA: '1'  # the Swift client test trusts its server through the system store (sudo)
       - run: npm run build
       - run: npm run verify:package
       - name: Pack

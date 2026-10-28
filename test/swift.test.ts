@@ -153,16 +153,25 @@ async function cuttingProxy(targetPort: number, cutAfter: number) {
 
 const MAIN = String.raw`
 import Foundation
-import CryptoKit
 
 let args = CommandLine.arguments
-let pem = try String(contentsOfFile: args[2], encoding: .utf8)
-let c = try Client(baseURL: URL(string: args[1])!, options: .init(pinnedCertificates: [pem]))
-let viaProxy = try Client(baseURL: URL(string: args[3])!, options: .init(pinnedCertificates: [pem], backoff: 0.05))
+// Apple platforms pin the server's certificate; elsewhere (no pinning) the test has added it to the
+// system trust store.
+#if canImport(Security)
+let pins = [try String(contentsOfFile: args[2], encoding: .utf8)]
+#else
+let pins: [String] = []
+#endif
+let c = try Client(baseURL: URL(string: args[1])!, options: .init(pinnedCertificates: pins))
+let viaProxy = try Client(baseURL: URL(string: args[3])!, options: .init(pinnedCertificates: pins, backoff: 0.05))
 let dir = URL(fileURLWithPath: args[4])
 var out: [String: JSONValue] = [:]
 
-func hex(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+func hex(_ data: Data) -> String {
+  var hasher = SHA256Hasher() // the runtime's: CryptoKit, or the portable one (portable_sha256 below)
+  hasher.update(data)
+  return hasher.hex()
+}
 func json<T: Encodable>(_ value: T) throws -> JSONValue { try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(value)) }
 func inputs<T: Sendable>(_ items: [T]) -> AsyncStream<T> {
   AsyncStream { continuation in
@@ -172,6 +181,7 @@ func inputs<T: Sendable>(_ items: [T]) -> AsyncStream<T> {
 }
 
 @MainActor func run(_ name: String, _ body: () async throws -> JSONValue) async {
+  FileHandle.standardError.write(Data("\(name)\n".utf8)) // progress: which step a hang is in
   do {
     out[name] = ["ok": try await body()]
   } catch let error as ApueError {
@@ -222,6 +232,23 @@ await run("stream_error") {
 }
 out["stream_error_seen"] = .array(seen)
 await run("client_stream") { .number(try await c.sumClient(inputs([1, 2, 3, 4]))) }
+await run("concurrent") {
+  // A request stream waiting for its next input doesn't hold up the client's other calls (on
+  // FoundationNetworking, where a waiting body would stall every URLSession, its inputs are collected).
+  let (pending, feed) = AsyncStream.makeStream(of: Double.self)
+  feed.yield(1)
+  let summing = Task { try await c.sumClient(pending) }
+  Task {
+    try await Task.sleep(nanoseconds: 1_500_000_000)
+    feed.yield(2)
+    feed.finish()
+  }
+  try await Task.sleep(nanoseconds: 200_000_000)  // the stream is open, its body waiting
+  let start = Date()
+  _ = try await c.usersNone()
+  let took = Date().timeIntervalSince(start)
+  return [.number(took), .number(try await summing.value)]
+}
 struct Boom: Error {}
 await run("input_error") {
   .number(try await c.sumClient(AsyncThrowingStream<Double, Error> { continuation in
@@ -234,7 +261,11 @@ await run("early_reject") {
   var outcomes: [JSONValue] = []
   for _ in 0..<5 {
     do {
+      #if canImport(FoundationNetworking)
+      outcomes.append(.number(try await c.sinkFail(inputs(Array(repeating: 1.0, count: 1000)))))  // collected: finite
+      #else
       outcomes.append(.number(try await c.sinkFail(AsyncStream(unfolding: { 1.0 }))))  // endless inputs
+      #endif
     } catch let error as ApueError {
       outcomes.append(.string("\(error.status) \(error.detail ?? "")"))
     } catch {
@@ -244,14 +275,22 @@ await run("early_reject") {
   return .array(outcomes)
 }
 await run("bidi") {
-  // Ping-pong: the next input is only sent after the previous output arrived (full duplex).
   let (requests, feed) = AsyncStream.makeStream(of: EchoBidiInput.self)
   feed.yield(.init(n: 1))
   var got: [JSONValue] = []
+  #if canImport(FoundationNetworking)
+  // Half duplex (FoundationNetworking): all inputs, then the outputs.
+  feed.yield(.init(n: 2))
+  feed.yield(.init(n: 3))
+  feed.finish()
+  for try await output in c.echoBidi(requests) { got.append(.number(output.n)) }
+  #else
+  // Ping-pong: the next input is only sent after the previous output arrived (full duplex).
   for try await output in c.echoBidi(requests) {
     got.append(.number(output.n))
     if got.count < 3 { feed.yield(.init(n: Double(got.count + 1))) } else { feed.finish() }
   }
+  #endif
   return .array(got)
 }
 var big = Data((0..<(256 * 4096)).map { UInt8(truncatingIfNeeded: $0) })
@@ -268,6 +307,12 @@ await run("blobs") {
   ]))
   return [.array(r.sizes.map { .number($0) }), .array(r.tags), .string(r.sha256)]
 }
+#if canImport(FoundationNetworking)
+await run("collected_limit") {  // endless inputs can't be collected: refused at 64 MiB, nothing sent
+  let mib = Data(count: 1024 * 1024)
+  return try json(await c.blobsSum(AsyncStream(unfolding: { BlobsSumInput(data: mib, tag: nil) })))
+}
+#endif
 await run("file_bytes") { try json(await c.filesIngest(.init(file: .data(Data("hello file".utf8))))) }
 let path = dir.appendingPathComponent("upload.bin")
 try Data(repeating: 0x78, count: 300_000).write(to: path)
@@ -306,19 +351,23 @@ await run("cancel_task") {
   }
 }
 await run("after_errors") { .string(try await c.usersGet(.init(id: "zz")).id) }
-// Pinning: another certificate is refused, and without pins the system store decides (also refused).
-let wrongPin = try Client(baseURL: URL(string: args[1])!, options: .init(pinnedCertificates: [try String(contentsOfFile: args[5], encoding: .utf8)], retries: 0))
-await run("wrong_pin") { .string(try await wrongPin.usersNone()) }
+// Pinning: another certificate is refused, and without pins the trust store decides (Apple: the
+// self-signed certificate is refused; elsewhere pinning is a configuration error and the system
+// store, which has the certificate, decides).
+await run("wrong_pin") {
+  let wrongPin = try Client(baseURL: URL(string: args[1])!, options: .init(pinnedCertificates: [try String(contentsOfFile: args[5], encoding: .utf8)], retries: 0))
+  return .string(try await wrongPin.usersNone())
+}
 let unpinned = try Client(baseURL: URL(string: args[1])!, options: .init(retries: 0))
 await run("no_pin") { .string(try await unpinned.usersNone()) }
 
-let lengths = [0, 1, 55, 56, 63, 64, 65, 1000, 200_000]
-out["portable_sha256"] = .bool(lengths.allSatisfy { n in
+// Digests of 0, 1, 55, … bytes, fed in two parts (checked against Node's).
+out["portable_sha256"] = .array([0, 1, 55, 56, 63, 64, 65, 1000, 200_000].map { n in
   let data = Data((0..<n).map { UInt8(truncatingIfNeeded: $0 &* 31) })
   var hasher = PortableSHA256()
   hasher.update(data.prefix(n / 3))
   hasher.update(data.dropFirst(n / 3))
-  return hasher.hex() == hex(data)
+  return .string(hasher.hex())
 })
 let canonicalInput: JSONValue = [
   "b": [1, 1e21, 1e-7, 0.1, -0.0, 123456789012, 1.5e300, 5e-324, 1e20, 100, -2.5e-8, 0.000001],
@@ -328,16 +377,26 @@ out["canonical"] = .string(try JSONText.string(Node(canonicalInput), canonical: 
 print(String(decoding: try JSONEncoder().encode(JSONValue.object(out)), as: UTF8.self))
 `;
 
-// The test trusts the server's self-signed certificate by pinning it, which the runtime implements
-// on Apple platforms only (Security framework); on Linux the generated client is untested.
-const skipReason = !swiftc ? 'swiftc not installed' : process.platform !== 'darwin' ? 'certificate pinning (needed for the test server) is Apple-only' : false;
+// The test trusts the server's self-signed certificate by pinning it on Apple platforms (Security
+// framework). Elsewhere (Linux: FoundationNetworking on libcurl) only the system trust store counts —
+// its CA environment variable is Android-only — so the test adds its throwaway certificate there
+// (and removes it): opt-in with APUE_TEST_SYSTEM_CA=1, as root or with passwordless sudo (CI, Docker).
+const systemCa = process.platform !== 'darwin' && process.env.APUE_TEST_SYSTEM_CA === '1';
+const skipReason = !swiftc
+  ? 'swiftc not installed'
+  : process.platform !== 'darwin' && !systemCa
+    ? 'off Apple platforms the test must add a certificate to the system trust store: set APUE_TEST_SYSTEM_CA=1 (root or passwordless sudo)'
+    : false;
+/** Runs a command as root (directly, or through passwordless sudo). */
+const asRoot = (command: string, args: string[]) =>
+  process.getuid?.() === 0 ? execFileSync(command, args, { stdio: 'ignore' }) : execFileSync('sudo', ['-n', command, ...args], { stdio: 'ignore' });
 test('a generated Swift client against a live server', { skip: skipReason, timeout: 600_000 }, async (ctx) => {
   const { key, cert } = testCert();
   const apue = createApueServer(api, handlers, { key, cert, uploads: {} });
-  const sessions = new Set<unknown>(); // HTTP/2 connections the Swift program used
+  const sessions = new Map<unknown, string[]>(); // HTTP/2 connections the Swift program used → paths
   const requests: Array<{ method: string; path: string; key?: string; range?: string; ifRange?: string; uploadComplete?: string; uploadInterop?: string }> = [];
   apue.server.on('stream', (stream, headers) => {
-    if (!String(headers['user-agent']).startsWith('node')) sessions.add(stream.session); // not the CLI
+    if (!String(headers['user-agent']).startsWith('node')) sessions.set(stream.session, [...(sessions.get(stream.session) ?? []), String(headers[':path'])]); // not the CLI
     requests.push({
       method: String(headers[':method']),
       path: String(headers[':path']),
@@ -361,6 +420,15 @@ test('a generated Swift client against a live server', { skip: skipReason, timeo
   writeFileSync(ca, cert);
   const otherCert = join(dir, 'other.pem'); // a certificate the server doesn't have
   execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1', '-keyout', join(dir, 'other.key'), '-out', otherCert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
+  if (systemCa) {
+    const installed = `/usr/local/share/ca-certificates/apue-test-${process.pid}.crt`;
+    asRoot('cp', [ca, installed]);
+    asRoot('update-ca-certificates', []);
+    ctx.after(() => {
+      asRoot('rm', ['-f', installed]);
+      asRoot('update-ca-certificates', ['--fresh']);
+    });
+  }
   writeFileSync(join(dir, 'main.swift'), MAIN);
   // The runtime template compiles on its own (Swift 6 language mode: strict concurrency).
   await promisify(execFile)(swiftc!, ['-swift-version', '6', '-typecheck', join(import.meta.dirname, '..', 'src', 'swift', 'Runtime.swift')]);
@@ -387,9 +455,12 @@ test('a generated Swift client against a live server', { skip: skipReason, timeo
   assert.deepEqual(out.stream, { ok: [1, 2, 3, 4, 5] });
   assert.deepEqual([out.stream_error.error, out.stream_error.detail, out.stream_error_seen], [409, 'midway', [1]]);
   assert.deepEqual(out.client_stream, { ok: 10 });
+  const [took, sum] = out.concurrent.ok as [number, number];
+  assert.ok(took < 1, `a call next to a waiting request stream is not held up (${took} s)`);
+  assert.equal(sum, 3);
   assert.deepEqual(out.input_error, { exception: 'Boom()' }, 'inputs that fail fail the call');
   assert.deepEqual(out.early_reject, { ok: Array(5).fill('403 no streams for you') }, 'a rejected request stream ends the call while inputs keep coming');
-  assert.deepEqual(out.bidi, { ok: [2, 4, 6] }, 'full duplex: each output arrived before the next input was sent');
+  assert.deepEqual(out.bidi, { ok: [2, 4, 6] }, process.platform === 'darwin' ? 'full duplex: each output arrived before the next input was sent' : 'half duplex (inputs collected)');
   const [size, echoed, sent, meta] = out.bytes.ok as [number, string, string, unknown];
   assert.equal(size, 256 * 4096 + 12);
   assert.equal(echoed, sent, 'bytes through an upload in and BLOB frames out');
@@ -422,10 +493,25 @@ test('a generated Swift client against a live server', { skip: skipReason, timeo
   assert.equal(state.tickAborts, 1, 'leaving a stream cancels it on the server');
   assert.equal(state.slowAborts, 2, 'deadline and Task cancellation abort the handler');
   assert.deepEqual(out.after_errors, { ok: 'zz' });
-  assert.equal(sessions.size - proxy.stats.connections, 1, 'one connection for everything, errors included');
-  assert.match(out.wrong_pin.exception, /NSURLErrorDomain/, 'a certificate other than the pinned one is refused');
-  assert.match(out.no_pin.exception, /NSURLErrorDomain/, 'without pins the system trust store decides');
-  assert.equal(out.portable_sha256, true, 'the SHA-256 for platforms without CryptoKit');
+  if (process.platform === 'darwin') {
+    assert.equal(sessions.size - proxy.stats.connections, 1, 'one connection for everything, errors included');
+  } else {
+    // The unpinned client (no_pin) is another client, with a connection of its own (it succeeds here).
+    const unpinned = [...sessions.values()].filter((paths) => paths.length === 1 && paths[0] === '/users.none');
+    assert.equal(unpinned.length, 1);
+    assert.equal(sessions.size - unpinned.length - proxy.stats.connections, 1, 'one connection for everything, errors included');
+    assert.deepEqual([out.collected_limit.error, out.collected_limit.title], [413, 'Content Too Large'], 'request streams are collected up to 64 MiB');
+    assert.equal(requests.filter((r) => r.path === '/blobs.sum').length, 1, 'only the blobs step reached the server: the refused stream sent nothing');
+  }
+  if (process.platform === 'darwin') {
+    assert.match(out.wrong_pin.exception, /NSURLErrorDomain/, 'a certificate other than the pinned one is refused');
+    assert.match(out.no_pin.exception, /NSURLErrorDomain/, 'without pins the system trust store decides');
+  } else {
+    assert.match(out.wrong_pin.exception, /pinning needs Security\.framework/, 'no pinning without Security.framework: refused, not ignored');
+    assert.deepEqual(out.no_pin, { ok: 'none' }, 'the trusted CA decides');
+  }
+  const sha256Lengths = [0, 1, 55, 56, 63, 64, 65, 1000, 200_000];
+  assert.deepEqual(out.portable_sha256, sha256Lengths.map((n) => createHash('sha256').update(Uint8Array.from({ length: n }, (_, i) => (i * 31) & 0xff)).digest('hex')), 'the portable SHA-256 (used where CryptoKit is missing)');
   const canonicalInput = { b: [1, 1e21, 1e-7, 0.1, -0, 123456789012, 1.5e300, 5e-324, 1e20, 100, -2.5e-8, 0.000001], a: 'é\u{1F600}\u{FF61}\n"\\\u0001\u007f', '\u{FF61}': 1, '\u{1F600}': 2, aa: null, A: true, '': {} };
   assert.equal(out.canonical, canonicalJson(canonicalInput), 'RFC 8785: sorted by UTF-16 code units, ES numbers');
 });

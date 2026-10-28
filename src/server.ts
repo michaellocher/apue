@@ -3,7 +3,7 @@
 import { hash as cryptoHash } from 'node:crypto';
 import http2 from 'node:http2';
 import type { AddressInfo, Socket } from 'node:net';
-import type { Writable } from 'node:stream';
+import type { Transform, Writable } from 'node:stream';
 import { canonicalJson, hasRequestStream, hasResponseStream, isCacheableRead, type Api, type OpDef } from './api.ts';
 import {
   concatBytes,
@@ -17,6 +17,7 @@ import {
   type Problem,
 } from './frame.ts';
 import { MemoryIdempotencyStore, type IdempotencyStore, type StoredResponse } from './idempotency.ts';
+import { compressAsync, compressSync, createCompressor, DEFAULT_CODINGS, flushCompressor, negotiate, type Coding } from './compression.ts';
 import { onExchange, type Exchange } from './exchange.ts';
 import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
@@ -66,6 +67,8 @@ export interface ApueServerOptions {
   idempotency?: IdempotencyStore | false;
   /** Maximum number of calls in one pipelined batch. */
   maxBatchCalls?: number;
+  /** Response compression (Accept-Encoding); `false` disables it. */
+  compression?: false | { codings?: readonly Coding[]; minBytes?: number };
 }
 
 export interface ApueServer {
@@ -140,6 +143,8 @@ export interface FrameWriterOptions {
    * stream's 16 KiB default high-water mark costs an event-loop round trip per coalesced flush.
    */
   maxBufferedBytes?: number;
+  /** Called after each flushed write, e.g. to flush a compressor so the burst leaves right away. */
+  afterFlush?: () => void;
 }
 
 export class FrameWriter {
@@ -149,6 +154,7 @@ export class FrameWriter {
   #renderer: Renderer;
   #coalesceBytes: number;
   #maxBufferedBytes: number;
+  #afterFlush: (() => void) | undefined;
   #pending: Uint8Array[] = [];
   #pendingBytes = 0;
   #scheduled = false;
@@ -160,6 +166,7 @@ export class FrameWriter {
     this.#renderer = options.renderer ?? frameRenderer;
     this.#coalesceBytes = options.coalesceBytes ?? 16 * 1024;
     this.#maxBufferedBytes = options.maxBufferedBytes ?? 256 * 1024;
+    this.#afterFlush = options.afterFlush;
   }
 
   // The write methods return a promise only while the sink needs draining, so producers can skip
@@ -198,6 +205,7 @@ export class FrameWriter {
     this.#pending = [];
     this.#pendingBytes = 0;
     this.#sink.write(chunk);
+    this.#afterFlush?.();
     this.writes++;
     this.#lastWrite = performance.now();
   }
@@ -234,6 +242,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     maxBatchCalls = 64,
     maxBufferedBytes = 256 * 1024,
   } = options;
+  const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
+  const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
   const idempotency = options.idempotency === false ? undefined : (options.idempotency ?? new MemoryIdempotencyStore());
   const handlerMap = handlers as unknown as Record<string, AnyHandler>;
   for (const name of Object.keys(api)) {
@@ -282,7 +292,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       if (url.pathname === MANIFEST_PATH) {
         if (method !== 'GET' && !head) throw methodNotAllowed(method, 'GET, HEAD');
         complete();
-        return sendCacheable(req, res, manifest, { 'cache-control': 'no-cache' });
+        return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, 'cache-control': 'no-cache' }, manifest, true);
       }
       if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete);
       const opName = decodeURIComponent(url.pathname.slice(1));
@@ -320,9 +330,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         const outcome = await runUnary(opName, def, input, ctx, key);
         if (outcome.aborted) return;
         complete();
-        if (outcome.status === 200 && read) return sendCacheable(req, res, outcome.body, { 'cache-control': cacheControl(def) });
+        if (outcome.status === 200 && read) {
+          return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, 'cache-control': cacheControl(def) }, outcome.body, true);
+        }
         const headers = outcome.replayed ? { ...outcome.headers, [REPLAYED]: '?1' } : outcome.headers;
-        return sendBytes(res, outcome.status, headers, head ? undefined : outcome.body, outcome.body.byteLength);
+        return await sendBody(req, res, outcome.status, headers, outcome.body, false);
       }
 
       if (head) {
@@ -338,7 +350,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       complete();
       if (res.headersSent) return void res.end();
       const outcome = problemOutcome(problem, error);
-      sendBytes(res, outcome.status, outcome.headers, head ? undefined : outcome.body, outcome.body.byteLength);
+      await sendBody(req, res, outcome.status, outcome.headers, outcome.body, false);
     }
   }
 
@@ -418,9 +430,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     }
 
     // Batches always stream: every lane reports as soon as it completes (TTFB = fastest call).
-    res.writeHead(200, STREAM_HEADERS);
-    const writer = new FrameWriter(res.sink, { coalesceBytes, maxBufferedBytes });
-    writer.startHeartbeat(heartbeatMs);
+    const { writer, close } = openStream(req, res, STREAM_HEADERS, frameRenderer, gone, complete);
     const results: Array<Promise<{ ok: boolean; value?: unknown }>> = [];
     for (const [lane, call] of calls.entries()) {
       results.push(
@@ -437,11 +447,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       );
     }
     await Promise.all(results);
-    writer.close();
-    if (!gone.aborted) {
-      complete();
-      res.end();
-    }
+    close();
   }
 
   async function runLane(
@@ -549,20 +555,14 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
     const accept = req.headers.accept ?? '';
     const renderer = accept.includes(MediaType.SSE) && !accept.includes(MediaType.STREAM_JSON) ? sseRenderer : frameRenderer;
-    res.writeHead(200, { ...STREAM_HEADERS, 'content-type': renderer.contentType, vary: 'accept' });
-    const writer = new FrameWriter(res.sink, { renderer, coalesceBytes, maxBufferedBytes });
-    writer.startHeartbeat(heartbeatMs);
+    const { writer, close } = openStream(req, res, { ...STREAM_HEADERS, 'content-type': renderer.contentType, vary: 'accept' }, renderer, gone, complete);
     let finished = false;
     const finish = (info: EndInfo | undefined) => {
       if (finished) return;
       finished = true;
       void iterator.return?.();
       if (info && !gone.aborted) void writer.end(info);
-      writer.close();
-      if (!gone.aborted) {
-        complete();
-        res.end();
-      }
+      close();
     };
     // A deadline or client abort ends the stream at once, even while the producer is stuck; the
     // loop notices `finished` on its next turn. One listener per stream instead of a
@@ -589,6 +589,78 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     }
   }
 
+  /**
+   * Commits stream headers and returns a FrameWriter on the (possibly compressed) body. The
+   * compressor is flushed after every frame burst, so compression never delays a message.
+   */
+  function openStream(
+    req: Exchange,
+    res: Exchange,
+    headers: Record<string, string>,
+    renderer: Renderer,
+    gone: AbortSignal,
+    complete: () => void,
+  ): { writer: FrameWriter; close(): void } {
+    const coding = negotiate(req.headers['accept-encoding'], codings);
+    const out: Record<string, string> = codings.length > 0 ? { ...headers, vary: appendVary(headers.vary, 'accept-encoding') } : { ...headers };
+    if (coding) out['content-encoding'] = coding;
+    res.writeHead(200, out);
+    let compressor: Transform | undefined;
+    if (coding) {
+      compressor = createCompressor(coding);
+      compressor.on('error', () => {});
+      compressor.pipe(res.sink, { end: false });
+    }
+    const writer = new FrameWriter(compressor ?? res.sink, {
+      renderer,
+      coalesceBytes,
+      maxBufferedBytes,
+      ...(compressor && coding ? { afterFlush: () => flushCompressor(compressor, coding) } : {}),
+    });
+    writer.startHeartbeat(heartbeatMs);
+    return {
+      writer,
+      close() {
+        writer.close();
+        if (gone.aborted) return void compressor?.destroy();
+        complete();
+        if (!compressor) return res.end();
+        compressor.once('end', () => res.end());
+        compressor.end();
+      },
+    };
+  }
+
+  /**
+   * Sends a complete response, compressed when negotiated and worthwhile. A different
+   * content-coding is a different representation (RFC 9110 §8.8.3), so the ETag carries it.
+   */
+  async function sendBody(
+    req: Exchange,
+    res: Exchange,
+    status: number,
+    headers: Record<string, string>,
+    body: Uint8Array,
+    cacheable: boolean,
+  ): Promise<void> {
+    const compressible = body.byteLength >= minCompressBytes && codings.length > 0;
+    const coding = compressible ? negotiate(req.headers['accept-encoding'], codings) : undefined;
+    const out: Record<string, string> = compressible ? { ...headers, vary: appendVary(headers.vary, 'accept-encoding') } : { ...headers };
+    if (cacheable) {
+      out.etag = `"${hash(body).slice(0, 22)}${coding ? `-${coding}` : ''}"`;
+      if (ifNoneMatch(req.headers['if-none-match'], out.etag)) {
+        const { 'content-type': _, ...notModified } = out;
+        return sendBytes(res, 304, notModified);
+      }
+    }
+    let payload = body;
+    if (coding) {
+      payload = body.byteLength >= 64 * 1024 ? await compressAsync(coding, body) : compressSync(coding, body);
+      out['content-encoding'] = coding;
+    }
+    sendBytes(res, status, out, req.method === 'HEAD' ? undefined : payload, payload.byteLength);
+  }
+
   return {
     server,
     listen(port = 0, host = '127.0.0.1') {
@@ -603,7 +675,18 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     async close() {
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       // Graceful GOAWAY for h2 sessions, then drop remaining (HTTP/1.1 keep-alive) sockets.
-      await Promise.all([...sessions].map((session) => new Promise<void>((resolve) => session.close(() => resolve()))));
+      // Wait for 'close' rather than the close() callback: a session the client already closed
+      // never calls the callback, which left close() pending forever.
+      await Promise.all(
+        [...sessions].map(
+          (session) =>
+            new Promise<void>((resolve) => {
+              if (session.destroyed) return resolve();
+              session.once('close', () => resolve());
+              session.close();
+            }),
+        ),
+      );
       for (const socket of sockets) socket.destroy();
       await closed;
     },
@@ -749,16 +832,8 @@ function hash(text: string | Uint8Array): string {
   return cryptoHash('sha256', text, 'base64url');
 }
 
-/** Strong ETag over the representation bytes; If-None-Match → 304 (RFC 9110 §13.1.2). */
-function sendCacheable(
-  req: Exchange,
-  res: Exchange,
-  body: Uint8Array,
-  headers: Record<string, string>,
-): void {
-  const etag = `"${hash(body).slice(0, 22)}"`;
-  if (ifNoneMatch(req.headers['if-none-match'], etag)) return sendBytes(res, 304, { etag, ...headers });
-  sendBytes(res, 200, { 'content-type': MediaType.JSON, etag, ...headers }, req.method === 'HEAD' ? undefined : body, body.byteLength);
+function appendVary(existing: string | undefined, field: string): string {
+  return existing ? `${existing}, ${field}` : field;
 }
 
 function ifNoneMatch(header: string | undefined, etag: string): boolean {

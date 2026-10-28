@@ -247,6 +247,24 @@ describe('wire behaviour', () => {
   });
 });
 
+describe('shutdown', () => {
+  test('close() resolves when clients already closed their sessions', async () => {
+    // Regression: session.close(callback) never calls back for a session that is already closed.
+    const local = await startServer(api, handlers);
+    const session = (await import('node:http2')).connect(local.url, { ca: testCert().cert });
+    await new Promise<void>((resolve, reject) => {
+      const req = session.request({ ':method': 'POST', ':path': '/meta.version' });
+      req.on('data', () => {});
+      req.on('end', resolve);
+      req.on('error', reject);
+      req.end();
+    });
+    await new Promise<void>((resolve) => session.close(resolve));
+    const closed = await Promise.race([local.close().then(() => 'closed'), sleep(3_000).then(() => 'hung')]);
+    assert.equal(closed, 'closed');
+  });
+});
+
 describe('FrameWriter', () => {
   test('coalesces frames queued in the same tick into one write', async () => {
     const sink = new PassThrough();

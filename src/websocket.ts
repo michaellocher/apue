@@ -202,8 +202,7 @@ export class WsConnection {
         // Everything (incl. END) is written: let the client close once its consumer has the END —
         // a server-initiated close made WebKit (over RFC 8441) drop the last messages it had not
         // yet dispatched and report 1006 (~1 in 10 runs). Clients that never close get ours.
-        if (this.#peerClosed) this.close(WsClose.NORMAL);
-        else this.#lingerTimer = setTimeout(() => this.close(WsClose.NORMAL), CLIENT_CLOSE_WAIT_MS).unref();
+        if (!this.#closeSent) this.#lingerTimer = setTimeout(() => this.close(WsClose.NORMAL), CLIENT_CLOSE_WAIT_MS).unref();
         callback();
       },
     });
@@ -295,7 +294,8 @@ export class WsConnection {
     }
   }
 
-  close(code: number = WsClose.NORMAL, reason = ''): void {
+  /** `fail`: a protocol error — end the transport at once instead of waiting for the peer's close. */
+  close(code: number = WsClose.NORMAL, reason = '', fail = false): void {
     clearTimeout(this.#lingerTimer);
     if (this.#closeSent || this.#io.destroyed) return;
     this.#closeSent = true;
@@ -306,7 +306,7 @@ export class WsConnection {
     this.#io.write(encodeWsFrame(WsOpcode.CLOSE, payload));
     // RFC 6455 §5.5.1: the transport ends after both close frames; a peer that never answers its
     // close frame gets a timeout.
-    if (this.#peerClosed) this.#io.end();
+    if (this.#peerClosed || fail) this.#io.end();
     else this.#closeTimer = setTimeout(() => this.#io.end(), CLOSE_HANDSHAKE_TIMEOUT_MS).unref();
   }
 
@@ -366,7 +366,7 @@ export class WsConnection {
       const code = error instanceof WsProtocolError ? error.code : WsClose.PROTOCOL_ERROR;
       // Surface to the handler as a client error, not as a server failure.
       this.#endInput(new ApueError(400, 'Malformed Stream', (error as Error).message, { type: ProblemType.MALFORMED_STREAM }));
-      this.close(code, (error as Error).message);
+      this.close(code, (error as Error).message, true); // the reader has stopped: nobody would read the reply
     }
   }
 

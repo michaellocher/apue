@@ -266,7 +266,7 @@ describe('WebSocket protocol details (HTTP/1.1 Upgrade)', () => {
       for await (const frame of ws.frames()) {
         if (frame.opcode === 0x2 && decoder.push(frame.payload).some((f) => f.type === FrameType.END)) {
           endAt = performance.now();
-          if (clientCloses) ws.send(0x8, Buffer.from([0x03, 0xe8])); // 1000, as the apü client does after END
+          if (clientCloses) ws.send(0x8, Buffer.from([0x0f, 0xa0])); // 4000, as the apü client does once it has the END
         }
         if (frame.opcode === 0x8) {
           closeAt = performance.now();
@@ -274,8 +274,8 @@ describe('WebSocket protocol details (HTTP/1.1 Upgrade)', () => {
           if (!clientCloses) ws.send(0x8, frame.payload);
         }
       }
-      // the server ended the transport after the handshake (frames() returned)
-      assert.equal(closeCode, 1000);
+      // the server ended the transport after the handshake (frames() returned); it echoes the client's code
+      assert.equal(closeCode, clientCloses ? 4000 : 1000);
       const waited = closeAt - endAt;
       if (clientCloses) assert.ok(waited < 500, `server answered the close after ${waited.toFixed(0)} ms`);
       else assert.ok(waited > 1900 && waited < 3000, `server closed after ${waited.toFixed(0)} ms`);
@@ -776,6 +776,131 @@ test('small stream messages are coalesced into few sends; a lone message still l
   assert.ok(sends[0]!.at - yieldedAt < 10, `lone message sent after ${(sends[0]!.at - yieldedAt).toFixed(1)} ms`);
   release();
 });
+
+describe('second review (b91f057..HEAD)', () => {
+  /** A fake WebSocket: opens, grants `credit` once, records binary sends; `send` may throw. */
+  function fakeSocket(options: { credit?: number; sendThrows?: boolean; closeAfterMs?: number } = {}) {
+    const state = { sends: 0, bytes: 0, instance: undefined as unknown as { readyState: number; onclose?: (e: { code: number; reason: string }) => void } };
+    class Fake {
+      static OPEN = 1;
+      OPEN = 1;
+      CONNECTING = 0;
+      readyState = 0;
+      protocol = 'apue.v1';
+      binaryType = 'blob';
+      bufferedAmount = 0;
+      onopen?: () => void;
+      onmessage?: (e: { data: unknown }) => void;
+      onclose?: (e: { code: number; reason: string }) => void;
+      onerror?: () => void;
+      constructor() {
+        state.instance = this;
+        setTimeout(() => {
+          this.readyState = 1;
+          this.onopen?.();
+          if (options.credit) this.onmessage?.({ data: String(options.credit) });
+          if (options.closeAfterMs !== undefined) {
+            setTimeout(() => {
+              this.readyState = 3;
+              this.onclose?.({ code: 1000, reason: '' });
+            }, options.closeAfterMs);
+          }
+        }, 1);
+      }
+      send(data: string | Uint8Array) {
+        if (typeof data === 'string') return;
+        if (options.sendThrows) throw new DOMException('send in a bad state', 'InvalidStateError');
+        state.sends++;
+        state.bytes += data.byteLength;
+      }
+      close(code = 1000, reason = '') {
+        if (this.readyState === 3) return;
+        this.readyState = 3;
+        setTimeout(() => this.onclose?.({ code, reason }), 1); // as browsers: 'close' follows asynchronously
+      }
+    }
+    return { state, WebSocketImpl: Fake as unknown as typeof WebSocket };
+  }
+  const requestWith = (transport: ReturnType<typeof webSocketTransport>, body: AsyncIterable<Uint8Array>) =>
+    transport.request({ method: 'POST', path: '/x', headers: {}, body, signal: new AbortController().signal } as unknown as Parameters<typeof transport.request>[0]);
+
+  test('streamWindow below 64 KiB (valid for HTTP/2) no longer breaks startup', () => {
+    const { key, cert } = testCert();
+    assert.doesNotThrow(() => createApueServer(api, handlers, { key, cert, streamWindow: 65_535 }));
+  });
+
+  test('coalescing keeps backpressure: a slow producer is not drained while sends wait for credit', async () => {
+    const { WebSocketImpl, state } = fakeSocket(); // only the implicit 64 KiB window, never more credit
+    let yielded = 0;
+    async function* trickle() {
+      for (;;) {
+        yielded++;
+        yield new Uint8Array(1024);
+        await sleep(1);
+      }
+    }
+    await requestWith(webSocketTransport('https://x.example', { WebSocketImpl }), trickle());
+    await sleep(400);
+    // 64 KiB of credit + up to 16 KiB queued + one chunk; unbounded before (~1 per ms)
+    state.instance.readyState = 3;
+    state.instance.onclose?.({ code: 1006, reason: '' }); // end the call (the pump would wait for credit forever)
+    assert.ok(yielded <= 64 + 16 + 4, `producer yielded ${yielded} KiB while no credit came`);
+  });
+
+  test('a closed socket stops pulling the producer and releases the MessagePort', async () => {
+    const { WebSocketImpl } = fakeSocket({ credit: 2 ** 20, closeAfterMs: 30 });
+    let yielded = 0;
+    async function* heartbeat() {
+      for (;;) {
+        yielded++;
+        yield msgFrame('beat');
+        await sleep(5);
+      }
+    }
+    const ports = () => process.getActiveResourcesInfo().filter((r) => r === 'MessagePort').length;
+    const before = ports();
+    await requestWith(webSocketTransport('https://x.example', { WebSocketImpl }), heartbeat());
+    await sleep(100);
+    const atClose = yielded;
+    await sleep(100);
+    assert.ok(yielded - atClose <= 1, `producer still pulled: ${atClose} → ${yielded}`);
+    assert.ok(ports() <= before, `MessagePorts ${before} → ${ports()}`); // ≤: an earlier test's port may close meanwhile
+  });
+
+  test('a throwing send fails the call with that error; no unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    try {
+      const { WebSocketImpl } = fakeSocket({ credit: 2 ** 20, sendThrows: true });
+      const response = await requestWith(webSocketTransport('https://x.example', { WebSocketImpl }), numbersAsFrames(3));
+      await assert.rejects(Array.fromAsync(response.body), /send in a bad state/);
+      await sleep(20);
+      assert.deepEqual(rejections, []);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
+  test('webSocketTransport.close() closes the transport used for non-stream calls', async () => {
+    let closed = 0;
+    const http = { request: () => Promise.reject(new Error('unused')), close: async () => void closed++ };
+    await webSocketTransport('https://x.example', { http }).close?.();
+    assert.equal(closed, 1);
+  });
+
+  test('a protocol error ends the transport at once (no 2 s close handshake wait)', async () => {
+    const ws = await rawWs('/sum.client');
+    const start = performance.now();
+    ws.send(0x1, Buffer.from('not credit'));
+    for await (const frame of ws.frames()) if (frame.opcode === 0x8) ws.send(0x8, frame.payload);
+    assert.ok(performance.now() - start < 500, `transport ended after ${(performance.now() - start).toFixed(0)} ms`);
+  });
+});
+
+async function* numbersAsFrames(n: number) {
+  for (let i = 0; i < n; i++) yield msgFrame(i);
+}
 
 async function closeCodeForFrames(frames: AsyncGenerator<{ opcode: number; payload: Uint8Array }>): Promise<number> {
   for await (const frame of frames) if (frame.opcode === 0x8) return Buffer.from(frame.payload).readUInt16BE(0);

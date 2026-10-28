@@ -1,5 +1,25 @@
 # Status — 2026-10-28 (overnight session)
 
+## Since the 04:35 status (read this first)
+
+- **Review of `src/`: 10 bugs fixed** (blob memory, bytes lost on idempotent replay, CORS Vary and
+  preflight, missing Retry-After = no backoff, duplicates after two resume losses, quadratic
+  WebSocket buffering, WebSocket writes hanging on close, regex flags lost in the manifest).
+- **WebSocket tier flow control (`apue.v1`)**: browsers can't pause a WebSocket, and a slow consumer
+  let the server push 250 MiB into page memory in 3 s. Now HTTP/2-style byte windows with credit
+  in text messages; holds at exactly the window in Chrome, Firefox, WebKit and behind nginx, Caddy,
+  HAProxy and Envoy — where HTTP/2's own backpressure let the server run up to 125 MiB ahead (Caddy).
+- **Second review (flow-control code): 10 more fixes**; a WebSocket leak test then found 4 more
+  (incl. a client-process crash in the HTTP/2 transport, unary-over-WebSocket 415s).
+- **A WebKit race**: over RFC 8441 WebKit dropped the last messages when the server closed right
+  after them (~1 in 10 runs, reproduced with a raw WebSocket page) — the client now closes after END.
+- **Speed**: WebSocket uploads 142 → 293 MiB/s, small-message uploads 436k → 972k msg/s, downloads
+  +5 %; server window default raised to 4 MiB after measuring WAN uploads (6.3 → 22.7 MiB/s).
+- **Third review (everything after the second): 10 more fixes** — a startup crash for HTTP/2
+  windows < 64 KiB, lost upload backpressure and a runaway producer in the new send coalescing,
+  over-broad 499 mapping that could hide server bugs, slow protocol-error closes.
+- Everything with failing-first tests (mutation-checked), 239 tests, all committed.
+
 ## Where to start
 
 1. [`README.md`](../README.md) — what apü is, how to run the example, layout.
@@ -8,7 +28,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 231 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 239 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists

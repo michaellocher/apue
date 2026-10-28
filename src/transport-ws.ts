@@ -3,6 +3,7 @@
 // Flow control as in src/websocket.ts: binary bytes use up a window, text messages ("65536")
 // extend it; the browser API can't pause receiving, so the window is what bounds client memory.
 import { fetchTransport, type Transport, type TransportResponse } from './client.ts';
+import { concatBytes } from './frame.ts';
 import { checkWindow, Header, MediaType, parseCredit, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
@@ -19,15 +20,6 @@ export const MAX_UNSENT = 4 * 1024 * 1024;
 const MAX_POLL_MS = 64;
 const COALESCE_BYTES = 16 * 1024;
 
-function concat(parts: Uint8Array[], length: number): Uint8Array {
-  const out = new Uint8Array(length);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.byteLength;
-  }
-  return out;
-}
 
 export interface WebSocketTransportOptions {
   /** Bytes the server may send ahead of the consumer: the client-side memory bound per call. */
@@ -48,6 +40,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
   const receiveWindow = checkWindow('receiveWindow', options.receiveWindow ?? 4 * 1024 * 1024);
   const http = options.http ?? fetchTransport(baseUrl);
   return {
+    close: () => http.close?.() ?? Promise.resolve(),
     async request(req) {
       if (req.body === undefined || req.body instanceof Uint8Array) return http.request(req);
       const { path, headers, body, signal } = req;
@@ -100,6 +93,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
         if (event.code !== 1000 && event.code !== WS_CLOSE_CANCELLED) failure ??= new Error(`WebSocket closed (${event.code}${event.reason ? `: ${event.reason}` : ''})`);
         notify();
         wakeSender();
+        closeChannel(); // also when the producer never yields again
       };
 
       /** Sends bytes as binary messages, each within the credit; resolves false if the socket closed. */
@@ -133,17 +127,31 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       // macrotask (MessageChannel: not clamped like setTimeout), so a lone message waits < 1 ms.
       let pending: Uint8Array[] = [];
       let pendingBytes = 0;
+      let queuedBytes = 0; // handed to the send chain, not yet sent (waiting for credit / the network)
       let flushing = Promise.resolve(true);
       let channel: MessageChannel | undefined;
       let flushScheduled = false;
       function flush(): Promise<boolean> {
         flushScheduled = false;
         if (pendingBytes === 0) return flushing;
-        const bytes = pending.length === 1 ? pending[0]! : concat(pending, pendingBytes);
+        const bytes = pending.length === 1 ? pending[0]! : concatBytes(pending, pendingBytes);
         pending = [];
         pendingBytes = 0;
-        return (flushing = flushing.then((open) => open && send(bytes)));
+        queuedBytes += bytes.byteLength;
+        return (flushing = flushing
+          .then((open) => open && send(bytes))
+          .catch((error: unknown) => {
+            // e.g. a WebSocket implementation throwing from send(): fail the call, never reject
+            failure ??= error as Error;
+            if (ws.readyState === ws.OPEN) ws.close(WS_CLOSE_CANCELLED, 'send failed');
+            return false;
+          })
+          .finally(() => (queuedBytes -= bytes.byteLength)));
       }
+      const closeChannel = () => {
+        channel?.port1.close(); // an open port keeps a Node process alive
+        channel = undefined;
+      };
       function scheduleFlush(): void {
         if (flushScheduled) return;
         flushScheduled = true;
@@ -156,9 +164,11 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       async function pump(body: AsyncIterable<Uint8Array>): Promise<void> {
         try {
           for await (const chunk of body) {
+            if (ws.readyState !== ws.OPEN) return; // the call ended: stop pulling the producer
             pending.push(chunk);
             pendingBytes += chunk.byteLength;
-            if (pendingBytes >= COALESCE_BYTES) {
+            // Bounded like an un-coalesced pump: once 16 KiB wait in total, wait for the sends.
+            if (pendingBytes + queuedBytes >= COALESCE_BYTES) {
               if (!(await flush())) return;
             } else {
               scheduleFlush();
@@ -172,8 +182,7 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
           ws.close(WS_CLOSE_CANCELLED, 'input failed');
         } finally {
           await flushing;
-          channel?.port1.close(); // an open port keeps a Node process alive
-          channel = undefined;
+          closeChannel();
         }
       }
       const onAbort = () => ws.close(WS_CLOSE_CANCELLED, 'cancelled');
@@ -248,6 +257,7 @@ export function autoTransport(baseUrl: string): Transport {
   const ws = webSocketTransport(baseUrl, { http });
   const streamingFetch = supportsRequestStreams();
   return {
+    close: () => ws.close?.() ?? Promise.resolve(),
     request(req) {
       const requestStream = req.body !== undefined && !(req.body instanceof Uint8Array);
       return requestStream && !streamingFetch ? ws.request(req) : http.request(req);

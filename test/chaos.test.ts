@@ -8,6 +8,7 @@ import tls from 'node:tls';
 import { defineApi, op } from '../src/api.ts';
 import { ApueClient } from '../src/client.ts';
 import { msgFrame } from '../src/frame.ts';
+import { isClientGone } from '../src/server.ts';
 import { t } from '../src/schema.ts';
 import type { Handlers } from '../src/server.ts';
 import { http2Transport } from '../src/transport-http2.ts';
@@ -18,6 +19,7 @@ const api = defineApi({
   'ticker': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.number() }),
+  'buggy.after.cancel': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
 });
 const handlers: Handlers<typeof api> = {
   'ping': () => 'pong',
@@ -34,6 +36,11 @@ const handlers: Handlers<typeof api> = {
   },
   'echo.duplex': async function* (inputs) {
     for await (const n of inputs) yield n;
+  },
+  'buggy.after.cancel': async function* (_input, ctx) {
+    yield 1;
+    await new Promise((resolve) => ctx.signal.addEventListener('abort', resolve, { once: true }));
+    throw new TypeError('bug after cancel');
   },
 };
 
@@ -167,4 +174,23 @@ test('a client resetting its request stream mid-call is a 499 for the handler, n
   }
   assert.deepEqual(logged.mock.calls.map((c) => String(c.arguments[1] ?? c.arguments[0])), []);
   await stillServing();
+});
+
+test('a handler bug is still logged when the client is already gone', async (t) => {
+  const logged = t.mock.method(console, 'error', () => {});
+  const session = http2.connect(server.url, { ca: testCert().cert });
+  session.on('error', () => {});
+  const req = session.request({ ':path': '/buggy.after.cancel', accept: 'application/apue+json' });
+  req.on('error', () => {});
+  await new Promise((resolve) => req.once('data', resolve));
+  req.close(http2.constants.NGHTTP2_CANCEL);
+  await sleep(100);
+  session.destroy();
+  assert.ok(logged.mock.calls.some((c) => String(c.arguments[1]).includes('bug after cancel')), 'the TypeError was not logged');
+});
+
+test('isClientGone: transport resets only, not server bugs', () => {
+  for (const code of ['ERR_STREAM_PREMATURE_CLOSE', 'ERR_HTTP2_STREAM_ERROR', 'ECONNRESET']) assert.equal(isClientGone(Object.assign(new Error(code), { code })), true);
+  assert.equal(isClientGone(new TypeError('x is not a function')), false);
+  assert.equal(isClientGone(undefined), false);
 });

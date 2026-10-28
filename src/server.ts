@@ -24,7 +24,7 @@ import { STATUS_CODES } from 'node:http';
 import { onExchange, WsExchange, type Exchange, type WebSocketUpgrade } from './exchange.ts';
 import { acceptKey, checkHandshake, WsClose, WsConnection } from './websocket.ts';
 import { drained } from './node-streams.ts';
-import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, MediaType, ProblemType, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, baseMediaType, checkWindow, Header, isAsyncIterable, MediaType, ProblemType, WS_INITIAL_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, project, SelectionError, type Selection } from './select.ts';
@@ -315,7 +315,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     coalesceBytes = 16 * 1024,
     maxBodyBytes = 1024 * 1024,
     streamWindow = 4 * 1024 * 1024,
-    webSocketWindow = streamWindow,
+    webSocketWindow = Math.max(WS_INITIAL_WINDOW, streamWindow), // HTTP/2 allows smaller windows than WS credit
     connectionWindow = 32 * 1024 * 1024,
     validateOutput = true,
     maxBatchCalls = 64,
@@ -802,12 +802,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       finish({ status: 200 });
     } catch (error) {
-      if (gone.aborted) {
-        finish(undefined); // nobody to tell, nothing to log
-      } else {
-        const problem = toProblem(error);
-        finish({ status: problem.status, problem });
-      }
+      const problem = toProblem(error); // logs real failures even when the client is already gone
+      finish(gone.aborted ? undefined : { status: problem.status, problem });
     } finally {
       signal.removeEventListener('abort', onAbort);
     }
@@ -1070,12 +1066,19 @@ async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: b
       if (error.code === 'too-large') throw new ApueError(413, 'Content Too Large', error.message);
       throw new ApueError(400, 'Malformed Stream', error.message, { type: ProblemType.MALFORMED_STREAM });
     }
-    if (error instanceof ApueError) throw error;
-    // Anything else comes from the transport (reset, premature close): the client went away. Was
-    // passed through raw and logged as a handler failure.
-    throw new ApueError(499, 'Client Closed Request', `request stream ended abnormally: ${(error as Error).message}`);
+    // A reset or prematurely closed request stream means the client went away (was passed through
+    // raw and logged as a handler failure); anything else is a server bug and stays one.
+    if (isClientGone(error)) throw new ApueError(499, 'Client Closed Request', `request stream ended abnormally: ${(error as Error).message}`);
+    throw error;
   }
   throw new ApueError(400, 'Truncated Stream', 'request body ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
+}
+
+const CLIENT_GONE_CODES = new Set(['ERR_STREAM_PREMATURE_CLOSE', 'ERR_HTTP2_STREAM_ERROR', 'ERR_HTTP2_STREAM_CANCEL', 'ERR_STREAM_DESTROYED', 'ECONNRESET', 'EPIPE', 'ABORT_ERR']);
+
+/** Errors a request stream raises when the peer resets or drops it. */
+export function isClientGone(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && CLIENT_GONE_CODES.has(String((error as { code?: unknown }).code));
 }
 
 function parseJson(payload: Uint8Array, what: string, maxDepth: number): unknown {

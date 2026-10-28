@@ -8,6 +8,9 @@ import { concatBytes, encodeFrame, FrameDecoder, FrameError, type Frame } from '
 import { MediaType } from '../src/protocol.ts';
 import { t } from '../src/schema.ts';
 import type { Handlers } from '../src/server.ts';
+import { Duplex } from 'node:stream';
+import { ApueError } from '../src/protocol.ts';
+import { WsConnection } from '../src/websocket.ts';
 import { startServer, testCert } from './helpers.ts';
 
 /** Mulberry32: small, fast, seedable PRNG. */
@@ -216,5 +219,103 @@ describe('client against a garbage server', () => {
     const client = new ApueClient(streamApi, transport);
     await assert.rejects(Array.fromAsync(client.stream('feed')), (e: InstanceType<typeof ApueError>) => e.status === 502 && e.problem.title === 'Malformed Stream');
     await assert.rejects(client.call('one'), (e: InstanceType<typeof ApueError>) => e.status === 502);
+  });
+});
+
+describe('WebSocket connection fuzzing (parser, credit, fragmentation, close)', () => {
+  /** A client frame: masked, any opcode, optionally fragmented, length encodings 7/16/64-bit. */
+  function wsFrame(r: ReturnType<typeof prng>): Uint8Array {
+    const opcodes = [0x0, 0x1, 0x2, 0x2, 0x2, 0x8, 0x9, 0xa, 0x3, 0xb];
+    const opcode = opcodes[r.int(opcodes.length)]!;
+    const payload =
+      opcode === 0x1 && r.next() < 0.7
+        ? new TextEncoder().encode(['65536', '1', '0', '-1', '2147483647', 'abc', '99999999999', ''][r.int(8)]!)
+        : r.bytes([0, 1, 125, 126, 200, 70_000][r.int(6)]!);
+    const fin = r.next() < 0.8 ? 0x80 : 0;
+    const rsv = r.next() < 0.03 ? 0x40 : 0;
+    const masked = r.next() < 0.97;
+    const n = payload.byteLength;
+    const header = n < 126 ? [n] : n < 65536 ? [126, n >> 8, n & 255] : [127, 0, 0, 0, 0, (n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+    const key = r.bytes(4);
+    const body = masked ? payload.map((b, i) => b ^ key[i & 3]!) : payload;
+    return concatBytes([new Uint8Array([fin | rsv | opcode, (masked ? 0x80 : 0) | header[0]!, ...header.slice(1)]), masked ? key : new Uint8Array(0), body]);
+  }
+
+  /** A well-formed session: binary messages (sometimes fragmented, pings in between), valid credit, maybe a close. */
+  function validSession(r: ReturnType<typeof prng>): Uint8Array {
+    const frame = (opcode: number, payload: Uint8Array, fin = true) => {
+      const n = payload.byteLength;
+      const header = n < 126 ? [n] : [126, n >> 8, n & 255];
+      const key = r.bytes(4);
+      return concatBytes([new Uint8Array([(fin ? 0x80 : 0) | opcode, 0x80 | header[0]!, ...header.slice(1)]), key, payload.map((b, i) => b ^ key[i & 3]!)]);
+    };
+    const parts: Uint8Array[] = [];
+    for (let m = r.int(8); m > 0; m--) {
+      const data = r.bytes([0, 1, 125, 126, 1000, 4000][r.int(6)]!);
+      if (r.next() < 0.3 && data.byteLength > 2) {
+        const cut = 1 + r.int(data.byteLength - 1);
+        parts.push(frame(0x2, data.subarray(0, cut), false));
+        if (r.next() < 0.5) parts.push(frame(0x9, r.bytes(r.int(20)))); // control frame inside a fragmented message
+        parts.push(frame(0x0, data.subarray(cut)));
+      } else {
+        parts.push(frame(0x2, data));
+      }
+      if (r.next() < 0.3) parts.push(frame(0x1, new TextEncoder().encode(String(1 + r.int(100_000)))));
+    }
+    if (r.next() < 0.5) parts.push(frame(0x8, new Uint8Array([0x03, 0xe8])));
+    return concatBytes(parts);
+  }
+
+  test('400 random sessions: no escaping exception or rejection, bounded writes, input ends cleanly or with ApueError', async (t) => {
+    const escaped: unknown[] = [];
+    const outcomes: Record<string, number> = {};
+    const onEscape = (error: unknown) => escaped.push(error);
+    process.on('uncaughtException', onEscape);
+    process.on('unhandledRejection', onEscape);
+    try {
+      for (let seed = 1; seed <= 400; seed++) {
+        const r = prng(seed);
+        let written = 0;
+        const io = new Duplex({
+          read() {},
+          write(chunk: Buffer, _encoding, callback) {
+            written += chunk.byteLength;
+            callback();
+          },
+        });
+        const conn = new WsConnection(io, { window: 65_536 * (1 + r.int(4)), maxPayload: 1 << 20 });
+        const input = (async () => {
+          try {
+            for await (const _ of conn) if (r.next() < 0.1) await new Promise((resolve) => setImmediate(resolve));
+            return 'ended';
+          } catch (error) {
+            assert.ok(error instanceof ApueError, `seed ${seed}: ${error}`);
+            return `error ${error.status}`;
+          }
+        })();
+        const wire = seed % 2 === 0 ? validSession(r) : concatBytes(Array.from({ length: 1 + r.int(30) }, () => (r.next() < 0.05 ? r.bytes(r.int(20)) : wsFrame(r))));
+        for (let offset = 0; offset < wire.length; ) {
+          const size = 1 + r.int(4096);
+          io.push(wire.subarray(offset, offset + size));
+          offset += size;
+        }
+        if (r.next() < 0.5) conn.sink.write(r.bytes(r.int(200_000))); // server output racing the input
+        await new Promise((resolve) => setImmediate(resolve));
+        io.push(null);
+        io.destroy();
+        const outcome = await input;
+        // well-formed sessions end cleanly or as "client gone" (no close frame) — never a protocol error
+        if (seed % 2 === 0) assert.ok(outcome === 'ended' || outcome === 'error 499', `seed ${seed}: valid session → ${outcome}`);
+        outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+        assert.ok(written < 4 * 1024 * 1024, `seed ${seed}: wrote ${written} bytes`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      t.diagnostic(`outcomes: ${JSON.stringify(outcomes)}`);
+      assert.ok((outcomes.ended ?? 0) > 20 && (outcomes['error 400'] ?? 0) > 20, 'the generator must reach both clean ends and protocol errors');
+      assert.deepEqual(escaped, []);
+    } finally {
+      process.off('uncaughtException', onEscape);
+      process.off('unhandledRejection', onEscape);
+    }
   });
 });

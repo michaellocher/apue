@@ -18,7 +18,8 @@
 - **Third review (everything after the second): 10 more fixes** — a startup crash for HTTP/2
   windows < 64 KiB, lost upload backpressure and a runaway producer in the new send coalescing,
   over-broad 499 mapping that could hide server bugs, slow protocol-error closes.
-- Everything with failing-first tests (mutation-checked), 239 tests, all committed.
+- Everything with failing-first tests (mutation-checked), plus a WebSocket fuzz test (400 seeded
+  sessions, half well-formed); 240 tests, all committed.
 
 ## Where to start
 
@@ -26,9 +27,9 @@
 2. [`SPEC-DRAFT.md`](../SPEC-DRAFT.md) — draft 01; every section says *implemented* or *planned*.
 3. [`docs/wire.md`](wire.md) — what it looks like on the wire (real curl output).
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
-5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
+5. `git log` — ~70 commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 239 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 240 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists

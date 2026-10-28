@@ -39,10 +39,11 @@ const api = defineApi({
     output: t.object({ id: t.string(), role: t.enum(['admin', 'member']), tags: t.optional(t.array(t.string())), nick: t.optional(t.nullable(t.string())) }),
   }),
   'users.none': op({ effect: 'safe', input: t.void(), output: t.string() }),
-  'orders.create': op({ effect: 'unsafe', input: t.object({ item: t.string() }), output: t.number({ int: true }) }),
+  'orders.create': op({ effect: 'unsafe', input: t.object({ item: t.string(), note: t.optional(t.string()) }), output: t.number({ int: true }) }),
   'orders.fail': op({ effect: 'unsafe', input: t.void(), output: t.void() }),
   'count.up': op({ effect: 'safe', stream: 'server', input: t.object({ to: t.number({ int: true }) }), output: t.number() }),
   'count.fail': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
+  'count.cancelled': op({ effect: 'safe', input: t.void(), output: t.boolean() }),
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'echo.bidi': op({ effect: 'unsafe', stream: 'bidi', input: t.object({ n: t.number() }), output: t.object({ n: t.number() }) }),
   'files.echo': op({ effect: 'unsafe', input: t.object({ data: t.bytes(), meta: t.unknown() }), output: t.object({ data: t.bytes(), size: t.number({ int: true }), meta: t.unknown() }) }),
@@ -87,6 +88,7 @@ function handlers(s: ReturnType<typeof state>): Handlers<typeof api> {
         if (i % 100 === 0) await sleep(1);
       }
     },
+    'count.cancelled': () => s.cancelled,
     'count.fail': async function* () {
       yield 1;
       await sleep(20); // after the headers: the error can only travel in the END frame
@@ -249,7 +251,8 @@ public class Run {
       });
       run("create", () -> {
         CallOptions keyed = new CallOptions().idempotencyKey("k-java");
-        return List.of(c.ordersCreate(new OrdersCreateInput("x"), keyed), c.ordersCreate(new OrdersCreateInput("x"), keyed), c.ordersCreate(new OrdersCreateInput("y")));
+        // Without the optional note: it must be left out, not sent as null (the server would answer 400).
+        return List.of(c.ordersCreate(new OrdersCreateInput("x"), keyed), c.ordersCreate(new OrdersCreateInput("x", null), keyed), c.ordersCreate(new OrdersCreateInput("y", "gift")));
       });
       run("problem", () -> {
         c.ordersFail();
@@ -264,9 +267,17 @@ public class Run {
       });
       out.put("stream_error_seen", seen);
       run("stream_close", () -> {
+        List<Object> first;
         try (Stream<Double> s = c.countUp(new CountUpInput(1000000))) {
-          return List.of(s.next(), s.next(), s.next());
+          first = List.of(s.next(), s.next(), s.next());
         }
+        // While this JVM (and its connection) lives on: the server saw the stream's reset.
+        boolean cancelled = false;
+        for (int i = 0; i < 100 && !cancelled; i++) {
+          cancelled = c.countCancelled();
+          if (!cancelled) Thread.sleep(10);
+        }
+        return List.of(first, cancelled);
       });
       run("client_stream", () -> c.sumClient(List.of(1.0, 2.0, 3.0, 4.0)));
       run("client_stream_failure", () -> c.sumClient(() -> new Iterator<Double>() {
@@ -392,9 +403,7 @@ test('a generated Java client against a live server', { skip }, async (ctx) => {
   assert.equal(out.validation!.type, 'https://apue.dev/problems/validation-failed');
   assert.deepEqual(out.stream, { ok: [1, 2, 3, 4, 5] });
   assert.deepEqual([out.stream_error!.error, out.stream_error!.detail, out.stream_error_seen], [409, 'midway', [1]]);
-  assert.deepEqual(out.stream_close, { ok: [1, 2, 3] });
-  for (let i = 0; i < 100 && !s.cancelled; i++) await sleep(10);
-  assert.ok(s.cancelled, 'closing a stream early aborts the handler');
+  assert.deepEqual(out.stream_close, { ok: [[1, 2, 3], true] }, 'closing a stream early resets it and aborts the handler');
   assert.deepEqual(out.client_stream, { ok: 10 });
   assert.deepEqual(out.client_stream_failure, { exception: 'java.lang.IllegalStateException: inputs failed' }, "the inputs' own exception");
   assert.deepEqual(out.bidi, { ok: [{ n: 2 }, { n: 4 }] });

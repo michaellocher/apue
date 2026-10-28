@@ -14,4 +14,6 @@ export const browserApi = defineApi({
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'stats.lastDuplexVersion': op({ effect: 'safe', input: t.void(), output: t.string(), cache: { private: true } }),
   'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.object({ echo: t.number() }) }),
+  'flood': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.string() }),
+  'stats.flooded': op({ effect: 'safe', input: t.void(), output: t.number(), cache: { private: true } }),
 });

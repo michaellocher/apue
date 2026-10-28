@@ -116,6 +116,25 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     if (version !== 'HTTP/2.0') throw new Error(`WebSocket used ${version}, not the shared h2 connection`);
     return `server saw the WebSocket over ${version}`;
   });
+  await check('WebSocket credit: a stalled consumer bounds what the server sends (apue.v1)', async () => {
+    const ws = new ApueClient(browserApi, webSocketTransport(apiUrl, { receiveWindow: 1024 * 1024 }));
+    let release!: () => void;
+    async function* one() {
+      yield 1;
+      await new Promise<void>((resolve) => (release = resolve));
+    }
+    const items = ws.duplex('flood', one())[Symbol.asyncIterator]();
+    await items.next();
+    await new Promise((resolve) => setTimeout(resolve, 1000)); // the page doesn't consume
+    const ahead = await client.call('stats.flooded');
+    // 1 MiB window + 256 KiB server buffer + one 64 KiB item: ≈ 22 items (without credit: all 500)
+    if (ahead > 30) throw new Error(`server got ${ahead} items (${ahead / 16} MiB) ahead`);
+    let count = 1;
+    while (!(await items.next()).done) count++;
+    release();
+    equal(count, 500);
+    return `server stopped ${ahead} × 64 KiB ahead of the stalled page, then delivered all 500`;
+  });
   await check('autoTransport: streaming upload in every browser (fetch T2 or WebSocket T3)', async () => {
     const auto = new ApueClient(browserApi, autoTransport(apiUrl));
     async function* numbers() {

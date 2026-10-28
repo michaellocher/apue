@@ -31,6 +31,8 @@ const FIREFOX = process.env.FIREFOX_PATH ?? '/Applications/Firefox.app/Contents/
 const ROOT = resolve(import.meta.dirname, '..');
 
 let cancelledStreams = 0;
+let flooded = 0;
+const FLOOD_ITEM = 'x'.repeat(64 * 1024);
 let lastDuplexVersion = '';
 let nextOrder = 1;
 const handlers: Handlers<typeof browserApi> = {
@@ -59,6 +61,15 @@ const handlers: Handlers<typeof browserApi> = {
     return sum;
   },
   'stats.lastDuplexVersion': () => lastDuplexVersion,
+  'flood': async function* (inputs) {
+    flooded = 0;
+    for await (const _ of inputs) break;
+    for (let i = 0; i < 500; i++) {
+      flooded++;
+      yield FLOOD_ITEM;
+    }
+  },
+  'stats.flooded': () => flooded,
   'echo.duplex': async function* (inputs, ctx) {
     lastDuplexVersion = `HTTP/${ctx.httpVersion}`;
     for await (const value of inputs) yield { echo: value };

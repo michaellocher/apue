@@ -27,7 +27,8 @@ import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemTy
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, project, SelectionError, type Selection } from './select.ts';
-import { ValidationError, type Schema } from './schema.ts';
+import { BlobAssembler, blobChunks, splitMessage } from './blobs.ts';
+import { containsBytes, ValidationError } from './schema.ts';
 
 export type { Exchange } from './exchange.ts';
 
@@ -148,14 +149,14 @@ const REPLAYED = 'apue-replayed';
 
 export interface Renderer {
   readonly contentType: string;
-  render(type: number, payload: Uint8Array, lane: number): Uint8Array;
+  render(type: number, payload: Uint8Array, lane: number, flags?: number): Uint8Array;
   /** Renders a JSON-payload frame without an intermediate payload buffer. */
   renderJson(type: number, value: unknown, lane: number): Uint8Array;
 }
 
 export const frameRenderer: Renderer = {
   contentType: MediaType.STREAM_JSON,
-  render: (type, payload, lane) => encodeFrame(type, payload, lane),
+  render: (type, payload, lane, flags = 0) => encodeFrame(type, payload, lane, flags),
   renderJson: (type, value, lane) => jsonFrame(type, value, lane),
 };
 
@@ -224,8 +225,18 @@ export class FrameWriter {
 
   // The write methods return a promise only while the sink needs draining, so producers can skip
   // an `await` (one microtask) per message: `const p = writer.msg(v); if (p) await p;`.
-  frame(type: number, payload: Uint8Array, lane = 0): Promise<void> | undefined {
-    return this.#push(this.#renderer.render(type, payload, lane));
+  frame(type: number, payload: Uint8Array, lane = 0, flags = 0): Promise<void> | undefined {
+    return this.#push(this.#renderer.render(type, payload, lane, flags));
+  }
+
+  /** A message whose schema contains bytes: BLOB frames for each Uint8Array, then the MSG. */
+  message(value: unknown, lane = 0): Promise<void> | undefined {
+    const { json, blobs } = splitMessage(value);
+    let pending: Promise<void> | undefined;
+    for (const blob of blobs) {
+      for (const { chunk, flags } of blobChunks(blob)) pending = this.frame(FrameType.BLOB, chunk, lane, flags) ?? pending;
+    }
+    return this.msg(json, lane) ?? pending;
   }
 
   msg(value: unknown, lane = 0): Promise<void> | undefined {
@@ -439,7 +450,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         if (baseMediaType(req.headers['content-type']) !== MediaType.STREAM_JSON) {
           throw new ApueError(415, 'Unsupported Media Type', `${opName} expects ${MediaType.STREAM_JSON}`);
         }
-        input = validatedStream(readInputStream(req, maxBodyBytes), def);
+        input = validatedStream(readInputStream(req, maxBodyBytes, containsBytes(def.input)), def);
       } else {
         input = await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs);
       }
@@ -470,6 +481,18 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         checkpoint,
         ...(resumeFrom === undefined ? {} : { resumeFrom }),
       };
+      if (!hasResponseStream(def) && containsBytes(def.output)) {
+        // A JSON body can't carry bytes: answer framed (MSG + BLOB frames + END), never cached.
+        if (head) {
+          complete();
+          return res.send(200, { ...STREAM_HEADERS, vary: 'accept' });
+        }
+        const value = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
+        const once = (async function* () {
+          yield value;
+        })();
+        return await streamResponse(req, res, once, outputShaper(def, selection), signal, clientGone.signal, complete, undefined, true);
+      }
       if (!hasResponseStream(def)) {
         // Keys apply to plain unary calls only: a request stream cannot be fingerprinted or replayed.
         const keyHeader = req.headers[IDEMPOTENCY_KEY];
@@ -492,10 +515,20 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const result = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
       if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
       const shape = outputShaper(def, selection);
-      return await streamResponse(req, res, result, shape, signal, clientGone.signal, complete, (writer) => {
-        for (const token of checkpoints.splice(0)) void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
-        emitCheckpoint = (token) => void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
-      });
+      return await streamResponse(
+        req,
+        res,
+        result,
+        shape,
+        signal,
+        clientGone.signal,
+        complete,
+        (writer) => {
+          for (const token of checkpoints.splice(0)) void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
+          emitCheckpoint = (token) => void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
+        },
+        containsBytes(def.output),
+      );
     } catch (error) {
       if (clientGone.signal.aborted) return;
       const problem = toProblem(error);
@@ -628,7 +661,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
           await writer.end({ status: outcome.status, problem: outcome.payload as Problem }, lane);
           return { ok: false };
         }
-        await writer.msg(outcome.payload, lane);
+        await (containsBytes(call.def.output) ? writer.message(outcome.payload, lane) : writer.msg(outcome.payload, lane));
         await writer.end({ status: 200 }, lane);
         return { ok: true, value: outcome.payload };
       }
@@ -639,7 +672,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const iterator = result[Symbol.asyncIterator]();
       try {
         for (let next = await abortable(iterator.next(), signal); !next.done; next = await abortable(iterator.next(), signal)) {
-          const pending = writer.msg(call.shape ? call.shape(next.value) : next.value, lane);
+          const item = call.shape ? call.shape(next.value) : next.value;
+          const pending = containsBytes(call.def.output) ? writer.message(item, lane) : writer.msg(item, lane);
           if (pending) await pending;
         }
       } catch (error) {
@@ -715,6 +749,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     gone: AbortSignal,
     complete: () => void,
     onOpen?: (writer: FrameWriter) => void,
+    blobs = false,
   ): Promise<void> {
     const iterator = items[Symbol.asyncIterator]();
     const first = abortable(iterator.next(), signal);
@@ -749,7 +784,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     try {
       let next = early.status === 'fulfilled' ? early.value : await first;
       while (!next.done && !finished) {
-        const pending = writer.msg(shape ? shape(next.value) : next.value);
+        const item = shape ? shape(next.value) : next.value;
+        const pending = blobs ? writer.message(item) : writer.msg(item);
         if (pending) await pending;
         if (finished) break;
         next = await iterator.next();
@@ -992,11 +1028,16 @@ async function readJsonBodyNow(req: Exchange, maxBodyBytes: number, query: boole
 }
 
 /** Request stream messages; each message is limited to maxMessageBytes. Garbage → 400/413, never 500. */
-async function* readInputStream(req: Exchange, maxMessageBytes: number): AsyncGenerator<unknown> {
+async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: boolean): AsyncGenerator<unknown> {
+  const assembler = blobs ? new BlobAssembler() : undefined;
   try {
     for await (const frame of decodeFrames(req as AsyncIterable<Uint8Array>, maxMessageBytes)) {
-      if (frame.type === FrameType.MSG) {
-        yield parseJson(frame.payload, 'request stream message');
+      if (frame.type === FrameType.BLOB) {
+        if (!assembler) throw new ApueError(400, 'Malformed Stream', 'BLOB frame for an op without bytes', { type: ProblemType.MALFORMED_STREAM });
+        assembler.push(frame);
+      } else if (frame.type === FrameType.MSG) {
+        const value = parseJson(frame.payload, 'request stream message');
+        yield assembler ? assembler.resolve(value) : value;
       } else if (frame.type === FrameType.END) {
         const info = parseJson(frame.payload, 'END frame') as EndInfo;
         if (typeof info?.status !== 'number') throw new ApueError(400, 'Malformed Stream', 'END frame without status', { type: ProblemType.MALFORMED_STREAM });

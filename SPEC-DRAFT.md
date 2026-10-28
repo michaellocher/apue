@@ -35,7 +35,7 @@ ASCII identifier for media types and header names: **`apue`**.
 | 7 | Idempotency, retries, long-running ops | `effect` drives retry rules; `Idempotency-Key`; deadlines; resumable streams (§5, §8) | implemented |
 | 8 | Agent consumption | Typed manifest + RFC 9727 api-catalog (§11) | implemented |
 | 9 | LB / proxy / debuggability | Stateless (no sessions, resume tokens), heartbeats, anti-buffering headers, JSON default, SSE rendering (§6, §12) — verified through nginx | implemented |
-| 10 | Large / resumable binaries | BLOB frames (no base64) or out-of-band URLs; resumable-upload draft (§6) | planned |
+| 10 | Large / resumable binaries | BLOB frames (no base64, chunked) for binary values in streams and responses (§6); resumable uploads via the resumable-upload draft | BLOB frames implemented; resumable uploads planned |
 
 ## 3. Transport rules
 
@@ -102,7 +102,7 @@ Streaming bodies (both directions) are a sequence of frames with an **8-byte hea
 |---|---|---|
 | 0x00 | MSG | one encoded message (JSON/CBOR) |
 | 0x01 | END | `{status, problem?, meta?}` — terminates a lane. A body that ends while a lane has no END is **truncated** and MUST be treated as an error (detects proxy cut-offs). Lane 0xFFFF reserved |
-| 0x02 | BLOB | raw bytes chunk for blob id = lane; flag `last` closes it — *planned* |
+| 0x02 | BLOB | raw bytes chunk of a binary value of the *next* MSG on the same lane; flag `last` ends that value |
 | 0x03 | HEARTBEAT | empty (sent after 15 s without other frames) |
 | 0x04 | CHECKPOINT | resume token (§8); SSE rendering: `id:` |
 | 0x05 | CREDIT | u32 messages the receiver is willing to accept (app-level flow control) — *planned* |
@@ -111,9 +111,9 @@ Flags: bit0 `compressed` (per-frame, independent context — *planned*; today co
 
 Limits (implemented): a frame header announcing more than the limit is rejected before buffering (request streams: per-message limit = `maxBodyBytes` → 413; malformed → 400; clients map undecodable responses to 502).
 
-- **Lane** = call index in a pipelined batch (§10) or blob id; 0 for single calls.
+- **Lane** = call index in a pipelined batch (§10); 0 for single calls.
 - Parser is a byte-stream state machine; DATA-frame / chunk boundaries are meaningless.
-- Messages refer to blobs as `{"$blob": <lane>}` → no base64.
+- **Binary values** (implemented, S10): schema type `t.bytes()`. For ops whose schema contains bytes, every `Uint8Array` in a message is sent as BLOB frames (64 KiB chunks, last one flagged) *before* the MSG on the same lane; the MSG references them in order as `{"$blob": k}`; look-alike data (sole member `$blob`/`$lit`) is escaped as `{"$lit": value}`. Every blob must be referenced exactly once (else malformed). No base64: measured wire overhead < 1 % for 1 MiB files. Unary ops whose output contains bytes are answered framed (MSG + BLOB + END, not cacheable); bytes in unary *inputs* are refused at definition time (a URL/JSON body can't carry them — use a client stream). Ops without bytes keep the plain `JSON.stringify` fast path and reject BLOB frames.
 - Why 8 bytes and not Connect's 5: lanes are needed for batches and blobs; 3 extra bytes are noise next to the 9-byte h2 frame header.
 - **SSE rendering**: `event: msg|end|checkpoint`, `id: <checkpoint>`, `data: <json>` — same semantics, for curl and devtools; BLOBs as base64 there.
 
@@ -193,7 +193,7 @@ Resolved:
 
 Open:
 1. CBOR encoding and schema-compiled codecs — worth it only where CPU, not network, dominates.
-2. BLOB frames vs. out-of-band URLs for large binaries; resumable uploads.
+2. Resumable uploads (draft-ietf-httpbis-resumable-upload) and out-of-band URLs for very large binaries; idempotency replay for ops with bytes outputs (stored responses are JSON today).
 3. CREDIT frames for consumer-paced bidi streams.
 4. WebTransport (T4) once a server implementation exists for Node; HTTP/3 in Node.
 5. Problem type namespace (placeholder `https://apue.dev/problems/`).
@@ -300,3 +300,7 @@ nginx (Docker) between client and server, default and tuned configs: [`docs/inte
 ### S9 — 2026-10-28 ✅ field selection, resource limits, example
 
 Field selection (`src/select.ts`, typed `pick()`), idle-session and body timeouts, `maxConcurrentStreams` default, `/$batch` (found while building `examples/todo`: a batch endpoint at `/` blocked serving the app same-origin), server `fallback` hook, todo example tested end to end and in Chrome.
+
+### S10 — 2026-10-28 ✅ binary values
+
+`t.bytes()`, `src/blobs.ts` (split/escape, chunking, assembler), BLOB frames in server streams, framed unary responses, request streams (HTTP/2 and WebSocket) and batch lanes. Found by the tests: unescaping `$lit` must happen exactly for bytes ops — doing it for every message altered user data in batches. 177 tests.

@@ -1,6 +1,6 @@
 // Operation definitions and the effect → HTTP method mapping (SPEC-DRAFT §4, §5). Shared by
 // server and client: TS clients import the API definition, so types and validation come for free.
-import type { Infer, Schema } from './schema.ts';
+import { containsBytes, type Infer, type Schema } from './schema.ts';
 
 export type Effect = 'safe' | 'idempotent' | 'unsafe';
 export type StreamKind = 'none' | 'server' | 'client' | 'bidi';
@@ -63,6 +63,9 @@ export function op(def: OpInit<Schema<unknown>, Schema<unknown>> & { stream?: St
   const { since, sunset } = def.deprecated ?? {};
   if (since && sunset && sunset < since) throw new Error('deprecated.sunset must not be earlier than deprecated.since (RFC 9745 §4)');
   if (def.resumable && def.stream !== 'server') throw new Error('only server-streaming ops can be resumable');
+  if ((def.stream === undefined || def.stream === 'none' || def.stream === 'server') && containsBytes(def.input)) {
+    throw new Error('bytes in the input need a request stream (stream: client or bidi): a JSON body or URL cannot carry them');
+  }
   if (def.resumable && def.effect === 'unsafe') throw new Error('resumable ops must be safe or idempotent (resuming re-sends the request)');
   return { ...def, stream: def.stream ?? 'none' };
 }

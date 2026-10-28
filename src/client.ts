@@ -14,7 +14,8 @@ import {
 } from './api.ts';
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
-import { ValidationError } from './schema.ts';
+import { BlobAssembler, messageFrames } from './blobs.ts';
+import { containsBytes, ValidationError } from './schema.ts';
 import { canonicalSelection } from './select.ts';
 import { Batch } from './batch.ts';
 
@@ -118,6 +119,8 @@ export class ApueClient<A extends Api> {
     try {
       const res = await this.#send(op, def, input, options, controller.signal);
       const type = baseMediaType(res.headers.get('content-type'));
+      // Ops whose output contains bytes are answered framed (MSG + BLOB frames + END).
+      if (type === MediaType.STREAM_JSON && res.status === 200) return (await readFramedValue(res.body)) as OutputOf<A[K]>;
       const bytes = res.bytes ? await res.bytes() : await readAll(res.body);
       if (type === MediaType.PROBLEM || res.status >= 400) throw problemError(bytes, res.status);
       if (type !== MediaType.JSON) throw new ApueError(502, 'Unexpected Content-Type', type);
@@ -205,16 +208,22 @@ export class ApueClient<A extends Api> {
           yield decodeJson(bytes);
           return;
         }
+        // Blob framing (and its escaping) is used exactly for ops whose output contains bytes.
+        const assembler = containsBytes(def.output) ? new BlobAssembler() : undefined;
         try {
           for await (const frames of decodeFrameBatches(res.body)) {
             for (const frame of frames) {
               if (frame.type === FrameType.MSG) {
+                const value = assembler ? assembler.resolve(decodeJson(frame.payload)) : decodeJson(frame.payload);
                 sinceCheckpoint++;
                 if (skip > 0) {
                   skip--;
                   continue;
                 }
-                yield decodeJson(frame.payload);
+                yield value;
+              } else if (frame.type === FrameType.BLOB) {
+                if (!assembler) throw new FrameError('BLOB frame for an op without bytes');
+                assembler.push(frame);
               } else if (frame.type === FrameType.CHECKPOINT) {
                 resumeToken = textDecoder.decode(frame.payload);
                 sinceCheckpoint = 0;
@@ -370,7 +379,12 @@ export function validate(def: OpDef, value: unknown, what: string): unknown {
 
 async function* encodeInputs(inputs: AsyncIterable<unknown>, def: OpDef): AsyncGenerator<Uint8Array> {
   let index = 0;
-  for await (const value of inputs) yield msgFrame(validate(def, value, `input message ${index++}`));
+  const blobs = containsBytes(def.input);
+  for await (const value of inputs) {
+    const valid = validate(def, value, `input message ${index++}`);
+    if (blobs) yield* messageFrames(valid);
+    else yield msgFrame(valid);
+  }
   yield endFrame({ status: 200 });
 }
 
@@ -404,6 +418,24 @@ export async function readAll(body: AsyncIterable<Uint8Array>): Promise<Uint8Arr
 
 async function* single(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
   yield bytes;
+}
+
+/** Reads a framed response that carries exactly one value (unary ops with bytes in the output). */
+async function readFramedValue(body: AsyncIterable<Uint8Array>): Promise<unknown> {
+  const assembler = new BlobAssembler();
+  let value: unknown;
+  for await (const frames of decodeFrameBatches(body)) {
+    for (const frame of frames) {
+      if (frame.type === FrameType.BLOB) assembler.push(frame);
+      else if (frame.type === FrameType.MSG) value = assembler.resolve(decodeJson(frame.payload));
+      else if (frame.type === FrameType.END) {
+        const info = decodeJson(frame.payload) as EndInfo;
+        if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
+        return value;
+      }
+    }
+  }
+  throw new ApueError(502, 'Truncated Stream', 'response ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
 }
 
 /** A response that can't be decoded (bad framing, invalid JSON) is a bad gateway, not a crash. */

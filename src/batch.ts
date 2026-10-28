@@ -2,8 +2,10 @@
 // streamed back per lane as each call completes. Web-only.
 import { canonicalJson, type Api, type InputOf, type OpDef, type OutputOf } from './api.ts';
 import { ACCEPT, asProtocolError, linkSignal, problemError, readAll, validate, type ApueClient, type CallOptions, type OpsOf, type Prepared } from './client.ts';
-import { decodeFrameBatches, decodeJson, FrameType, type EndInfo } from './frame.ts';
+import { decodeFrameBatches, decodeJson, FrameError, FrameType, type EndInfo } from './frame.ts';
+import { containsBytes } from './schema.ts';
 import { ApueError, baseMediaType, MediaType, ProblemType } from './protocol.ts';
+import { BlobAssembler } from './blobs.ts';
 import { containsRef, encodeArgs, Ref } from './refs.ts';
 
 /** Following a path through optional fields: a missing value fails the lane at runtime (400). */
@@ -196,12 +198,19 @@ export class Batch<A extends Api> {
         throw problemError(bytes, res.status >= 400 ? res.status : 502);
       }
       const open = new Set(this.#entries.keys());
+      const assembler = new BlobAssembler();
       for await (const frames of decodeFrameBatches(res.body)) {
         for (const frame of frames) {
           const sink = this.#entries[frame.lane]?.sink;
           if (!sink || !open.has(frame.lane)) continue;
-          if (frame.type === FrameType.MSG) {
-            sink.msg(decodeJson(frame.payload));
+          // Blob framing (and its escaping) is used exactly for ops whose output contains bytes.
+          const blobs = containsBytes(this.#entries[frame.lane]!.def.output);
+          if (frame.type === FrameType.BLOB) {
+            if (!blobs) throw new FrameError('BLOB frame for an op without bytes');
+            assembler.push(frame);
+          } else if (frame.type === FrameType.MSG) {
+            const value = decodeJson(frame.payload);
+            sink.msg(blobs ? assembler.resolve(value, frame.lane) : value);
           } else if (frame.type === FrameType.END) {
             sink.end(decodeJson(frame.payload) as EndInfo);
             open.delete(frame.lane);

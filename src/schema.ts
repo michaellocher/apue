@@ -10,6 +10,22 @@ export interface Issue {
   message: string;
 }
 
+const bytesCache = new WeakMap<Schema<unknown>, boolean>();
+
+/** Whether a schema contains `t.bytes()` anywhere (decides between the fast JSON path and blob framing). */
+export function containsBytes(schema: Schema<unknown>): boolean {
+  const cached = bytesCache.get(schema);
+  if (cached !== undefined) return cached;
+  bytesCache.set(schema, false); // cycle guard
+  const result =
+    schema.kind === 'bytes' ||
+    (schema.element !== undefined && containsBytes(schema.element)) ||
+    (schema.inner !== undefined && containsBytes(schema.inner)) ||
+    (schema.fields !== undefined && Object.values(schema.fields).some(containsBytes));
+  bytesCache.set(schema, result);
+  return result;
+}
+
 export class ValidationError extends Error {
   readonly issues: Issue[];
 
@@ -232,6 +248,23 @@ export const t = {
         (value, ctx) => (value === null ? null : schema.check(value, ctx)),
         () => ({ anyOf: [schema.toJSONSchema(), { type: 'null' }] }),
       ),
+    );
+  },
+
+  /**
+   * Binary data. Travels as raw BLOB frames in framed streams (no base64, chunked); unary ops
+   * whose output contains bytes are answered framed as well.
+   */
+  bytes(options: { max?: number } = {}): Schema<Uint8Array> {
+    const { max } = options;
+    return define(
+      'bytes',
+      (value, ctx) => {
+        if (!(value instanceof Uint8Array)) return report(ctx, `expected bytes, got ${typeOf(value)}`);
+        if (max !== undefined && value.byteLength > max) report(ctx, `more than ${max} bytes`);
+        return value;
+      },
+      () => ({ type: 'string', contentEncoding: 'base64', contentMediaType: 'application/octet-stream', 'x-apue-transfer': 'blob-frames' }),
     );
   },
 

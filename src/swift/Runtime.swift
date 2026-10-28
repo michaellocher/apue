@@ -11,9 +11,10 @@
 // SHA-256 verified), certificate pinning (Apple platforms).
 // Not covered: resuming broken streams (checkpoints are ignored), batches, QUERY (large reads are
 // POSTed), field selection, client-side validation (the server validates), back-pressure on
-// response bodies (URLSession delivers into memory as fast as the network allows).
-// Linux: compiles against FoundationNetworking (no CryptoKit: a portable SHA-256; no pinning:
-// install the CA in the system trust store) — not tested there.
+// response bodies (URLSession delivers into memory as fast as the network allows), integers beyond
+// 2^53 (numbers are Doubles on the wire, as in JavaScript).
+// Linux: written to compile against FoundationNetworking (no CryptoKit: a portable SHA-256; no
+// pinning: install the CA in the system trust store) — neither compiled nor tested there.
 import Foundation
 #if canImport(FoundationNetworking)
 import FoundationNetworking
@@ -1681,7 +1682,8 @@ public final class ApueClient: Sendable {
     let call = StreamCall(self, op) { call in
       var input: InputStream?
       var output: OutputStream?
-      Stream.getBoundStreams(withBufferSize: Frame.blobChunk, inputStream: &input, outputStream: &output)
+      // 1 MiB per call: measured locally (256 × 1 MiB blobs) 145 MiB/s with 64 KiB, 295 with 256 KiB, 725 with 1 MiB.
+      Stream.getBoundStreams(withBufferSize: 1024 * 1024, inputStream: &input, outputStream: &output)
       guard let input, let output else { throw URLError(.cannotCreateFile) }
       let writer = BodyWriter(input, output)
       call.adopt(writer: Task { [weak call] in

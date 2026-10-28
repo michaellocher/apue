@@ -40,6 +40,7 @@ const api = defineApi({
   'count.up': op({ effect: 'safe', stream: 'server', input: t.object({ to: t.number() }), output: t.number() }),
   'count.fail': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
   'ticks': op({ effect: 'safe', stream: 'server', input: t.void(), output: t.number() }),
+  'ticks.aborted': op({ effect: 'safe', input: t.void(), output: t.number() }),
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'sink.fail': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
   'echo.bidi': op({ effect: 'unsafe', stream: 'bidi', input: t.object({ n: t.number() }), output: t.object({ n: t.number() }) }),
@@ -77,6 +78,7 @@ const handlers: Handlers<typeof api> = {
       await sleep(10);
     }
   },
+  'ticks.aborted': () => state.tickAborts,
   'sum.client': async (inputs) => {
     let sum = 0;
     for await (const n of inputs) sum += n;
@@ -227,7 +229,20 @@ await run("input_error") {
     continuation.finish(throwing: Boom())
   }))
 }
-await run("early_reject") { .number(try await c.sinkFail(AsyncStream(unfolding: { 1.0 }))) }  // endless inputs
+await run("early_reject") {
+  // The server answers while inputs keep coming; when the body stops being read is a race: repeat.
+  var outcomes: [JSONValue] = []
+  for _ in 0..<5 {
+    do {
+      outcomes.append(.number(try await c.sinkFail(AsyncStream(unfolding: { 1.0 }))))  // endless inputs
+    } catch let error as ApueError {
+      outcomes.append(.string("\(error.status) \(error.detail ?? "")"))
+    } catch {
+      outcomes.append(.string(String(describing: error)))
+    }
+  }
+  return .array(outcomes)
+}
 await run("bidi") {
   // Ping-pong: the next input is only sent after the previous output arrived (full duplex).
   let (requests, feed) = AsyncStream.makeStream(of: EchoBidiInput.self)
@@ -276,7 +291,8 @@ await run("cancel_stream") {
     count += 1
     if count == 3 { break }
   }
-  return .number(Double(count))
+  try await Task.sleep(nanoseconds: 100_000_000)
+  return [.number(Double(count)), .number(try await c.ticksAborted())]  // while this process still runs
 }
 await run("cancel_task") {
   let task = Task { try await c.slowGet() }
@@ -290,6 +306,11 @@ await run("cancel_task") {
   }
 }
 await run("after_errors") { .string(try await c.usersGet(.init(id: "zz")).id) }
+// Pinning: another certificate is refused, and without pins the system store decides (also refused).
+let wrongPin = try Client(baseURL: URL(string: args[1])!, options: .init(pinnedCertificates: [try String(contentsOfFile: args[5], encoding: .utf8)], retries: 0))
+await run("wrong_pin") { .string(try await wrongPin.usersNone()) }
+let unpinned = try Client(baseURL: URL(string: args[1])!, options: .init(retries: 0))
+await run("no_pin") { .string(try await unpinned.usersNone()) }
 
 let lengths = [0, 1, 55, 56, 63, 64, 65, 1000, 200_000]
 out["portable_sha256"] = .bool(lengths.allSatisfy { n in
@@ -310,16 +331,18 @@ print(String(decoding: try JSONEncoder().encode(JSONValue.object(out)), as: UTF8
 test('a generated Swift client against a live server', { skip: swiftc ? false : 'swiftc not installed', timeout: 600_000 }, async (ctx) => {
   const { key, cert } = testCert();
   const apue = createApueServer(api, handlers, { key, cert, uploads: {} });
-  let tlsConnections = 0;
-  const requests: Array<{ method: string; path: string; key?: string; range?: string; ifRange?: string }> = [];
-  apue.server.on('secureConnection', () => tlsConnections++);
-  apue.server.on('stream', (_stream, headers) => {
+  const sessions = new Set<unknown>(); // HTTP/2 connections the Swift program used
+  const requests: Array<{ method: string; path: string; key?: string; range?: string; ifRange?: string; uploadComplete?: string; uploadInterop?: string }> = [];
+  apue.server.on('stream', (stream, headers) => {
+    if (!String(headers['user-agent']).startsWith('node')) sessions.add(stream.session); // not the CLI
     requests.push({
       method: String(headers[':method']),
       path: String(headers[':path']),
       key: headers['idempotency-key'] as string | undefined,
       range: headers['range'] as string | undefined,
       ifRange: headers['if-range'] as string | undefined,
+      uploadComplete: headers['upload-complete'] as string | undefined,
+      uploadInterop: headers['upload-draft-interop-version'] as string | undefined,
     });
   });
   const port = await apue.listen();
@@ -333,14 +356,15 @@ test('a generated Swift client against a live server', { skip: swiftc ? false : 
   });
   const ca = join(dir, 'cert.pem');
   writeFileSync(ca, cert);
+  const otherCert = join(dir, 'other.pem'); // a certificate the server doesn't have
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1', '-keyout', join(dir, 'other.key'), '-out', otherCert, '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
   writeFileSync(join(dir, 'main.swift'), MAIN);
   // The runtime template compiles on its own (Swift 6 language mode: strict concurrency).
   await promisify(execFile)(swiftc!, ['-swift-version', '6', '-typecheck', join(import.meta.dirname, '..', 'src', 'swift', 'Runtime.swift')]);
   // Through the CLI, like a user: manifest over HTTPS → Api.swift, compiled with a program using it.
   await promisify(execFile)(process.execPath, [join(import.meta.dirname, '..', 'bin', 'apue-types.ts'), url, '--lang', 'swift', '--ca', ca, '--out', join(dir, 'Api.swift')]);
   await promisify(execFile)(swiftc!, ['-swift-version', '6', '-Onone', '-o', join(dir, 'run'), join(dir, 'Api.swift'), join(dir, 'main.swift')], { timeout: 300_000 });
-  const before = tlsConnections;
-  const { stdout } = await promisify(execFile)(join(dir, 'run'), [url, ca, `https://127.0.0.1:${proxy.port}`, dir], { timeout: 60_000 });
+  const { stdout } = await promisify(execFile)(join(dir, 'run'), [url, ca, `https://127.0.0.1:${proxy.port}`, dir, otherCert], { timeout: 60_000 });
   const out = JSON.parse(stdout) as Record<string, { ok?: any; error?: number; type?: string; title?: string; detail?: string; exception?: string } | any>;
 
   assert.deepEqual(out.get, { ok: { id: 'ab', role: 'member', tags: ['a'] } });
@@ -361,7 +385,7 @@ test('a generated Swift client against a live server', { skip: swiftc ? false : 
   assert.deepEqual([out.stream_error.error, out.stream_error.detail, out.stream_error_seen], [409, 'midway', [1]]);
   assert.deepEqual(out.client_stream, { ok: 10 });
   assert.deepEqual(out.input_error, { exception: 'Boom()' }, 'inputs that fail fail the call');
-  assert.deepEqual([out.early_reject.error, out.early_reject.detail], [403, 'no streams for you'], 'a rejected request stream ends the call while inputs keep coming');
+  assert.deepEqual(out.early_reject, { ok: Array(5).fill('403 no streams for you') }, 'a rejected request stream ends the call while inputs keep coming');
   assert.deepEqual(out.bidi, { ok: [2, 4, 6] }, 'full duplex: each output arrived before the next input was sent');
   const [size, echoed, sent, meta] = out.bytes.ok as [number, string, string, unknown];
   assert.equal(size, 256 * 4096 + 12);
@@ -371,7 +395,9 @@ test('a generated Swift client against a live server', { skip: swiftc ? false : 
   assert.deepEqual(out.blobs, { ok: [[3, 100_000, 0], [{ $blob: 5 }, { $lit: 1 }, 'x'], createHash('sha256').update(blobData).digest('hex')] }, 'BLOB frames in a request stream');
   assert.deepEqual(out.file_bytes, { ok: { size: 10, sha256: createHash('sha256').update('hello file').digest('hex') } });
   assert.deepEqual(out.file_url, { ok: { size: 300_000, sha256: createHash('sha256').update('x'.repeat(300_000)).digest('hex') } });
-  const uploads = requests.filter((r) => r.method === 'POST' && r.path === '/$uploads').length;
+  // One request with Upload-Complete: ?1 set by the runtime — without it, URLSession switches to its
+  // own resumable-upload mode (Upload-Draft-Interop-Version: 6).
+  const uploads = requests.filter((r) => r.method === 'POST' && r.path === '/$uploads' && r.uploadComplete === '?1' && r.uploadInterop === undefined).length;
   const deletes = requests.filter((r) => r.method === 'DELETE' && r.path.startsWith('/$uploads/')).length;
   assert.equal(uploads, 3);
   assert.equal(deletes, uploads, 'every upload made for a call is deleted after it');
@@ -387,13 +413,15 @@ test('a generated Swift client against a live server', { skip: swiftc ? false : 
   assert.equal(flaky, 'ok');
   assert.equal(state.flaky, 2);
   assert.ok(waited >= 0.9, `Retry-After honoured (${waited} s)`);
-  assert.deepEqual(out.cancel_stream, { ok: 3 });
+  assert.deepEqual(out.cancel_stream, { ok: [3, 1] }, 'leaving a stream cancels it on the server at once');
   assert.deepEqual(out.cancel_task, { ok: 'cancelled' });
   await sleep(50);
   assert.equal(state.tickAborts, 1, 'leaving a stream cancels it on the server');
   assert.equal(state.slowAborts, 2, 'deadline and Task cancellation abort the handler');
   assert.deepEqual(out.after_errors, { ok: 'zz' });
-  assert.equal(tlsConnections - before - proxy.stats.connections, 1, 'one connection for everything, errors included');
+  assert.equal(sessions.size - proxy.stats.connections, 1, 'one connection for everything, errors included');
+  assert.match(out.wrong_pin.exception, /NSURLErrorDomain/, 'a certificate other than the pinned one is refused');
+  assert.match(out.no_pin.exception, /NSURLErrorDomain/, 'without pins the system trust store decides');
   assert.equal(out.portable_sha256, true, 'the SHA-256 for platforms without CryptoKit');
   const canonicalInput = { b: [1, 1e21, 1e-7, 0.1, -0, 123456789012, 1.5e300, 5e-324, 1e20, 100, -2.5e-8, 0.000001], a: 'é\u{1F600}\u{FF61}\n"\\\u0001\u007f', '\u{FF61}': 1, '\u{1F600}': 2, aa: null, A: true, '': {} };
   assert.equal(out.canonical, canonicalJson(canonicalInput), 'RFC 8785: sorted by UTF-16 code units, ES numbers');

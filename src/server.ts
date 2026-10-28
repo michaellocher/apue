@@ -26,6 +26,7 @@ import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
 import { ResumeTokens, type ResumeOptions } from './resume.ts';
+import { compileSelection, project, SelectionError, type Selection } from './select.ts';
 import { ValidationError, type Schema } from './schema.ts';
 
 export type { Exchange } from './exchange.ts';
@@ -413,6 +414,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         for (const [name, value] of Object.entries(deprecationHeaders(def.deprecated))) res.setHeader(name, value);
       }
       if (read) res.setHeader('accept-query', `"${MediaType.JSON}"`);
+      const selection = selectionFor(opName, def, url.search);
 
       signal = timeoutSignal(signal, req);
 
@@ -459,7 +461,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         const keyHeader = req.headers[IDEMPOTENCY_KEY];
         const keyed = typeof keyHeader === 'string' && def.effect !== 'safe' && def.stream === 'none';
         const key = keyed ? parseIdempotencyKey(keyHeader) : undefined;
-        const outcome = await runUnary(opName, def, input, ctx, key);
+        const outcome = await runUnary(opName, def, input, ctx, key, selection);
         if (outcome.aborted) return;
         complete();
         if (outcome.status === 200 && read) {
@@ -475,7 +477,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       }
       const result = await abortable(Promise.resolve(handlerMap[opName]!(input, ctx)), signal);
       if (!isAsyncIterable(result)) throw new Error(`handler for streaming op ${opName} did not return an AsyncIterable`);
-      return await streamResponse(req, res, result, validateOutput ? def.output : undefined, signal, clientGone.signal, complete, (writer) => {
+      const shape = outputShaper(def, selection);
+      return await streamResponse(req, res, result, shape, signal, clientGone.signal, complete, (writer) => {
         for (const token of checkpoints.splice(0)) void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
         emitCheckpoint = (token) => void writer.frame(FrameType.CHECKPOINT, textEncoder.encode(token));
       });
@@ -501,7 +504,14 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
    * Executes a unary op including Idempotency-Key handling. Never throws: failures become
    * problem outcomes, so HTTP calls and batch lanes behave identically.
    */
-  async function runUnary(opName: string, def: OpDef, input: unknown, ctx: CallContext, key: string | undefined): Promise<Outcome> {
+  async function runUnary(
+    opName: string,
+    def: OpDef,
+    input: unknown,
+    ctx: CallContext,
+    key: string | undefined,
+    selection?: Selection,
+  ): Promise<Outcome> {
     let scope: string | undefined;
     if (key !== undefined && idempotency && def.effect !== 'safe') {
       scope = `${opName}\n${hash(String(ctx.headers.authorization ?? ''))}\n${key}`;
@@ -528,7 +538,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     try {
       const handler = handlerMap[opName]!;
       const result = await abortable(Promise.resolve(handler(input, ctx)), ctx.signal);
-      const value = (validateOutput ? def.output.parse(result) : result) ?? null;
+      const validated = (validateOutput ? def.output.parse(result) : result) ?? null;
+      const value = selection ? project(validated, selection) : validated;
       const outcome: Outcome = {
         status: 200,
         headers: { 'content-type': MediaType.JSON, 'cache-control': 'no-store' },
@@ -598,7 +609,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     try {
       const input = validateInput(call.def, resolveRefs(call.input, output));
       if (call.def.stream === 'none') {
-        const outcome = await runUnary(call.op, call.def, input, ctx, call.key);
+        const outcome = await runUnary(call.op, call.def, input, ctx, call.key, call.selection);
         if (outcome.status !== 200) {
           await writer.end({ status: outcome.status, problem: outcome.payload as Problem }, lane);
           return { ok: false };
@@ -614,7 +625,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const iterator = result[Symbol.asyncIterator]();
       try {
         for (let next = await abortable(iterator.next(), signal); !next.done; next = await abortable(iterator.next(), signal)) {
-          const pending = writer.msg(validateOutput ? call.def.output.parse(next.value) : next.value, lane);
+          const pending = writer.msg(call.shape ? call.shape(next.value) : next.value, lane);
           if (pending) await pending;
         }
       } catch (error) {
@@ -639,6 +650,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     input: unknown;
     key?: string;
     deps: Set<number>;
+    selection?: Selection;
+    shape?: (item: unknown) => unknown;
   }
 
   /** Structural validation of a batch before anything executes (all-or-nothing 400). */
@@ -651,7 +664,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     if (raw.length === 0 || raw.length > maxBatchCalls) throw bad(`a batch has 1 to ${maxBatchCalls} calls`);
     return raw.map((entry, lane) => {
       if (entry === null || typeof entry !== 'object') throw bad(`call ${lane} is not an object`);
-      const { op: name, in: input, key } = entry as { op?: unknown; in?: unknown; key?: unknown };
+      const { op: name, in: input, key, select } = entry as { op?: unknown; in?: unknown; key?: unknown; select?: unknown };
       if (typeof name !== 'string' || !Object.hasOwn(api, name)) throw bad(`call ${lane}: unknown operation ${String(name)}`);
       const def = api[name]!;
       if (hasRequestStream(def)) throw bad(`call ${lane}: ${name} has a request stream and cannot be batched`);
@@ -666,7 +679,16 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       for (const dep of deps) {
         if (api[(raw[dep] as { op: string }).op]!.stream !== 'none') throw bad(`call ${lane} references streaming call ${dep}`);
       }
-      return { op: name, def, input, deps, ...(typeof key === 'string' ? { key } : {}) };
+      if (select !== undefined && typeof select !== 'string') throw bad(`call ${lane}: select must be a string`);
+      let selection: Selection | undefined;
+      try {
+        selection = select === undefined ? undefined : compileSelection(def.output, select);
+      } catch (error) {
+        if (error instanceof SelectionError) throw bad(`call ${lane}: ${error.message}`);
+        throw error;
+      }
+      const shape = outputShaper(def, selection);
+      return { op: name, def, input, deps, ...(typeof key === 'string' ? { key } : {}), ...(selection ? { selection } : {}), ...(shape ? { shape } : {}) };
     });
   }
 
@@ -674,7 +696,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     req: Exchange,
     res: Exchange,
     items: AsyncIterable<unknown>,
-    output: Schema<unknown> | undefined,
+    shape: ((item: unknown) => unknown) | undefined,
     signal: AbortSignal,
     gone: AbortSignal,
     complete: () => void,
@@ -713,7 +735,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     try {
       let next = early.status === 'fulfilled' ? early.value : await first;
       while (!next.done && !finished) {
-        const pending = writer.msg(output ? output.parse(next.value) : next.value);
+        const pending = writer.msg(shape ? shape(next.value) : next.value);
         if (pending) await pending;
         if (finished) break;
         next = await iterator.next();
@@ -725,6 +747,38 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     } finally {
       signal.removeEventListener('abort', onAbort);
     }
+  }
+
+  // Compiled selections per op and spec (bounded cache: specs come from clients).
+  const selections = new Map<string, Selection>();
+
+  /** `?s=a,b.c` → validated selection (400 invalid-selection for unknown fields). */
+  function selectionFor(opName: string, def: OpDef, search: string): Selection | undefined {
+    if (!search.includes('s=')) return undefined;
+    const spec = new URLSearchParams(search).get('s');
+    if (spec === null) return undefined;
+    const cacheKey = `${opName}\n${spec}`;
+    let selection = selections.get(cacheKey);
+    if (!selection) {
+      try {
+        selection = compileSelection(def.output, spec);
+      } catch (error) {
+        if (error instanceof SelectionError) throw new ApueError(400, 'Invalid Selection', error.message, { type: ProblemType.INVALID_SELECTION });
+        throw error;
+      }
+      if (selections.size >= 1000) selections.clear();
+      selections.set(cacheKey, selection);
+    }
+    return selection;
+  }
+
+  /** Per-item output handling for streams: validate (strip unknown fields), then project. */
+  function outputShaper(def: OpDef, selection: Selection | undefined): ((item: unknown) => unknown) | undefined {
+    if (!validateOutput && !selection) return undefined;
+    return (item) => {
+      const validated = validateOutput ? def.output.parse(item) : item;
+      return selection ? project(validated, selection) : validated;
+    };
   }
 
   /**

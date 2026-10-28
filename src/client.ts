@@ -15,6 +15,7 @@ import {
 import { concatBytes, decodeFrameBatches, decodeJson, FrameError, endFrame, FrameType, msgFrame, type EndInfo, type Problem } from './frame.ts';
 import { ApueError, baseMediaType, Header, MediaType, ProblemType } from './protocol.ts';
 import { ValidationError } from './schema.ts';
+import { canonicalSelection } from './select.ts';
 import { Batch } from './batch.ts';
 
 export interface TransportRequest {
@@ -48,7 +49,21 @@ export interface CallOptions {
   retries?: number;
   /** Resumable streams: how often to resume after a lost connection (default 3). */
   resumes?: number;
+  /** Field selection (`?s=`): only these output fields are sent. Prefer the typed `pick()`. */
+  select?: readonly string[];
 }
+
+type PrevDepth = [never, 0, 1, 2, 3];
+/** Dotted paths into an output type (through arrays and optional fields, up to 4 levels). */
+export type FieldPath<T, D extends number = 4> = [D] extends [never]
+  ? never
+  : T extends readonly (infer E)[]
+    ? FieldPath<E, D>
+    : T extends object
+      ? { [K in keyof T & string]: K | (NonNullable<T[K]> extends object ? `${K}.${FieldPath<NonNullable<T[K]>, PrevDepth[D]>}` : never) }[keyof T & string]
+      : never;
+
+export type DeepPartial<T> = T extends readonly (infer E)[] ? DeepPartial<E>[] : T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T;
 
 export interface ClientOptions {
   /** Retries for retry-eligible calls (safe, idempotent, or keyed). Default 2. */
@@ -116,6 +131,16 @@ export class ApueClient<A extends Api> {
     } finally {
       unlink();
     }
+  }
+
+  /** Unary call returning only the selected fields (avoids over-fetching; part of the GET cache key). */
+  pick<K extends OpsOf<A, 'none'>>(
+    op: K,
+    input: InputOf<A[K]>,
+    select: readonly FieldPath<OutputOf<A[K]>>[],
+    options: Omit<CallOptions, 'select'> = {},
+  ): Promise<DeepPartial<OutputOf<A[K]>>> {
+    return (this.call as (op: string, input: unknown, options: CallOptions) => Promise<DeepPartial<OutputOf<A[K]>>>)(op, input, { ...options, select });
   }
 
   /** Server-streaming call. Breaking out of the loop cancels the call on the server. */
@@ -244,8 +269,10 @@ export class ApueClient<A extends Api> {
       return { method: 'POST', path: `/${opName}`, headers, body: encodeInputs(input as AsyncIterable<unknown>, def) };
     }
     const value = validate(def, input, 'input');
+    const select = options.select?.length ? `s=${encodeURIComponent(canonicalSelection(options.select))}` : '';
     if (isCacheableRead(def)) {
-      const getPath = readPath(opName, value);
+      const readUrl = readPath(opName, value);
+      const getPath = select ? `${readUrl}${readUrl.includes('?') ? '&' : '?'}${select}` : readUrl;
       if (getPath.length <= MAX_GET_URL) return { method: 'GET', path: getPath, headers };
     }
     if (value !== undefined) headers['content-type'] = MediaType.JSON;
@@ -254,7 +281,7 @@ export class ApueClient<A extends Api> {
     if (def.effect !== 'safe' && def.stream === 'none') {
       headers['idempotency-key'] = sfString(options.idempotencyKey ?? crypto.randomUUID());
     }
-    return { method, path: `/${opName}`, headers, ...(body === undefined ? {} : { body }) };
+    return { method, path: `/${opName}${select ? `?${select}` : ''}`, headers, ...(body === undefined ? {} : { body }) };
   }
 
   #send(opName: string, def: OpDef, input: unknown, options: CallOptions, signal: AbortSignal, resumeToken?: string): Promise<TransportResponse> {

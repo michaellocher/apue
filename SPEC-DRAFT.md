@@ -71,7 +71,7 @@ URL: `{base}/{op}` — op name in `:path` (HPACK-friendly, routable, one preflig
 | any non-safe | client/bidi | `POST`, request stream; never retried (body can't be replayed) |
 
 - `i` = input as **RFC 8785 JCS canonical JSON**, percent-encoded → deterministic cache key.
-- Projection: `s=` query parameter or `select` in body (list of field paths).
+- **Field selection** (implemented, S9): `?s=a,b.c` on any method (part of the cache key for GET; QUERY/POST carry it in the URL too), `select` per call in batches. Paths are validated against the output schema (unknown → 400 `invalid-selection` before the handler runs), at most 64, through objects, arrays, optional and nullable fields; selecting a parent absorbs children. Applied after output validation, so only schema fields can ever be selected. The ETag covers the projected body. Typed client: `pick(op, input, ['address.city'])` checks paths at compile time and returns `DeepPartial<Output>`. No query language, no joins — cost is bounded by the schema.
 - Deadline: `Apue-Timeout: <ms>` (SF integer). Server aborts work after deadline; client maps to `AbortController` → RST_STREAM.
 - Unary response: real HTTP status, `Content-Type: application/json` (or `application/cbor`), errors as `application/problem+json`.
 - Streaming response/request: `Content-Type: application/apue+json` / `application/apue+cbor` (framed, §6), or `text/event-stream` (debug/EventSource rendering).
@@ -277,3 +277,7 @@ Totals after S5: 127 tests (`node --test`), all passing repeatedly; typecheck cl
 ### S8 — 2026-10-28 ✅ real intermediary
 
 nginx (Docker) between client and server, default and tuned configs: [`docs/intermediaries.md`](docs/intermediaries.md). Defaults pass everything request/response-shaped incl. QUERY, stream TTFB (thanks to `X-Accel-Buffering: no`; `Incremental` is ignored), cancellation and zstd; full duplex (request buffering) and WebSockets need `proxy_request_buffering off` and upgrade headers. Also: `maxConcurrentStreams` default 256 (Node's is unlimited; verified clients queue/open connections instead of failing).
+
+### S9 — 2026-10-28 ✅ field selection, resource limits, example
+
+Field selection (`src/select.ts`, typed `pick()`), idle-session and body timeouts, `maxConcurrentStreams` default, `/$batch` (found while building `examples/todo`: a batch endpoint at `/` blocked serving the app same-origin), server `fallback` hook, todo example tested end to end and in Chrome.

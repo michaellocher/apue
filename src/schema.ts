@@ -33,6 +33,10 @@ export interface Schema<T> {
   /** Collects issues into `ctx` instead of throwing; the result is meaningless if issues were added. */
   check(value: unknown, ctx: CheckContext): T | undefined;
   toJSONSchema(): Record<string, unknown>;
+  /** Structure for field selection (select.ts): object fields, array element, wrapped schema. */
+  readonly fields?: Readonly<Record<string, Schema<unknown>>>;
+  readonly element?: Schema<unknown>;
+  readonly inner?: Schema<unknown>;
   /** Phantom field carrying the static type. Never set at runtime. */
   readonly __type?: T;
 }
@@ -67,6 +71,10 @@ function define<T>(
       return result as T;
     },
   };
+}
+
+function withStructure<T>(structure: Pick<Schema<T>, 'fields' | 'element' | 'inner'>, schema: Schema<T>): Schema<T> {
+  return Object.assign(schema, structure);
 }
 
 function report(ctx: CheckContext, message: string): undefined {
@@ -159,7 +167,7 @@ export const t = {
 
   array<T>(item: Schema<T>, options: ArrayOptions = {}): Schema<T[]> {
     const { max } = options;
-    return define(
+    return withStructure({ element: item }, define(
       'array',
       (value, ctx) => {
         if (!Array.isArray(value)) return report(ctx, `expected array, got ${typeOf(value)}`);
@@ -173,7 +181,7 @@ export const t = {
         return out;
       },
       () => ({ type: 'array', items: item.toJSONSchema(), ...(max === undefined ? {} : { maxItems: max }) }),
-    );
+    ));
   },
 
   object<S extends Shape>(shape: S): Schema<InferShape<S>> {
@@ -183,7 +191,7 @@ export const t = {
       schema,
       optional: (schema as Partial<OptionalMarker>).optional === true,
     }));
-    return define(
+    return withStructure({ fields: shape }, define(
       'object',
       (value, ctx) => {
         if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -209,7 +217,7 @@ export const t = {
         properties: Object.fromEntries(fields.map(({ key, schema }) => [key, schema.toJSONSchema()])),
         required: fields.filter((f) => !f.optional).map((f) => f.key),
       }),
-    );
+    ));
   },
 
   optional<T>(schema: Schema<T>): Schema<T | undefined> & OptionalMarker {
@@ -217,10 +225,13 @@ export const t = {
   },
 
   nullable<T>(schema: Schema<T>): Schema<T | null> {
-    return define(
-      schema.kind,
-      (value, ctx) => (value === null ? null : schema.check(value, ctx)),
-      () => ({ anyOf: [schema.toJSONSchema(), { type: 'null' }] }),
+    return withStructure(
+      { inner: schema },
+      define(
+        schema.kind,
+        (value, ctx) => (value === null ? null : schema.check(value, ctx)),
+        () => ({ anyOf: [schema.toJSONSchema(), { type: 'null' }] }),
+      ),
     );
   },
 

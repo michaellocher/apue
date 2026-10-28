@@ -30,6 +30,7 @@ export const ProblemType = {
   INVALID_BATCH: 'https://apue.dev/problems/invalid-batch',
   MALFORMED_STREAM: 'https://apue.dev/problems/malformed-stream',
   INVALID_RESUME_TOKEN: 'https://apue.dev/problems/invalid-resume-token',
+  INVALID_SELECTION: 'https://apue.dev/problems/invalid-selection',
 } as const;
 
 export class ApueError extends Error {

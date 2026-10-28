@@ -109,7 +109,7 @@
   <span class="tok-k">yield</span> { more: <span class="tok-n">10</span> };
 }
 <span class="tok-k">for</span> <span class="tok-k">await</span> (<span class="tok-k">const</span> item <span class="tok-k">of</span> client.duplex(<span class="tok-s">'feed.paced'</span>, demand())) console.log(item.n, count);</code></pre></figure>
-<p>Streamed bodies are frames with an 8-byte header (<code>application/apue+json</code>, see the <a href="wire-format.html">wire format</a>). A response stream ends with an <strong>END</strong> frame carrying the final status; a body that ends without one is <em>truncated</em> and treated as an error — that is how proxy cut-offs are detected.</p>
+<p>Streamed bodies are frames with an 8-byte header (<code>application/vnd.apue.frames</code>, see the <a href="wire-format.html">wire format</a>). A response stream ends with an <strong>END</strong> frame carrying the final status; a body that ends without one is <em>truncated</em> and treated as an error — that is how proxy cut-offs are detected.</p>
 
 <h2 id="transport-tiers">Transport tiers</h2>
 <div class="table-wrap" role="region" tabindex="0" aria-label="Streaming tiers"><table>

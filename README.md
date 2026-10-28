@@ -77,16 +77,17 @@ for await (const todo of client.stream('todos.watch')) console.log(todo.title);
 | Import | What | Runs in |
 |---|---|---|
 | `apue` | `defineApi`, `op`, `t` (schemas), `ApueClient`, `fetchTransport`, `ApueError`, `Download` | browsers, Node |
-| `apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options | Node |
+| `apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options, `MemoryIdempotencyStore` and the store contract | Node |
 | `apue/downloads` | `download.fromFile()`, `download.fromBytes()` for `t.download()` outputs | Node |
 | `apue/http2` | `http2Transport` (full duplex) | Node |
 | `apue/websocket` | `webSocketTransport`, `autoTransport` (streaming uploads in every browser) | browsers |
-| `apue/codegen` | `generateApi`, `generatePython` | Node |
-| `apue-types` (CLI) | typed TypeScript modules or Python clients from a server's manifest | Node |
+| `apue/codegen` | `generateApi`, `generatePython`, `generateGo`, `generateJava`, `generateSwift` | Node |
+| `apue-types` (CLI) | typed TypeScript modules, or Python, Go, Java and Swift clients, from a server's manifest | Node |
 
 ```sh
 npx apue-types https://api.example --out api.ts              # TypeScript, imports from 'apue'
 npx apue-types https://api.example --lang python --out api.py # self-contained, standard library only
+npx apue-types https://api.example --lang go --out api.go     # also: --lang java, --lang swift
 ```
 
 ## Features

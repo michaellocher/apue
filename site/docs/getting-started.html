@@ -162,7 +162,7 @@ content-type: application/problem+json
 cache-control: no-store
 
 {"type":"https://apue.dev/problems/validation-failed","fields":[{"path":"name","message":"shorter than 1"}],"title":"Validation Failed","status":400,"detail":"input does not match the schema"}</code></pre></figure>
-<p>Streams are binary frames by default (<code>application/apue+json</code>). For curl and devtools, ask for <code>text/event-stream</code> and get the same stream rendered as server-sent events:</p>
+<p>Streams are binary frames by default (<code>application/vnd.apue.frames</code>). For curl and devtools, ask for <code>text/event-stream</code> and get the same stream rendered as server-sent events:</p>
 <figure class="code"><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> curl --cacert certs/cert.pem -H 'accept: text/event-stream' 'https://localhost:8443/greetings.count?i=%7B%22to%22%3A3%7D'
 event: msg
 data: {"n":1}

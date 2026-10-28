@@ -8,7 +8,7 @@
 <p>An operation’s <code>stream</code> decides the handler’s shape: for <code>client</code> and <code>bidi</code> the input is an <code>AsyncIterable</code> of messages; for <code>server</code> and <code>bidi</code> the handler returns an <code>AsyncIterable</code> (an async generator is the easy way).</p>
 {{code:docs/streaming-api.ts|server side}}
 {{code:docs/streaming-client.ts|client side}}
-<p>Streamed bodies are frames with an 8-byte header (<code>application/apue+json</code>, see the <a href="wire-format.html">wire format</a>). A response stream ends with an <strong>END</strong> frame carrying the final status; a body that ends without one is <em>truncated</em> and treated as an error — that is how proxy cut-offs are detected.</p>
+<p>Streamed bodies are frames with an 8-byte header (<code>application/vnd.apue.frames</code>, see the <a href="wire-format.html">wire format</a>). A response stream ends with an <strong>END</strong> frame carrying the final status; a body that ends without one is <em>truncated</em> and treated as an error — that is how proxy cut-offs are detected.</p>
 
 <h2>Transport tiers</h2>
 <table data-label="Streaming tiers">

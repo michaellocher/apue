@@ -47,7 +47,7 @@
 $ curl -i -N https://localhost:8443/todos.changes
 HTTP/2 200
 accept-query: "application/json"
-content-type: application/apue+json
+content-type: application/vnd.apue.frames
 cache-control: no-store
 incremental: ?1
 x-accel-buffering: no
@@ -88,7 +88,7 @@ vary: accept, accept-encoding
   <tbody>
     <tr><td><code>application/json</code></td><td>Unary request and response bodies; batch requests</td></tr>
     <tr><td><code>application/problem+json</code></td><td>Error responses (RFC 9457)</td></tr>
-    <tr><td><code>application/apue+json</code></td><td>Framed streams in both directions; batch responses; unary responses whose output contains bytes</td></tr>
+    <tr><td><code>application/vnd.apue.frames</code></td><td>Framed streams in both directions; batch responses; unary responses whose output contains bytes</td></tr>
     <tr><td><code>text/event-stream</code></td><td>The SSE rendering of a response stream, on request</td></tr>
     <tr><td><code>application/partial-upload</code></td><td>Appending to a resumable upload</td></tr>
     <tr><td><code>application/linkset+json</code></td><td>The RFC 9727 API catalog</td></tr>

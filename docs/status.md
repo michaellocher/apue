@@ -8,7 +8,7 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 196 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+`npm test` runs 211 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
 browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
@@ -43,6 +43,7 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 | tests | stuck producers outliving deadlines; `server.close()` hanging on closed sessions; `for await` resetting streams on early exit; hang after a 409 retry check; `$lit` unescaping user data in batches |
 | building the example | the batch endpoint at `/` blocked serving the app same-origin → `/$batch` |
 | browsers | Chrome only reuses an h2 session for WebSockets with an identical key (credentials mode) |
+| code review | unbounded request-stream blob memory; bytes lost on idempotent replay; CORS `Vary`/preflight gaps; missing `Retry-After` retried with no delay; duplicate items after two losses in one resume; quadratic WebSocket buffering; WebSocket writes hanging on close; regex flags dropped from the manifest |
 
 ## Decisions taken without you (easy to revisit)
 
@@ -57,5 +58,5 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 ## Open (spec §13)
 
 CBOR · CREDIT flow control · WebTransport (no Node server) · HTTP/3 in Node (no `node:quic`) ·
-resumable uploads · CDN cache headers · generators for other languages · problem-type namespace ·
-auth guidance · long-running operations pattern.
+resumable uploads · generators for other languages · problem-type namespace · auth guidance.
+(Done since the first draft: CDN cache headers (S15), the long-running-operation pattern (S14).)

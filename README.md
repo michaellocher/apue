@@ -61,7 +61,7 @@ real-browser tests, Docker for constrained benchmarks and the proxy probes.
 
 ```sh
 npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 196 tests incl. headless Chrome, Firefox, WebKit (skipped if absent)
+npm test             # node --test: 211 tests incl. headless Chrome, Firefox, WebKit (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
 bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)

@@ -81,7 +81,7 @@ URL: `{base}/{op}` — op name in `:path` (HPACK-friendly, routable, one preflig
 - Safe responses carry a strong `ETag` (SHA-256 of the representation); `If-None-Match` → 304 (weak comparison). `Cache-Control` from the op's `cache` policy, default `no-cache` (revalidate), `private` for caller-dependent ops; non-safe and streams `no-store`. Reads advertise `Accept-Query: "application/json"`.
 - Server enforces the mapping: other methods → 405 + `Allow`.
 - **Idempotency-Key semantics** (draft-08): scope = op + hash(Authorization) + key; fingerprint = SHA-256 of canonical input. Same key + same payload → stored response replayed with `apue-replayed: ?1` (apü extension; the draft defines no header); different payload → 422; original still running → 409 `retryable: true`. Handler 4xx are stored; 5xx and client aborts release the key so a retry re-executes.
-- **Client retries** (default 2, full-jitter backoff): transport errors, 503/429 (honouring `Retry-After`), 409 with `retryable: true` — only for safe ops or keyed requests; 504 (deadline) is not retried.
+- **Client retries** (default 2, full-jitter backoff): transport errors, 503/429 (honouring `Retry-After` as delay-seconds or HTTP-date, capped at the max backoff; absent or invalid → backoff), 409 with `retryable: true` — only for safe ops or keyed requests; 504 (deadline) is not retried.
 - Input is validated on the client (no request for invalid input) and on the server (400 with `fields`). Output is validated and stripped to the schema (no accidental field leaks); invalid output → 500.
 
 **CORS position:** recommended deployment is same-origin (no preflight). Cross-origin (server option `cors`): allowed origins get `Access-Control-Allow-Origin` (echoed, `Vary: origin`), `Access-Control-Expose-Headers` (etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding) and `Timing-Allow-Origin`; preflights answer 204 with methods `GET, HEAD, POST, QUERY`, only the apü request headers that were asked for, and `Access-Control-Max-Age: 7200` (browser caps: Chromium 7200 s, Firefox 86400 s, WebKit 600 s); disallowed origins' preflights get 403. Credentials require an explicit origin list. apü does **not** accept CORS-simple content types for non-safe ops (CSRF, cf. Apollo GHSA-2p3c-p3qw-69r4) — we pay the preflight rather than open a CSRF hole.
@@ -113,7 +113,7 @@ Limits (implemented): a frame header announcing more than the limit is rejected 
 
 - **Lane** = call index in a pipelined batch (§10); 0 for single calls.
 - Parser is a byte-stream state machine; DATA-frame / chunk boundaries are meaningless.
-- **Binary values** (implemented, S10): schema type `t.bytes()`. For ops whose schema contains bytes, every `Uint8Array` in a message is sent as BLOB frames (64 KiB chunks, last one flagged) *before* the MSG on the same lane; the MSG references them in order as `{"$blob": k}`; look-alike data (sole member `$blob`/`$lit`) is escaped as `{"$lit": value}`. Every blob must be referenced exactly once (else malformed). No base64: measured wire overhead < 1 % for 1 MiB files. Unary ops whose output contains bytes are answered framed (MSG + BLOB + END, not cacheable); bytes in unary *inputs* are refused at definition time (a URL/JSON body can't carry them — use a client stream). Ops without bytes keep the plain `JSON.stringify` fast path and reject BLOB frames.
+- **Binary values** (implemented, S10): schema type `t.bytes()`. For ops whose schema contains bytes, every `Uint8Array` in a message is sent as BLOB frames (64 KiB chunks, last one flagged) *before* the MSG on the same lane; the MSG references them in order as `{"$blob": k}`; look-alike data (sole member `$blob`/`$lit`) is escaped as `{"$lit": value}`. Every blob must be referenced exactly once (else malformed). No base64: measured wire overhead < 1 % for 1 MiB files. Unary ops whose output contains bytes are answered framed (MSG + BLOB + END, not cacheable); bytes in unary *inputs* are refused at definition time (a URL/JSON body can't carry them — use a client stream). Ops without bytes keep the plain `JSON.stringify` fast path and reject BLOB frames. Blobs of one request message count against `maxBodyBytes` (→ 413); request streams use lane 0 only (other lanes → 400). Stored idempotent replays of framed responses decode the stored frames, so bytes come back as bytes.
 - Why 8 bytes and not Connect's 5: lanes are needed for batches and blobs; 3 extra bytes are noise next to the 9-byte h2 frame header.
 - **SSE rendering**: `event: msg|end|checkpoint`, `id: <checkpoint>`, `data: <json>` — same semantics, for curl and devtools; BLOBs as base64 there.
 
@@ -191,7 +191,7 @@ Built only from implemented features (resolves the AIP-151 / MCP-"Tasks" questio
 - Schemas are TS objects built from a small erasable-syntax builder with static type inference — no codegen for TS clients.
 - `GET {base}/.well-known/apue` → manifest: ops, effects, stream kind, JSON Schema for input/output, cache policy, deprecation, resumability. `ETag` = manifest hash, `no-cache`.
 - `GET|HEAD /.well-known/api-catalog` (RFC 9727, implemented): `application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"` with a `service-desc` link to the manifest, and `Link: </.well-known/api-catalog>; rel="api-catalog"` — generic discovery for crawlers and agents.
-- **Typed clients without the server's sources** (implemented, S11): `node bin/apue-types.ts <base-url>` turns the manifest into a `defineApi(...)` module with the same `t.*` schemas; verified by a round trip (API → manifest → generated code → identical manifest). The generator rejects JSON Schema keywords it can't express instead of silently dropping constraints.
+- **Typed clients without the server's sources** (implemented, S11): `node bin/apue-types.ts <base-url>` turns the manifest into a `defineApi(...)` module with the same `t.*` schemas; verified by a round trip (API → manifest → generated code → identical manifest). The generator rejects JSON Schema keywords it can't express instead of silently dropping constraints. String patterns: JSON Schema `pattern` has no flags, so flags travel as `x-apue-flags` (validators that ignore it see the unflagged pattern — prefer patterns without `i`/`m`/`s` for public APIs); `g` and `y` are refused (they make `RegExp#test` stateful).
 - Evolution: only additive changes within a major; removal via `deprecated` → `Deprecation`/`Sunset` headers.
 - Limits are part of the schema (array `max`, string lengths, `t.bytes({max})`) plus server limits (body size, JSON nesting 64, batch size 64, selection ≤ 64 paths) → cost is bounded before a handler runs.
 
@@ -213,7 +213,7 @@ Resolved:
 
 Open:
 1. CBOR encoding and schema-compiled codecs — worth it only where CPU, not network, dominates.
-2. Resumable uploads (draft-ietf-httpbis-resumable-upload) and out-of-band URLs for very large binaries; idempotency replay for ops with bytes outputs (stored responses are JSON today).
+2. Resumable uploads (draft-ietf-httpbis-resumable-upload) and out-of-band URLs for very large binaries. (Idempotent replay of bytes outputs: done in S16.)
 3. CREDIT frames for consumer-paced bidi streams.
 4. WebTransport (T4) once a server implementation exists for Node; HTTP/3 in Node.
 5. Problem type namespace (placeholder `https://apue.dev/problems/`).
@@ -340,3 +340,7 @@ Chaos tests (garbage after the h2 preface, TCP drops mid-stream, GOAWAY with err
 ### S14 — 2026-10-28 ✅ WebKit, long-running operations
 
 WebKit 27.2 (Playwright's build; `playwright-core` dev dependency, tests skipped without it) passes the browser suite and drives the example app; it supports fetch request streaming (T2), unlike what MDN lists for release Safari. Long-running operation pattern specified and tested end to end.
+
+### S16 — 2026-10-28 ✅ code review
+
+A review of `src/` found ten defects, all fixed with regression tests that fail on the old code: unbounded memory for request-stream blobs; bytes lost on idempotent replay of unary bytes output; missing `Vary: origin` without an Origin header and preflights refusing `apue-resume`/`last-event-id`; a missing `Retry-After` read as "retry now" (`Number(null) === 0`); a second loss during a resume replay re-delivering items; quadratic buffering in the WebSocket parser (4 MiB frame in 1 KiB chunks: 791 ms → 16 ms); WebSocket writes hanging when the transport closed instead of draining; regex flags dropped from the manifest (and stateful `g`/`y` patterns). 211 tests.

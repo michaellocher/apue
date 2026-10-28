@@ -306,6 +306,47 @@ describe('resource protection', () => {
   });
 });
 
+describe('peer resets', () => {
+  test('RST_STREAM with any error code mid-stream never crashes the server (regression: Envoy INTERNAL_ERROR)', async () => {
+    const http2 = await import('node:http2');
+    cancelled = Promise.withResolvers(); // ticker.forever reports aborts here
+    // An unhandled 'error' on a server stream is an uncaught exception (it killed the process
+    // behind Envoy); observe them without interfering.
+    const uncaught: Error[] = [];
+    const monitor = (error: Error) => uncaught.push(error);
+    process.on('uncaughtExceptionMonitor', monitor);
+    const local = await startServer(api, handlers);
+    const { NGHTTP2_INTERNAL_ERROR, NGHTTP2_PROTOCOL_ERROR, NGHTTP2_STREAM_CLOSED, NGHTTP2_REFUSED_STREAM, NGHTTP2_CANCEL } = http2.constants;
+    for (const code of [NGHTTP2_INTERNAL_ERROR, NGHTTP2_PROTOCOL_ERROR, NGHTTP2_STREAM_CLOSED, NGHTTP2_REFUSED_STREAM, NGHTTP2_CANCEL]) {
+      for (const upload of [false, true]) {
+        const session = http2.connect(local.url, { ca: testCert().cert });
+        session.on('error', () => {});
+        await new Promise<void>((resolve) => {
+          const req = upload
+            ? session.request({ ':method': 'POST', ':path': '/sum.client', 'content-type': 'application/apue+json' })
+            : session.request({ ':method': 'POST', ':path': '/ticker.forever', accept: 'application/apue+json' });
+          req.on('error', () => {});
+          req.on('data', () => {});
+          req.on('close', () => resolve());
+          if (upload) req.write(new Uint8Array([0, 0, 0, 0, 0, 0, 0, 1, 0x31])); // one frame, then reset mid-upload
+          else req.end();
+          setTimeout(() => req.close(code), 30);
+          setTimeout(resolve, 2_000).unref();
+        });
+        session.destroy();
+      }
+    }
+    // Still serving afterwards:
+    const client = new ApueClient(api, new Map(transports(local.url)).get('http2')!);
+    assert.equal(await client.call('math.add', { a: 1, b: 2 }), 3);
+    await client.close();
+    await local.close();
+    await sleep(100);
+    process.off('uncaughtExceptionMonitor', monitor);
+    assert.deepEqual(uncaught.map((e) => e.message), []);
+  });
+});
+
 describe('shutdown', () => {
   test('close() resolves when clients already closed their sessions', async () => {
     // Regression: session.close(callback) never calls back for a session that is already closed.

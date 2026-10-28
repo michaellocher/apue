@@ -38,6 +38,10 @@ export class H2Exchange implements Exchange {
 
   constructor(stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) {
     this.#stream = stream;
+    // A peer resetting the stream with an error code other than CANCEL (e.g. Envoy's
+    // INTERNAL_ERROR) makes node:http2 emit 'error'; unhandled, that crashes the process.
+    // The 'close' event already turns it into an aborted call.
+    stream.on('error', () => {});
     this.headers = headers;
     this.method = headers[':method'] ?? 'GET';
     this.url = headers[':path'] ?? '/';
@@ -110,6 +114,9 @@ export class H1Exchange implements Exchange {
   constructor(req: IncomingMessage, res: ServerResponse) {
     this.#req = req;
     this.#res = res;
+    // Connection resets surface as 'close'; don't let 'error' crash the process.
+    req.on('error', () => {});
+    res.on('error', () => {});
   }
 
   get method(): string {

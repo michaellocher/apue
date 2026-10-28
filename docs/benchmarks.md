@@ -10,6 +10,28 @@ minimal JSON GET, NDJSON for streams (written without backpressure), and a plain
 for bulk. They are a ceiling, not a competitor; the gap is the cost of apü's features (schema
 validation and stripping, ETags, idempotency keys, framing, deadlines, cancellation).
 
+## Re-run after S16–S19 (2026-10-28, ~10:15)
+
+A first local run came out far too low (raw node:http2 itself at 19k instead of ~45k req/s): 12
+CPU-burner processes from my own Chrome reproduction scripts had kept running since ~07:47 (load
+average 116). Killed, waited for the load to settle, re-ran. Measurements taken between ~07:47 and
+10:08 are affected; the only performance figure from that window (upload throughput, S18) was
+re-measured and corrected.
+
+- **Local, quiet machine**: unary GET c=32 apü/raw 62 % (A/B against the commit before S18, six
+  alternating rounds each: medians 27.3k vs 27.6k req/s — no regression; single rounds of either
+  version occasionally drop to 20–23k), stream 1.99M/2.76M msg/s (72 %), bulk 305/343 MiB/s (89 %),
+  batch 0.32 vs 0.74 ms sequential, zstd 158 MiB/s, multiplexing as below.
+- **Docker 1 CPU / 1 GiB, A/B 07:03 commit vs HEAD (two rounds each)**: GET 16.7k/16.6k vs
+  16.8k/17.0k, stream 0.81M/0.86M vs 0.94M/0.97M, stream + zstd 0.76M/0.80M vs 0.80M/0.82M, bulk
+  167/171 vs 172/178 MiB/s — no regression. The 4 MiB download with tuned windows swings ±40 % in
+  this VM on both versions (122–193 vs 121–163 MiB/s): don't read single runs of that scenario.
+- **WAN (63 ms RTT, 100 Mbit/s)**: reproduces the table: batch 191 vs 65 ms (2.9×), zstd stream
+  0.65M vs 0.24M msg/s (2.7×), tuned window 6.99 vs 0.61 MiB/s (11×), unary 420/435 req/s.
+- **New since the table**: uploads (S18) 474–503 MiB/s for a 64 MiB unary `t.bytes()` input (careful
+  creation + PATCH, SHA-256 as data arrives) vs 446–468 MiB/s as BLOB frames in a client stream;
+  manifest with derived docs (S19) builds in 0.2–0.6 ms once.
+
 ## Key results
 
 Final runs after all optimizations (spike S10). "c=32" = 32 concurrent calls on one HTTP/2 connection.

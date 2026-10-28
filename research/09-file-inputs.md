@@ -70,10 +70,9 @@ the right answer? A short spike to find out what it costs and what it changes.
   process leaves its subdirectory behind (`apue-uploads-*`); nothing sweeps it — a sweep at startup
   is unsafe when several processes share the directory. Operators clear it, or use a directory per
   instance.
-- **An upload deleted while a handler streams it** (its owner's `DELETE`, or expiry): in file mode
-  the stream fails (`ENOENT` if not yet opened) and the call errors; memory mode keeps the chunks
-  alive. The client only deletes after its call has settled, so only a second party or a TTL shorter
-  than the call can trigger it.
+- ~~An upload deleted while a handler streams it fails the call~~ → S23: a call opens its files when
+  it starts (an open file outlives its unlink). S23 also found that every file-backed upload held a
+  write descriptor until deleted; now only a request that writes holds one.
 - **`Upload-Offset` may count bytes not yet written** (up to 1 MiB buffered per upload). If the
   write then fails, the upload is deleted (507) rather than resumed with a hole; the client must
   start over.

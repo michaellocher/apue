@@ -2,7 +2,7 @@
 // with the upload content in files (uploads.directory), never in memory.
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, fstatSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -131,6 +131,86 @@ test('a handler writing into the chunks it streams cannot change the upload for 
   const ref = await client.upload(bytes);
   assert.equal(await client.call('files.digest', { file: ref }), sha(bytes));
   assert.equal(await client.call('files.digest', { file: ref }), sha(bytes)); // same content the second time
+});
+
+test('an upload deleted while its call runs stays readable for that call; nothing stays open afterwards', async (ctx) => {
+  // A second party's DELETE (or expiry) unlinks the file; the call opened it before, so it reads on.
+  const directory = mkdtempSync(join(tmpdir(), 'apue-files-test-'));
+  const deleting = defineApi({ 'files.late': op({ effect: 'unsafe', input: t.object({ id: t.string(), file: t.file() }), output: t.string() }) });
+  let url = '';
+  const server = await startServer(deleting, {
+    'files.late': async ({ id, file }) => {
+      const removed = await fetch(`${url}/$uploads/${id}`, { method: 'DELETE' });
+      assert.equal(removed.status, 204);
+      const hash = createHash('sha256');
+      for await (const chunk of file.stream()) hash.update(chunk);
+      return hash.digest('hex');
+    },
+  }, { uploads: { directory } });
+  url = server.url;
+  ctx.after(async () => {
+    await server.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const client = new ApueClient(deleting, http2Transport(server.url, { ca: testCert().cert }));
+  ctx.after(() => client.close());
+  const bytes = new Uint8Array(randomBytes(3 * 1024 * 1024));
+  const ref = await client.upload(bytes);
+  // Open regular files of this process (sockets come and go with connections; they don't count).
+  const openFiles = () =>
+    readdirSync('/dev/fd').filter((fd) => {
+      try {
+        return fstatSync(Number(fd)).isFile();
+      } catch {
+        return false;
+      }
+    }).length;
+  assert.equal(openFiles(), 0, 'a complete upload holds no descriptor');
+  assert.equal(await client.call('files.late', { id: ref.$upload, file: ref }), sha(bytes));
+  await sleep(50); // the release runs after the response
+  assert.equal(openFiles(), 0, 'the call\'s read descriptor is closed');
+  assert.deepEqual(readdirSync(join(directory, readdirSync(directory)[0]!)), []); // and the file is gone
+});
+
+test('uploads waiting for their next request hold no file descriptors (100 per client would exhaust them)', async (ctx) => {
+  const directory = mkdtempSync(join(tmpdir(), 'apue-files-test-'));
+  const server = await startServer(api, handlers, { uploads: { directory } });
+  ctx.after(async () => {
+    await server.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const regularFiles = () => readdirSync('/dev/fd').filter((fd) => {
+    try {
+      return fstatSync(Number(fd)).isFile();
+    } catch {
+      return false;
+    }
+  }).length;
+  const before = regularFiles();
+  const locations: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    const created = await fetch(`${server.url}/$uploads`, { method: 'POST', headers: { 'upload-complete': '?0' } });
+    assert.equal(created.status, 201);
+    locations.push(created.headers.get('location')!);
+  }
+  const partial = await fetch(`${server.url}${locations[0]}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/partial-upload', 'upload-offset': '0', 'upload-complete': '?0' },
+    body: new Uint8Array(2 * 1024 * 1024 + 5), // two full write blocks and a rest
+  });
+  assert.equal(partial.status, 204);
+  assert.equal(regularFiles(), before);
+  // … and the next request writes after what is there (positional writes, a fresh handle).
+  const rest = new Uint8Array(randomBytes(1000));
+  const done = await fetch(`${server.url}${locations[0]}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/partial-upload', 'upload-offset': String(2 * 1024 * 1024 + 5), 'upload-complete': '?1' },
+    body: rest,
+  });
+  assert.equal(done.status, 201);
+  const id = (await done.json()).upload as string;
+  const expected = sha(new Uint8Array([...new Uint8Array(2 * 1024 * 1024 + 5), ...rest]));
+  assert.equal((await new ApueClient(api, http2Transport(server.url, { ca: testCert().cert })).call('files.ingest', { name: 'p', file: { $upload: id } })).sha256, expected);
 });
 
 test('closing the server removes its upload directory', async () => {

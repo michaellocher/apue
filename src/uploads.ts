@@ -2,7 +2,6 @@
 // values are uploaded to `/$uploads` — resumably, over plain HTTP requests — and op inputs reference
 // them as { "$upload": id } where the schema says t.bytes() (SPEC-DRAFT §6). Node-only.
 import { createHash, randomBytes, type Hash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
 import { mkdtemp, open, readFile, rm, unlink, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FileValue } from './schema.ts';
@@ -57,8 +56,13 @@ interface Upload {
   bytes: Uint8Array | undefined;
   /** Announced (Upload-Length) but not yet received: already counted against the client's quota. */
   reserved: number;
-  /** With `directory`: the file holding the content (instead of `chunks`), and data not yet written. */
-  file: { path: string; handle: FileHandle; pending: Uint8Array[]; pendingBytes: number } | undefined;
+  /**
+   * With `directory`: the file holding the content (instead of `chunks`), bytes written to it, data
+   * not yet written, and the handle of the request writing it — open only while one is: an
+   * upload waiting for its next request holds no descriptor (100 empty uploads per client would
+   * otherwise exhaust the process's descriptors).
+   */
+  file: { path: string; handle: FileHandle | undefined; written: number; pending: Uint8Array[]; pendingBytes: number } | undefined;
   /** SHA-256 over the content in offset order, fed as data arrives; hex once complete. */
   hash: Hash;
   digest: string | undefined;
@@ -138,7 +142,8 @@ export class UploadStore {
     if (this.#directory) {
       this.#files ??= mkdtemp(join(this.#directory, 'apue-uploads-'));
       const path = join(await this.#files, upload.id);
-      upload.file = { path, handle: await open(path, 'wx'), pending: [], pendingBytes: 0 };
+      await (await open(path, 'wx')).close();
+      upload.file = { path, handle: undefined, written: 0, pending: [], pendingBytes: 0 };
     }
     this.#uploads.set(upload.id, upload);
     usage.uploads++;
@@ -181,24 +186,40 @@ export class UploadStore {
     return { bytes: upload.bytes.slice(), digest: upload.digest! };
   }
 
-  /** The complete upload as a t.file() value: read as a stream, never held in memory (with `directory`). */
-  file(id: string, scope: string): FileValue | undefined {
+  /**
+   * The complete upload as a t.file() value — streamed, never held in memory (with `directory`).
+   * Readable until `release()`, even if the upload is deleted or expires meanwhile: the file is
+   * opened here and an open file outlives its unlink (POSIX). Undefined if not usable.
+   */
+  async openFile(id: string, scope: string): Promise<{ value: FileValue; release: () => Promise<void> } | undefined> {
     const upload = this.get(id, scope);
     if (!upload?.complete) return undefined;
     const { file, offset: size, digest } = upload;
-    const chunks = upload.chunks;
+    if (!file) {
+      const chunks = upload.chunks;
+      // Copies, like resolve(): a handler writing into a chunk must not change the upload.
+      const stream = async function* () {
+        for (const chunk of chunks) yield chunk.slice();
+      };
+      return { value: { size, sha256: digest!, stream }, release: async () => {} };
+    }
+    let handle: FileHandle;
+    try {
+      handle = await open(file.path, 'r');
+    } catch {
+      return undefined; // deleted between the lookup and the open
+    }
     return {
-      size,
-      sha256: digest!,
-      // Copies from memory, like resolve(): a handler writing into a chunk must not change the upload.
-      stream: () => (file ? (createReadStream(file.path) as AsyncIterable<Uint8Array>) : (async function* () { for (const chunk of chunks) yield chunk.slice(); })()),
+      // Positional reads (start: 0): several streams of one value don't disturb each other.
+      value: { size, sha256: digest!, stream: () => handle.createReadStream({ start: 0, autoClose: false }) as AsyncIterable<Uint8Array> },
+      release: () => handle.close().catch(() => {}),
     };
   }
 
   /** Removes the per-process directory (and every upload file in it). */
   async close(): Promise<void> {
     const directory = await this.#files;
-    for (const upload of this.#uploads.values()) await upload.file?.handle.close().catch(() => {});
+    for (const upload of this.#uploads.values()) await upload.file?.handle?.close().catch(() => {});
     if (directory) await rm(directory, { recursive: true, force: true });
   }
 
@@ -244,8 +265,12 @@ export class UploadStore {
     file.pending = [];
     file.pendingBytes = 0;
     try {
-      await file.handle.write(block);
+      file.handle ??= await open(file.path, 'r+');
+      await file.handle.write(block, 0, block.byteLength, file.written);
+      file.written += block.byteLength;
     } catch (error) {
+      // Deleted meanwhile (its handle closed, its file unlinked): that is not a storage failure.
+      if (this.#uploads.get(upload.id) !== upload) throw notFound();
       // The offset already counts these bytes: an upload missing them on disk must not be resumed
       // (it would complete with corrupt content) — it is gone, the client starts over.
       this.delete(upload);
@@ -253,6 +278,14 @@ export class UploadStore {
     }
     // Deleted while the write was pending: its accounting is already gone — don't add to it.
     if (this.#uploads.get(upload.id) !== upload) throw notFound();
+  }
+
+  /** Closes the write handle at the end of a request (the next one opens its own). */
+  async closeWriter(upload: Upload): Promise<void> {
+    const handle = upload.file?.handle;
+    if (!handle) return;
+    upload.file!.handle = undefined;
+    await handle.close().catch(() => {});
   }
 
   /** Marks the upload complete: its content and digest are final. */
@@ -272,7 +305,8 @@ export class UploadStore {
     upload.writer?.abort();
     if (upload.file) {
       const { handle, path } = upload.file;
-      void handle.close().catch(() => {}).then(() => unlink(path)).catch(() => {});
+      upload.file.handle = undefined;
+      void (handle ? handle.close().catch(() => {}) : Promise.resolve()).then(() => unlink(path)).catch(() => {});
     }
   }
 
@@ -409,6 +443,7 @@ async function receive(req: Exchange, store: UploadStore, upload: Upload): Promi
     void chunks.return?.()?.catch(() => {});
     // What arrived is on disk before the next request (resume, superseding append) or a read.
     await store.flush(upload).catch(() => {}); // a failed write deletes the upload (see flush)
+    await store.closeWriter(upload);
     if (upload.writer === writer) upload.writer = undefined;
     settle();
   }

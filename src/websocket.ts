@@ -431,12 +431,17 @@ export interface HandshakeCheck {
   authorization?: string;
   /** The offered subprotocols without the credentials (what the call's headers may show). */
   protocols?: string[];
+  /**
+   * Unusable credentials (ok is still true): answered in-band as a 400 END frame after the
+   * handshake — a refused handshake reaches a browser as a bare failed connection, no status.
+   */
+  credentialError?: string;
 }
 
 /**
- * Validates version, subprotocol, credentials and Origin (protection against cross-site WebSocket
- * hijacking). Credentials offered as a subprotocol must be well-formed and unambiguous: one at
- * most, and not next to an Authorization header.
+ * Validates version, subprotocol and Origin (protection against cross-site WebSocket hijacking),
+ * and decodes credentials offered as a subprotocol, which must be well-formed and unambiguous:
+ * one at most, and not next to an Authorization header.
  */
 export function checkHandshake(headers: IncomingHttpHeaders, allowedOrigin: (origin: string) => boolean): HandshakeCheck {
   if (headers['sec-websocket-version'] !== '13') return { ok: false, status: 426, reason: 'Sec-WebSocket-Version 13 required' };
@@ -449,9 +454,10 @@ export function checkHandshake(headers: IncomingHttpHeaders, allowedOrigin: (ori
   const credentials = offered.filter((p) => p.startsWith(WS_AUTH_PREFIX));
   const protocols = offered.filter((p) => !p.startsWith(WS_AUTH_PREFIX));
   if (credentials.length === 0) return { ok: true, status: 200, protocols };
-  if (credentials.length > 1) return { ok: false, status: 400, reason: `more than one ${WS_AUTH_PREFIX} subprotocol` };
-  if (headers.authorization !== undefined) return { ok: false, status: 400, reason: `credentials both in Authorization and in a ${WS_AUTH_PREFIX} subprotocol` };
+  const unusable = (credentialError: string): HandshakeCheck => ({ ok: true, status: 200, protocols, credentialError });
+  if (credentials.length > 1) return unusable(`more than one ${WS_AUTH_PREFIX} subprotocol`);
+  if (headers.authorization !== undefined) return unusable(`credentials both in Authorization and in a ${WS_AUTH_PREFIX} subprotocol`);
   const authorization = parseWsAuthProtocol(credentials[0]!);
-  if (authorization === undefined) return { ok: false, status: 400, reason: `malformed ${WS_AUTH_PREFIX} subprotocol` };
+  if (authorization === undefined) return unusable(`malformed ${WS_AUTH_PREFIX} subprotocol (base64url without padding of a visible-ASCII Authorization value)`);
   return { ok: true, status: 200, authorization, protocols };
 }

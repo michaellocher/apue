@@ -80,5 +80,7 @@ reasoning. Decision by you: option 2 below. Implemented as S21.
 - Proxies may log `Sec-WebSocket-Protocol` like any header (the token travels like `Authorization`,
   which they may log as well); tokens should be short-lived (RFC 6750 §5.3: one hour or less in
   browsers).
-- A failed handshake reaches the browser only as a failed connection (no status, no problem body):
-  a rejected token is a 401 only when the principal hook rejects it after the handshake, in-band.
+- ~~A failed handshake reaches the browser only as a failed connection~~ → S23: unusable
+  credentials are answered in-band (400 END frame with the reason); a token the principal hook
+  rejects is its 401, also in-band. Only Origin, version and subprotocol failures refuse the
+  handshake.

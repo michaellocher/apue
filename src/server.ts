@@ -419,7 +419,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
    * resolve), plus the input's identity for idempotency and resume tokens: references replaced by
    * the content's SHA-256 — the same bytes uploaded again (new id) are the same input.
    */
-  const resolveUploads = async (def: OpDef, input: unknown, scope: string): Promise<{ input: unknown; identity: unknown }> => {
+  const resolveUploads = async (def: OpDef, input: unknown, scope: string, releases: Array<() => Promise<void>>): Promise<{ input: unknown; identity: unknown }> => {
     if (!uploads || !containsBytes(def.input)) return { input, identity: input };
     const digests = new Map<string, string>();
     const unusable = (path: string) =>
@@ -427,11 +427,13 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     const resolved = await mapBytes(def.input, input, async (value, path, kind) => {
       if (!isUploadRef(value)) return value; // validation reports it
       if (kind === 'file') {
-        // t.file(): a stream from the upload store — never read into memory here.
-        const file = uploads.file(value.$upload, scope);
-        if (!file) throw unusable(path);
-        digests.set(value.$upload, file.sha256);
-        return file;
+        // t.file(): a stream from the upload store — never read into memory here; readable until
+        // the request is done (released in handle()), even if the upload is deleted meanwhile.
+        const opened = await uploads.openFile(value.$upload, scope);
+        if (!opened) throw unusable(path);
+        releases.push(opened.release);
+        digests.set(value.$upload, opened.value.sha256);
+        return opened.value;
       }
       const upload = await uploads.resolve(value.$upload, scope);
       if (!upload) throw unusable(path);
@@ -543,6 +545,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     const { 'sec-websocket-protocol': _offered, ...rest } = headers;
     const callHeaders = { ...rest, 'sec-websocket-protocol': check.protocols!.join(', '), ...(check.authorization === undefined ? {} : { authorization: check.authorization }) };
     const exchange = new WsExchange(conn, path, callHeaders, upgrade.kind === 'h2' ? '2.0' : '1.1');
+    if (check.credentialError !== undefined) {
+      // Nothing runs; the client gets a status and a reason instead of a bare failed connection.
+      const problem = new ApueError(400, 'Bad Request', check.credentialError).problem;
+      return exchange.send(400, {}, encodeJson(problem));
+    }
     void handle(exchange, exchange);
   }
 
@@ -554,6 +561,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     // (then with a 503 that is still sent — clientGone stays unaborted).
     const call = new AbortController();
     inflight.add(call);
+    const releases: Array<() => Promise<void>> = []; // t.file() inputs opened for this request
     let completed = false;
     const complete = () => (completed = true);
     res.onClose(() => {
@@ -602,7 +610,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         complete();
         return void res.send(response.status, response.headers, head ? undefined : response.body);
       }
-      if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete, await identify(req));
+      if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete, await identify(req), releases);
       const opName = decodePathSegment(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
       if (!def && options.fallback && (await options.fallback(req))) {
@@ -638,7 +646,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       // resolved bytes (canonical JSON of a 64 MiB Uint8Array would be a huge object).
       let identity: unknown;
       if (!hasRequestStream(def)) {
-        const resolved = await resolveUploads(def, input, caller.scope);
+        const resolved = await resolveUploads(def, input, caller.scope, releases);
         input = validateInput(def, resolved.input);
         identity = containsBytes(def.input) ? resolved.identity : input;
       }
@@ -717,6 +725,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       const outcome = problemOutcome(problem, error);
       await sendBody(req, res, outcome.status, outcome.headers, outcome.body, false);
     } finally {
+      for (const release of releases) void release();
       inflight.delete(call);
       if (inflight.size === 0) drainedWaiter?.();
     }
@@ -804,6 +813,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     gone: AbortSignal,
     complete: () => void,
     caller: Caller,
+    releases: Array<() => Promise<void>>,
   ): Promise<void> {
     const method = req.method;
     if (method !== 'POST' && method !== 'QUERY') throw methodNotAllowed(method, 'QUERY, POST');
@@ -825,7 +835,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
             await writer.end({ status: 424, problem }, lane);
             return { ok: false };
           }
-          return runLane(lane, call, (dep) => deps[[...call.deps].indexOf(dep)]!.value, writer, signal, req, caller);
+          return runLane(lane, call, (dep) => deps[[...call.deps].indexOf(dep)]!.value, writer, signal, req, caller, releases);
         })(),
       );
     }
@@ -841,6 +851,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     signal: AbortSignal,
     req: Exchange,
     caller: Caller,
+    releases: Array<() => Promise<void>>,
   ): Promise<{ ok: boolean; value?: unknown }> {
     // Batch lanes are not resumable (a batch is one request); checkpoints are ignored there.
     const ctx: CallContext = {
@@ -853,7 +864,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       checkpoint: () => {},
     };
     try {
-      const resolved = await resolveUploads(call.def, resolveRefs(call.input, output), caller.scope);
+      const resolved = await resolveUploads(call.def, resolveRefs(call.input, output), caller.scope, releases);
       const input = validateInput(call.def, resolved.input);
       if (call.def.stream === 'none') {
         const outcome = await runUnary(call.op, call.def, input, ctx, caller, call.key, call.selection, containsBytes(call.def.input) ? resolved.identity : input);

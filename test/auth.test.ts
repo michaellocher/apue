@@ -249,28 +249,56 @@ describe('credentials over WebSocket (tier T3)', () => {
     await assert.rejects(streamed(server.url, { authorization: 'Bearer é' }), TypeError);
   });
 
-  test('handshake rules: one credential subprotocol at most, well-formed, not next to an Authorization header', () => {
+  test('credential rules: one subprotocol at most, well-formed, not next to an Authorization header', () => {
     const base = { 'sec-websocket-version': '13' };
     const offer = (...protocols: string[]) => ({ ...base, 'sec-websocket-protocol': protocols.join(', ') });
     const any = () => true;
     const token = wsAuthProtocol('Bearer alice-1');
     assert.deepEqual(checkHandshake(offer('apue.v1', token), any), { ok: true, status: 200, authorization: 'Bearer alice-1', protocols: ['apue.v1'] });
-    assert.equal(checkHandshake(offer('apue.v1', token, wsAuthProtocol('Bearer bob-1')), any).status, 400);
-    assert.equal(checkHandshake({ ...offer('apue.v1', token), authorization: 'Bearer bob-1' }, any).status, 400);
+    // Unusable credentials don't fail the handshake: they are answered in-band (next test).
+    assert.match(checkHandshake(offer('apue.v1', token, wsAuthProtocol('Bearer bob-1')), any).credentialError!, /more than one/);
+    assert.match(checkHandshake({ ...offer('apue.v1', token), authorization: 'Bearer bob-1' }, any).credentialError!, /both/);
     for (const bad of [`${WS_AUTH_PREFIX}`, `${WS_AUTH_PREFIX}QmVh=`, `${WS_AUTH_PREFIX}Q`, `${WS_AUTH_PREFIX}QR`, wsAuthProtocol('a\r\nb'), wsAuthProtocol(' lead'), wsAuthProtocol('trail ')]) {
-      assert.equal(checkHandshake(offer('apue.v1', bad), any).status, 400, bad);
+      const check = checkHandshake(offer('apue.v1', bad), any);
+      assert.equal(check.authorization, undefined, bad);
+      assert.match(check.credentialError!, /malformed/, bad);
       assert.equal(parseWsAuthProtocol(bad), undefined, bad);
     }
     assert.equal(checkHandshake(offer(token), any).status, 400); // credentials alone are not apue.v1
   });
 
-  test('a malformed credential subprotocol fails the handshake (the handler never runs)', async () => {
+  test('unusable credentials: the handler never runs, the client gets 400 with the reason in an END frame', async () => {
     const ws = new WebSocket(`${server.url.replace('https', 'wss')}/who.streaming`, ['apue.v1', `${WS_AUTH_PREFIX}QR`]);
-    const outcome = await new Promise((resolve) => {
-      ws.onopen = () => resolve('open');
-      ws.onerror = () => resolve('refused');
+    ws.binaryType = 'arraybuffer';
+    const chunks: Uint8Array[] = [];
+    ws.onmessage = (event) => {
+      if (typeof event.data !== 'string') chunks.push(new Uint8Array(event.data as ArrayBuffer));
+    };
+    const opened = await new Promise((resolve) => {
+      ws.onopen = () => resolve(true);
+      ws.onerror = () => resolve(false);
     });
-    assert.equal(outcome, 'refused');
+    assert.equal(opened, true);
+    assert.equal(ws.protocol, 'apue.v1'); // never the credentials
+    await new Promise((resolve) => (ws.onclose = resolve));
+    const frames = await Array.fromAsync(decodeFrames(new Blob(chunks as BlobPart[]).stream()));
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0]!.type, FrameType.END);
+    const end = JSON.parse(new TextDecoder().decode(frames[0]!.payload)) as { status: number; problem: { detail: string } };
+    assert.equal(end.status, 400);
+    assert.match(end.problem.detail, /malformed apue\.auth\. subprotocol/);
+  });
+
+  test('…and through the client: a duplicated credential is a 400, not a failed connection', async () => {
+    const transport = webSocketTransport(server.url, { WebSocketImpl: browserLike({ authorization: 'Bearer alice-1' }) });
+    const c = new ApueClient(api, transport, { authorization: 'Bearer alice-1' });
+    try {
+      await assert.rejects(Array.fromAsync(c.duplex('who.streaming', (async function* () {
+        yield 1;
+      })())), (e: ApueError) => e.status === 400 && /both/.test(e.message + JSON.stringify(e.problem)));
+    } finally {
+      await c.close();
+    }
   });
 });
 

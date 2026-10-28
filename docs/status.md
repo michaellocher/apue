@@ -8,8 +8,8 @@
 4. [`docs/benchmarks.md`](benchmarks.md), [`docs/intermediaries.md`](intermediaries.md) — measurements.
 5. `git log` — 40+ commits, each self-contained with the reasoning in the message.
 
-`npm test` runs 193 tests (≈ 15 s, files in parallel, incl. headless Chrome and Firefox; browsers are skipped if
-missing). `npm run typecheck` is clean.
+`npm test` runs 196 tests (≈ 20 s, files in parallel, incl. headless Chrome, Firefox and WebKit;
+browsers are skipped if missing). `npm run typecheck` is clean.
 
 ## What exists
 
@@ -20,7 +20,7 @@ missing). `npm run typecheck` is clean.
   CORS, manifest + RFC 9727 catalog, codegen of typed clients from the manifest.
 - **Transports**: HTTP/2 (core API) with HTTP/1.1 fallback; clients over fetch, node:http2 (full
   duplex) and WebSocket (RFC 8441/6455); `autoTransport` picks per browser.
-- **Verification**: unit, integration, fuzz, chaos, leak, real-browser (Chrome + Firefox), real
+- **Verification**: unit, integration, fuzz, chaos, leak, real-browser (Chrome, Firefox, WebKit), real
   proxies (nginx, Caddy, HAProxy, Envoy), constrained Docker benchmarks with WAN emulation, gRPC
   comparison.
 

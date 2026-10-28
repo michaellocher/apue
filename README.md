@@ -56,12 +56,12 @@ imports `src/*.ts` type-stripped by the server (no build step).
 ## Develop
 
 Requires Node ≥ 26.11 (native TypeScript, no build step) and `openssl` (tests generate a throwaway
-cert). Optional: Chrome/Firefox for the real-browser tests, Docker for constrained benchmarks and
-the nginx probe.
+cert). Optional: Chrome/Firefox (and `npx playwright-core install webkit` for WebKit) for the
+real-browser tests, Docker for constrained benchmarks and the proxy probes.
 
 ```sh
 npm install          # dev only: typescript + @types/node (typecheck), @grpc/* (gRPC benchmark)
-npm test             # node --test: 193 tests incl. headless Chrome + Firefox (skipped if absent)
+npm test             # node --test: 196 tests incl. headless Chrome, Firefox, WebKit (skipped if absent)
 npm run typecheck    # tsc (noEmit, erasableSyntaxOnly)
 node bench/run.ts    # benchmarks vs raw node:http2 baselines (separate processes)
 bench/docker.sh      # same on CPU/RAM-limited containers, incl. emulated WAN (netem)

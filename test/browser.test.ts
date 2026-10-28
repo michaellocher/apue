@@ -18,6 +18,15 @@ import type { CheckResult } from './browser/suite.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
 
 const CHROME = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// WebKit (Safari's engine) via Playwright's build — Safari itself needs `sudo safaridriver --enable`.
+const WEBKIT = await (async () => {
+  try {
+    const { webkit } = await import('playwright-core');
+    return webkit.executablePath();
+  } catch {
+    return '/nonexistent/playwright-webkit';
+  }
+})();
 const FIREFOX = process.env.FIREFOX_PATH ?? '/Applications/Firefox.app/Contents/MacOS/firefox';
 const ROOT = resolve(import.meta.dirname, '..');
 
@@ -72,6 +81,7 @@ describe('in real browsers', () => {
   for (const [name, binary, drive] of [
     ['Chrome (headless, CDP)', CHROME, runInChrome],
     ['Firefox (headless, WebDriver BiDi)', FIREFOX, runInFirefox],
+    ['WebKit (headless, Playwright)', WEBKIT, runInWebKit],
   ] as const) {
     test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 90_000 }, async (t) => {
       const results = (await drive(binary, `${page.url}/`, "typeof window.__run === 'function'", `window.__run(${JSON.stringify(api.url)}).then(JSON.stringify)`)) as CheckResult[];
@@ -118,6 +128,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
   for (const [name, binary, drive] of [
     ['Chrome', CHROME, runInChrome],
     ['Firefox', FIREFOX, runInFirefox],
+    ['WebKit', WEBKIT, runInWebKit],
   ] as const) {
     test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
       const result = (await drive(binary, `${example!.url}/`, "document.querySelector('#log') !== null && document.readyState === 'complete'", script)) as { added: boolean; imported: boolean; count: number; log: string };
@@ -242,6 +253,19 @@ async function runInChrome(binary: string, pageUrl: string, ready: string, expre
     return JSON.parse(evaluated.result.value);
   } finally {
     await stop(proc, dir);
+  }
+}
+
+async function runInWebKit(_binary: string, pageUrl: string, ready: string, expression: string): Promise<unknown> {
+  const { webkit } = await import('playwright-core');
+  const browser = await webkit.launch();
+  try {
+    const page = await (await browser.newContext({ ignoreHTTPSErrors: true })).newPage();
+    await page.goto(pageUrl);
+    await page.waitForFunction(ready, undefined, { timeout: 20_000 });
+    return JSON.parse((await page.evaluate(expression)) as string);
+  } finally {
+    await browser.close();
   }
 }
 

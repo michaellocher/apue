@@ -14,18 +14,24 @@ clients from the server's manifest.
 
 ## Install
 
+The beta is published to GitHub Packages, which asks for a token even to install: a personal access
+token (classic) with `read:packages`, here read from `GITHUB_TOKEN`. Once per project (or in
+`~/.npmrc`):
+
 ```sh
-npm install apue@beta
+echo '@michaellocher:registry=https://npm.pkg.github.com' >> .npmrc
+echo '//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}' >> .npmrc
+npm install @michaellocher/apue@beta
 ```
 
-Node ≥ 26.11 for the server and the Node client; the web-safe core (`apue`, `apue/websocket`) runs
-in browsers too. No runtime dependencies.
+Node ≥ 26.11 for the server and the Node client; the web-safe core (`@michaellocher/apue`,
+`@michaellocher/apue/websocket`) runs in browsers too. No runtime dependencies.
 
 ## Quick start
 
 ```ts
 // api.ts — the contract, shared by server and clients
-import { defineApi, op, t } from 'apue';
+import { defineApi, op, t } from '@michaellocher/apue';
 
 const Todo = t.object({ id: t.number({ int: true }), title: t.string({ min: 1, max: 200 }), done: t.boolean() });
 export const api = defineApi({
@@ -38,7 +44,7 @@ export const api = defineApi({
 ```ts
 // server.ts
 import { readFileSync } from 'node:fs';
-import { createApueServer, type Handlers } from 'apue/server';
+import { createApueServer, type Handlers } from '@michaellocher/apue/server';
 import { api } from './api.ts';
 
 const todos: Array<{ id: number; title: string; done: boolean }> = [];
@@ -62,8 +68,8 @@ await server.listen(8443);
 
 ```ts
 // client.ts — typed end to end, no code generation
-import { ApueClient } from 'apue';
-import { http2Transport } from 'apue/http2';   // browsers: fetchTransport from 'apue', or autoTransport from 'apue/websocket'
+import { ApueClient } from '@michaellocher/apue';
+import { http2Transport } from '@michaellocher/apue/http2'; // browsers: fetchTransport, or autoTransport (…/websocket)
 import { api } from './api.ts';
 
 const client = new ApueClient(api, http2Transport('https://localhost:8443'));
@@ -76,16 +82,16 @@ for await (const todo of client.stream('todos.watch')) console.log(todo.title);
 
 | Import | What | Runs in |
 |---|---|---|
-| `apue` | `defineApi`, `op`, `t` (schemas), `ApueClient`, `fetchTransport`, `ApueError`, `Download`, `createDpopSigner`, `dpopHeaders` | browsers, Node |
-| `apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options, `MemoryIdempotencyStore` and the store contract, `dpopVerifier` | Node |
-| `apue/downloads` | `download.fromFile()`, `download.fromBytes()` for `t.download()` outputs | Node |
-| `apue/http2` | `http2Transport` (full duplex) | Node |
-| `apue/websocket` | `webSocketTransport`, `autoTransport` (streaming uploads in every browser) | browsers |
-| `apue/codegen` | `generateApi`, `generatePython`, `generateGo`, `generateJava`, `generateSwift` | Node |
+| `@michaellocher/apue` | `defineApi`, `op`, `t` (schemas), `ApueClient`, `fetchTransport`, `ApueError`, `Download`, `createDpopSigner`, `dpopHeaders` | browsers, Node |
+| `@michaellocher/apue/server` | `createApueServer`, `Handlers`, `CallContext`, server options, `MemoryIdempotencyStore` and the store contract, `dpopVerifier` | Node |
+| `@michaellocher/apue/downloads` | `download.fromFile()`, `download.fromBytes()` for `t.download()` outputs | Node |
+| `@michaellocher/apue/http2` | `http2Transport` (full duplex) | Node |
+| `@michaellocher/apue/websocket` | `webSocketTransport`, `autoTransport` (streaming uploads in every browser) | browsers |
+| `@michaellocher/apue/codegen` | `generateApi`, `generatePython`, `generateGo`, `generateJava`, `generateSwift` | Node |
 | `apue-types` (CLI) | typed TypeScript modules, or Python, Go, Java and Swift clients, from a server's manifest | Node |
 
 ```sh
-npx apue-types https://api.example --out api.ts              # TypeScript, imports from 'apue'
+npx apue-types https://api.example --out api.ts              # TypeScript, imports from '@michaellocher/apue'
 npx apue-types https://api.example --lang python --out api.py # self-contained, standard library only
 npx apue-types https://api.example --lang go --out api.go     # also: --lang java, --lang swift
 ```

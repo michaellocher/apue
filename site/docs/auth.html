@@ -43,7 +43,7 @@
 
 <h2 id="the-principal-hook">The principal hook</h2>
 <p>The server option <code>principal(request)</code> (may be async) returns a stable identity for the caller — a user or account id, <em>not</em> the credential, which changes on every token refresh — or <code>undefined</code> for anonymous callers. An <code>ApueError</code> it throws, such as a <code>401</code> with <code>WWW-Authenticate</code>, is the response.</p>
-<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
 
 <span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
   <span class="tok-s">'me.get'</span>: (_input, ctx) =&gt; ({ user: ctx.principal ?? <span class="tok-s">'anonymous'</span> }),
@@ -77,7 +77,7 @@
 
 <h2 id="credentials-from-clients">Credentials from clients</h2>
 <p><code>ApueClient</code> takes <code>authorization</code> — a string, or a function asked before every request — and sends it on every tier: calls, batches, uploads and WebSocket handshakes. The optional <code>headers({ method, path })</code> hook adds per-request headers.</p>
-<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'apue/websocket'</span>;
+<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/websocket'</span>;
 
 <span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, autoTransport(<span class="tok-s">'https://api.example.com'</span>), {
   <span class="tok-c">// Asked before every request (calls, batches, uploads, WebSocket handshakes),</span>
@@ -119,7 +119,7 @@ console.log(<span class="tok-k">await</span> client.call(<span class="tok-s">'me
 <h2 id="dpop">DPoP</h2>
 <p>DPoP (RFC 9449) binds an access token to a key the client holds: every request carries a fresh proof signed with that key, so a stolen token is useless without it. apü checks proofs on the server and signs them on the client; issuing and validating tokens stays with your authorization server.</p>
 <h3 id="server-dpopverifier">Server: <code>dpopVerifier</code></h3>
-<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { dpopError, dpopVerifier } <span class="tok-k">from</span> <span class="tok-s">'apue/server'</span>;
+<figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { dpopError, dpopVerifier } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/server'</span>;
 
 <span class="tok-c">// Checks each proof (RFC 9449 §4.3): signature, htm/htu, age, replay, ath.</span>
 <span class="tok-c">// Behind a proxy, name the public origin clients sign for.</span>
@@ -145,7 +145,7 @@ console.log(<span class="tok-k">await</span> client.call(<span class="tok-s">'me
   <li><strong>Tiers</strong>: a WebSocket call reports <code>POST</code> and its op path, so one proof format verifies everywhere; the proof travels as <code>apue.dpop.&lt;JWS&gt;</code>.</li>
 </ul>
 <h3 id="client-createdpopsigner">Client: <code>createDpopSigner</code></h3>
-<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, createDpopSigner, dpopHeaders } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, createDpopSigner, dpopHeaders } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
 
 <span class="tok-c">// A P-256 key pair whose private key can't be exported (WebCrypto).</span>
 <span class="tok-c">// Keep it (e.g. in IndexedDB) as long as tokens are bound to it: signer.jkt.</span>

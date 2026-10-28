@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Getting started — apü</title>
-<meta name="description" content="Install apü from npm (npm install apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers.">
+<meta name="description" content="Install apü from GitHub Packages (npm install @michaellocher/apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers.">
 <link rel="canonical" href="https://apue.dev/docs/getting-started.html">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -16,7 +16,7 @@
 <meta property="og:site_name" content="apü">
 <meta property="og:locale" content="en">
 <meta property="og:title" content="Getting started — apü">
-<meta property="og:description" content="Install apü from npm (npm install apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers.">
+<meta property="og:description" content="Install apü from GitHub Packages (npm install @michaellocher/apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers.">
 <meta property="og:url" content="https://apue.dev/docs/getting-started.html">
 <meta property="og:image" content="https://apue.dev/assets/og.png">
 <meta property="og:image:width" content="1200">
@@ -42,11 +42,14 @@
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#install">Install</a></li><li><a href="#entry-points">Entry points</a></li><li><a href="#a-first-api">A first API</a></li><li><a href="#the-same-calls-with-curl">The same calls with curl</a></li><li><a href="#next-steps">Next steps</a></li></ul></nav>
 
 <h2 id="install">Install</h2>
+<p>The beta is published to GitHub Packages, which asks for a token even to install: a personal access token (classic) with <code>read:packages</code>, read here from <code>GITHUB_TOKEN</code>. The two <code>.npmrc</code> lines can also go into <code>~/.npmrc</code>, once.</p>
 <figure class="code"><figcaption>a new project</figcaption><pre tabindex="0"><code class="language-console"><span class="tok-p">$</span> npm init -y &amp;&amp; npm pkg set type=module
-<span class="tok-p">$</span> npm install apue@beta</code></pre></figure>
+<span class="tok-p">$</span> echo '@michaellocher:registry=https://npm.pkg.github.com' &gt;&gt; .npmrc
+<span class="tok-p">$</span> echo '//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}' &gt;&gt; .npmrc
+<span class="tok-p">$</span> npm install @michaellocher/apue@beta</code></pre></figure>
 <ul>
   <li><strong>Node ≥ 26.11</strong> for the server and the Node client. Node runs your <code>.ts</code> files directly (type stripping) — no build step. The package itself ships JavaScript and type declarations.</li>
-  <li>The web-safe core (<code>apue</code>, <code>apue/websocket</code>) runs in browsers too. No runtime dependencies.</li>
+  <li>The web-safe core (<code>@michaellocher/apue</code>, <code>@michaellocher/apue/websocket</code>) runs in browsers too. No runtime dependencies.</li>
   <li>A TLS certificate: apü servers speak HTTP/2 over TLS (with HTTP/1.1 fallback). For local development, a self-signed one will do (below).</li>
 </ul>
 <div class="callout">
@@ -58,12 +61,12 @@
 <div class="table-wrap" role="region" tabindex="0" aria-label="Entry points"><table>
   <thead><tr><th scope="col">Import</th><th scope="col">What</th><th scope="col">Runs in</th></tr></thead>
   <tbody>
-    <tr><td><code>apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code>, <code>createDpopSigner</code>, <code>dpopHeaders</code></td><td>browsers, Node</td></tr>
-    <tr><td><code>apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options, <code>dpopVerifier</code></td><td>Node</td></tr>
-    <tr><td><code>apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
-    <tr><td><code>apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
-    <tr><td><code>apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
-    <tr><td><code>apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code>, <code>generateSwift</code></td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code>, <code>createDpopSigner</code>, <code>dpopHeaders</code></td><td>browsers, Node</td></tr>
+    <tr><td><code>@michaellocher/apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options, <code>dpopVerifier</code></td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
+    <tr><td><code>@michaellocher/apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code>, <code>generateSwift</code></td><td>Node</td></tr>
     <tr><td><code>apue-types</code> (CLI)</td><td>typed TypeScript modules, or Python, Go, Java and Swift clients, from a server’s manifest</td><td>Node</td></tr>
   </tbody>
 </table></div>
@@ -77,7 +80,7 @@
 <h3 id="1-the-contract">1. The contract</h3>
 <p>An operation has a dotted name, an <code>effect</code>, an optional <code>stream</code> kind, and schemas for input and output. The file is plain TypeScript, shared by server and clients.</p>
 <figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// api.ts — the contract, shared by server and clients</span>
-<span class="tok-k">import</span> { defineApi, op, t } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<span class="tok-k">import</span> { defineApi, op, t } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
 
 <span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
   <span class="tok-s">'greetings.get'</span>: op({
@@ -98,7 +101,7 @@
 <p><code>Handlers&lt;typeof api&gt;</code> types every handler from the contract: unary handlers return a value (or a promise), streaming handlers return an async iterable. <code>ctx.signal</code> fires when the client goes away or the deadline passes.</p>
 <figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// server.ts — node server.ts</span>
 <span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
-<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'apue/server'</span>;
+<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/server'</span>;
 <span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
 
 <span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
@@ -119,11 +122,11 @@
 console.log(<span class="tok-s">`listening on https://localhost:${port}`</span>);</code></pre></figure>
 
 <h3 id="3-a-typed-client">3. A typed client</h3>
-<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving. In browsers, use <code>fetchTransport</code> from <code>apue</code> or <code>autoTransport</code> from <code>apue/websocket</code> — see the <a href="client.html">client reference</a>.</p>
+<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving. In browsers, use <code>fetchTransport</code> from <code>@michaellocher/apue</code> or <code>autoTransport</code> from <code>@michaellocher/apue/websocket</code> — see the <a href="client.html">client reference</a>.</p>
 <figure class="code"><figcaption>client.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-c">// client.ts — node client.ts</span>
 <span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
-<span class="tok-k">import</span> { ApueClient } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
-<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'apue/http2'</span>;
+<span class="tok-k">import</span> { ApueClient } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/http2'</span>;
 <span class="tok-k">import</span> { api } <span class="tok-k">from</span> <span class="tok-s">'./api.ts'</span>;
 
 <span class="tok-k">const</span> url = process.env.URL ?? <span class="tok-s">'https://localhost:8443'</span>;

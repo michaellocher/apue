@@ -32,7 +32,7 @@ export interface Manifest {
 
 export interface CodegenOptions {
   /**
-   * Where the generated module imports apü from: a package name (e.g. `apue` — one import from
+   * Where the generated module imports apü from: a package name (e.g. `@michaellocher/apue` — one import from
    * the package) or the path of a source checkout's runtime directory (`./apue/src` — imports
    * `api.ts` and `schema.ts` from it).
    */

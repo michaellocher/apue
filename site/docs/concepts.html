@@ -43,7 +43,7 @@
 
 <h2 id="operations">Operations</h2>
 <p>An operation is identified by a dotted name such as <code>users.get</code> (letters, digits, <code>_</code> and <code>-</code>, each segment starting with a letter) and is served at <code>{base}/{op}</code>: the name in the path is easy to route and compresses well in HPACK.</p>
-<figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { defineApi, op, t, <span class="tok-k">type</span> Infer } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { defineApi, op, t, <span class="tok-k">type</span> Infer } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
 
 <span class="tok-k">export</span> <span class="tok-k">const</span> User = t.object({
   id: t.string(),

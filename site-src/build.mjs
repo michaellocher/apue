@@ -160,20 +160,21 @@ function snippet(name) {
     });
 }
 
+const PACKAGE = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).name;
 const ENTRY_POINTS = {
-  index: 'apue',
-  server: 'apue/server',
-  downloads: 'apue/downloads',
-  'transport-http2': 'apue/http2',
-  'transport-ws': 'apue/websocket',
-  'entry/codegen': 'apue/codegen',
+  index: PACKAGE,
+  server: `${PACKAGE}/server`,
+  downloads: `${PACKAGE}/downloads`,
+  'transport-http2': `${PACKAGE}/http2`,
+  'transport-ws': `${PACKAGE}/websocket`,
+  'entry/codegen': `${PACKAGE}/codegen`,
 };
 
 // Every entry point used for display must exist in package.json "exports" (and point at that file).
 {
   const exports = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).exports;
   for (const [file, entry] of Object.entries(ENTRY_POINTS)) {
-    const target = exports[entry === 'apue' ? '.' : entry.replace(/^apue/, '.')]?.default;
+    const target = exports[entry === PACKAGE ? '.' : `.${entry.slice(PACKAGE.length)}`]?.default;
     if (target !== `./dist/src/${file}.js`) throw new Error(`package.json exports: ${entry} → ${target}, expected ./dist/src/${file}.js`);
   }
 }

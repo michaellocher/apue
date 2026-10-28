@@ -34,7 +34,7 @@ try {
   run('openssl', ['req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1', '-keyout', 'key.pem', '-out', 'cert.pem', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], app);
 
   writeFileSync(join(app, 'api.mjs'), `
-import { defineApi, op, t } from 'apue';
+import { defineApi, op, t } from '@michaellocher/apue';
 export const api = defineApi({
   'users.get': op({ effect: 'safe', input: t.object({ id: t.string() }), output: t.object({ id: t.string(), name: t.string() }) }),
   'count.up': op({ effect: 'safe', stream: 'server', input: t.object({ to: t.number() }), output: t.number() }),
@@ -43,8 +43,8 @@ export const api = defineApi({
 `);
   writeFileSync(join(app, 'server.mjs'), `
 import { readFileSync, writeFileSync } from 'node:fs';
-import { createApueServer } from 'apue/server';
-import { download } from 'apue/downloads';
+import { createApueServer } from '@michaellocher/apue/server';
+import { download } from '@michaellocher/apue/downloads';
 import { api } from './api.mjs';
 const server = createApueServer(api, {
   'users.get': ({ id }) => ({ id, name: 'user ' + id }),
@@ -58,10 +58,10 @@ process.on('SIGTERM', async () => { await server.close(); process.exit(0); });
   writeFileSync(join(app, 'client.mjs'), `
 import { readFileSync } from 'node:fs';
 import tls from 'node:tls';
-import { ApueClient, ApueError } from 'apue';
-import { http2Transport } from 'apue/http2';
-import { webSocketTransport, autoTransport } from 'apue/websocket';
-import { generateApi, generatePython } from 'apue/codegen';
+import { ApueClient, ApueError } from '@michaellocher/apue';
+import { http2Transport } from '@michaellocher/apue/http2';
+import { webSocketTransport, autoTransport } from '@michaellocher/apue/websocket';
+import { generateApi, generatePython } from '@michaellocher/apue/codegen';
 import { api } from './api.mjs';
 const url = 'https://127.0.0.1:' + readFileSync('port.txt', 'utf8');
 const client = new ApueClient(api, http2Transport(url, { ca: readFileSync('cert.pem', 'utf8') }));
@@ -90,9 +90,9 @@ process.exit(0);
     console.log('runtime: server, client (unary, stream, download, problem) and all entry points work from the installed package');
     writeFileSync(join(app, 'dpop.mjs'), `
 import { readFileSync } from 'node:fs';
-import { ApueClient, createDpopSigner, dpopHeaders } from 'apue';
-import { createApueServer, dpopVerifier } from 'apue/server';
-import { http2Transport } from 'apue/http2';
+import { ApueClient, createDpopSigner, dpopHeaders } from '@michaellocher/apue';
+import { createApueServer, dpopVerifier } from '@michaellocher/apue/server';
+import { http2Transport } from '@michaellocher/apue/http2';
 import { api } from './api.mjs';
 const dpop = dpopVerifier();
 const server = createApueServer(api, {
@@ -118,8 +118,8 @@ process.exit(0);
 
     const url = `https://127.0.0.1:${readFileSync(join(app, 'port.txt'), 'utf8')}`;
     run(join(app, 'node_modules', '.bin', 'apue-types'), [url, '--ca', 'cert.pem', '--out', 'api.gen.ts'], app);
-    if (!readFileSync(join(app, 'api.gen.ts'), 'utf8').includes("from 'apue';")) throw new Error('generated TypeScript does not import from the package');
-    writeFileSync(join(app, 'use.ts'), `import { ApueClient } from 'apue';\nimport { http2Transport } from 'apue/http2';\nimport { api } from './api.gen.ts';\nconst c = new ApueClient(api, http2Transport('https://x'));\nconst u: { id: string; name: string } = await c.call('users.get', { id: 'a' });\n// @ts-expect-error: wrong input type\nawait c.call('users.get', { id: 1 });\nvoid u;\n`);
+    if (!readFileSync(join(app, 'api.gen.ts'), 'utf8').includes("from '@michaellocher/apue';")) throw new Error('generated TypeScript does not import from the package');
+    writeFileSync(join(app, 'use.ts'), `import { ApueClient } from '@michaellocher/apue';\nimport { http2Transport } from '@michaellocher/apue/http2';\nimport { api } from './api.gen.ts';\nconst c = new ApueClient(api, http2Transport('https://x'));\nconst u: { id: string; name: string } = await c.call('users.get', { id: 'a' });\n// @ts-expect-error: wrong input type\nawait c.call('users.get', { id: 1 });\nvoid u;\n`);
     writeFileSync(join(app, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'esnext', module: 'nodenext', strict: true, noEmit: true, allowImportingTsExtensions: true, types: ['node'], skipLibCheck: false }, files: ['use.ts'] }));
     run(join(root, 'node_modules', '.bin', 'tsc'), ['-p', join(app, 'tsconfig.json'), '--typeRoots', join(root, 'node_modules', '@types')], app);
     console.log('types: generated TypeScript imports from the package and typechecks against its declarations');

@@ -42,7 +42,7 @@
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#cache-headers-from-the-operation">Cache headers from the operation</a></li><li><a href="#query-and-cdns">QUERY and CDNs</a></li><li><a href="#through-real-proxies">Through real proxies</a></li><li><a href="#behind-load-balancers">Behind load balancers</a></li><li><a href="#compression">Compression</a></li></ul></nav>
 
 <h2 id="cache-headers-from-the-operation">Cache headers from the operation</h2>
-<figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<figure class="code"><figcaption>api.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { defineApi, op } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
 
 <span class="tok-k">export</span> <span class="tok-k">const</span> api = defineApi({
   <span class="tok-s">'products.get'</span>: op({

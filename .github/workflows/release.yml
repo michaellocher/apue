@@ -1,9 +1,8 @@
 # Releases on a version tag without "v" prefix (e.g. 0.1.0-beta.1, 0.1.0): verifies everything,
-# publishes to npm (pre-releases under the "beta" dist-tag; with provenance once the repository is
-# public — npm generates none for private repositories) and creates a GitHub release with the
-# package tarball and the changelog section. Needs the secret NPM_TOKEN (environment "npm").
-# Run it by hand (Actions → Release → Run workflow) for a dry run of the whole pipeline: everything
-# up to `npm publish --dry-run`, no secret needed, nothing published.
+# publishes @michaellocher/apue to GitHub Packages (npm.pkg.github.com, with the workflow's own
+# GITHUB_TOKEN; pre-releases under the "beta" dist-tag) and creates a GitHub release with the package
+# tarball and the changelog section. Run it by hand (Actions → Release → Run workflow) for a dry run
+# of the whole pipeline: everything up to `npm publish --dry-run`, nothing published.
 name: Release
 
 on:
@@ -14,15 +13,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
+  contents: write  # the GitHub release
+  packages: write  # GitHub Packages
 
 jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    # The dry run needs no secret, so it doesn't wait for the environment's reviewer.
-    environment: ${{ github.event_name == 'push' && 'npm' || '' }}
     env:
       DRY_RUN: ${{ github.event_name != 'push' }}
     steps:
@@ -31,7 +28,8 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
+          scope: '@michaellocher'
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -70,21 +68,17 @@ jobs:
       - run: npm run verify:package
       - name: Pack
         run: npm pack --ignore-scripts
-      - name: Publish to npm
+      - name: Publish to GitHub Packages
         run: |
           case "$VERSION" in
             *-*) tag=beta ;;
             *) tag=latest ;;
           esac
-          # npm generates no provenance for private repositories (the publish would fail with it).
-          provenance=--provenance
-          [ "$PRIVATE" = true ] && provenance=
           dry=
           [ "$DRY_RUN" = true ] && dry=--dry-run
-          npm publish --ignore-scripts $provenance $dry --access public --tag "$tag"
+          npm publish --ignore-scripts $dry --tag "$tag"
         env:
-          PRIVATE: ${{ github.event.repository.private }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Release notes from the changelog
         run: |
           awk -v v="## $VERSION " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > release-notes.md
@@ -95,4 +89,4 @@ jobs:
         with:
           body_path: release-notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: apue-*.tgz
+          files: michaellocher-apue-*.tgz

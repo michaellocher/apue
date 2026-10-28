@@ -1,17 +1,20 @@
-<!--{"path":"docs/getting-started.html","layout":"docs","title":"Getting started — apü","description":"Install apü from npm (npm install apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers."}-->
+<!--{"path":"docs/getting-started.html","layout":"docs","title":"Getting started — apü","description":"Install apü from GitHub Packages (npm install @michaellocher/apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Start</p>
 <h1>Getting started</h1>
 <p class="page-intro">Install the package, then build a small API: one cacheable read and one server stream, called from a typed client and from curl.</p>
 {{toc}}
 
 <h2>Install</h2>
+<p>The beta is published to GitHub Packages, which asks for a token even to install: a personal access token (classic) with <code>read:packages</code>, read here from <code>GITHUB_TOKEN</code>. The two <code>.npmrc</code> lines can also go into <code>~/.npmrc</code>, once.</p>
 {{pre:console|a new project}}
 $ npm init -y && npm pkg set type=module
-$ npm install apue@beta
+$ echo '@michaellocher:registry=https://npm.pkg.github.com' >> .npmrc
+$ echo '//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}' >> .npmrc
+$ npm install @michaellocher/apue@beta
 {{/pre}}
 <ul>
   <li><strong>Node ≥ 26.11</strong> for the server and the Node client. Node runs your <code>.ts</code> files directly (type stripping) — no build step. The package itself ships JavaScript and type declarations.</li>
-  <li>The web-safe core (<code>apue</code>, <code>apue/websocket</code>) runs in browsers too. No runtime dependencies.</li>
+  <li>The web-safe core (<code>@michaellocher/apue</code>, <code>@michaellocher/apue/websocket</code>) runs in browsers too. No runtime dependencies.</li>
   <li>A TLS certificate: apü servers speak HTTP/2 over TLS (with HTTP/1.1 fallback). For local development, a self-signed one will do (below).</li>
 </ul>
 <div class="callout">
@@ -23,12 +26,12 @@ $ npm install apue@beta
 <table data-label="Entry points">
   <thead><tr><th scope="col">Import</th><th scope="col">What</th><th scope="col">Runs in</th></tr></thead>
   <tbody>
-    <tr><td><code>apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code>, <code>createDpopSigner</code>, <code>dpopHeaders</code></td><td>browsers, Node</td></tr>
-    <tr><td><code>apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options, <code>dpopVerifier</code></td><td>Node</td></tr>
-    <tr><td><code>apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
-    <tr><td><code>apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
-    <tr><td><code>apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
-    <tr><td><code>apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code>, <code>generateSwift</code></td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue</code></td><td><code>defineApi</code>, <code>op</code>, <code>t</code> (schemas), <code>ApueClient</code>, <code>fetchTransport</code>, <code>ApueError</code>, <code>Download</code>, <code>createDpopSigner</code>, <code>dpopHeaders</code></td><td>browsers, Node</td></tr>
+    <tr><td><code>@michaellocher/apue/server</code></td><td><code>createApueServer</code>, <code>Handlers</code>, <code>CallContext</code>, server options, <code>dpopVerifier</code></td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue/downloads</code></td><td><code>download.fromFile()</code>, <code>download.fromBytes()</code> for <code>t.download()</code> outputs</td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue/http2</code></td><td><code>http2Transport</code> (full duplex)</td><td>Node</td></tr>
+    <tr><td><code>@michaellocher/apue/websocket</code></td><td><code>webSocketTransport</code>, <code>autoTransport</code> (streaming uploads in every browser)</td><td>browsers</td></tr>
+    <tr><td><code>@michaellocher/apue/codegen</code></td><td><code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code>, <code>generateSwift</code></td><td>Node</td></tr>
     <tr><td><code>apue-types</code> (CLI)</td><td>typed TypeScript modules, or Python, Go, Java and Swift clients, from a server’s manifest</td><td>Node</td></tr>
   </tbody>
 </table>
@@ -50,7 +53,7 @@ mkdir -p certs && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime2
 {{code:hello/server.ts|server.ts}}
 
 <h3>3. A typed client</h3>
-<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving. In browsers, use <code>fetchTransport</code> from <code>apue</code> or <code>autoTransport</code> from <code>apue/websocket</code> — see the <a href="client.html">client reference</a>.</p>
+<p>In Node, <code>http2Transport</code> uses <code>node:http2</code> (full duplex). The client validates input before sending and output after receiving. In browsers, use <code>fetchTransport</code> from <code>@michaellocher/apue</code> or <code>autoTransport</code> from <code>@michaellocher/apue/websocket</code> — see the <a href="client.html">client reference</a>.</p>
 {{code:hello/client.ts|client.ts}}
 {{pre:console|run it}}
 $ node server.ts &

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Generates a typed apü API definition from a server's manifest.
-//   apue-types https://api.example [--runtime apue | ./apue/src] [--out api.ts] [--ca cert.pem]
+//   apue-types https://api.example [--runtime @michaellocher/apue | ./apue/src] [--out api.ts] [--ca cert.pem]
 //   apue-types https://api.example --lang python [--out api.py]   (self-contained module)
 //   apue-types https://api.example --lang go [--package api] [--out api.go]   (self-contained file)
 //   apue-types https://api.example --lang java [--package com.example.api] [--out Api.java]   (self-contained source file)
@@ -17,7 +17,7 @@ import { generateSwift } from '../src/codegen-swift.ts';
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { runtime: { type: 'string', default: 'apue' }, out: { type: 'string' }, ca: { type: 'string' }, name: { type: 'string', default: 'api' }, lang: { type: 'string', default: 'typescript' }, package: { type: 'string' } },
+  options: { runtime: { type: 'string', default: '@michaellocher/apue' }, out: { type: 'string' }, ca: { type: 'string' }, name: { type: 'string', default: 'api' }, lang: { type: 'string', default: 'typescript' }, package: { type: 'string' } },
 });
 const base = positionals[0];
 if (!base) throw new Error('usage: apue-types <base-url> [--lang typescript|python|go|java|swift] [--runtime path] [--package name] [--out file] [--ca cert.pem]');

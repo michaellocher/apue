@@ -1,6 +1,6 @@
 // apü — the web-safe core: contracts (`op`, `defineApi`), schemas (`t`), the client with its fetch
-// transport, and errors. Runs in browsers, Node, Deno and Bun. Node-only parts: `apue/server`,
-// `apue/downloads`, `apue/http2`, `apue/codegen`; WebSocket transports: `apue/websocket`.
+// transport, and errors. Runs in browsers, Node, Deno and Bun. Node-only parts: `@michaellocher/apue/server`,
+// `@michaellocher/apue/downloads`, `@michaellocher/apue/http2`, `@michaellocher/apue/codegen`; WebSocket transports: `@michaellocher/apue/websocket`.
 export { canonicalJson, defineApi, op, type Api, type CachePolicy, type Deprecation, type Effect, type InputOf, type OpDef, type OutputOf, type StreamKind } from './api.ts';
 export { t, ValidationError, type DownloadRef, type DownloadSource, type FileValue, type Infer, type Issue, type Schema } from './schema.ts';
 export {

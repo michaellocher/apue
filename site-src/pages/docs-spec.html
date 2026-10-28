@@ -1,7 +1,7 @@
 <!--{"path":"docs/spec.html","layout":"docs","title":"Spec & research — apü","description":"What the apü draft spec (draft 01) covers section by section and what is implemented, decided or blocked, the research notes behind the decisions, and the spike log S0–S29."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Background</p>
 <h1>Spec &amp; research</h1>
-<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01) in the apü repository, next to eleven research notes and a log of every spike. The toolkit implementing it is <code>apue</code> 0.1.0-beta on npm. The repository is private for now; this page summarises what is in it and where to look.</p>
+<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01) in the apü repository, next to eleven research notes and a log of every spike. The toolkit implementing it is <code>@michaellocher/apue</code> 0.1.0-beta on GitHub Packages. The repository is private for now; this page summarises what is in it and where to look.</p>
 {{toc}}
 
 <h2>Goals and non-goals</h2>
@@ -25,7 +25,7 @@
     <tr><td>11</td><td>Schemas, manifest, derived docs, API catalog, OpenAPI 3.2, generated clients (TypeScript, Python, Go, Java, Swift), evolution</td><td><span class="tag tag-ok">implemented</span></td><td><a href="manifest.html">Clients &amp; OpenAPI</a></td></tr>
     <tr><td>12</td><td>Data plane and performance guidance</td><td>guidance, measured</td><td><a href="measurements.html">Measurements</a></td></tr>
     <tr><td>13</td><td>Open questions</td><td>see below</td><td>below</td></tr>
-    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S32 done</td><td>below</td></tr>
+    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S33 done</td><td>below</td></tr>
   </tbody>
 </table>
 
@@ -80,6 +80,7 @@
     <tr><td>S29</td><td>Clients: Python complete (resume, batches, compression, validation), Go (full duplex) and Java</td></tr>
     <tr><td>S30–S31</td><td>Beta hardening: live streams in WebKit on Linux (brotli held back), uploads over emulated networks (a session memory limit and an outdated offset on resume, both fixed)</td></tr>
     <tr><td>S32</td><td>Release dry run on GitHub Actions (provenance needs a public repository), the Swift client on Linux, DPoP proofs</td></tr>
+    <tr><td>S33</td><td>Published through GitHub Packages as <code>@michaellocher/apue</code></td></tr>
   </tbody>
 </table>
 <p>The suite stood at 404 tests after S32, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in the spike log and in <code>docs/status.md</code>.</p>

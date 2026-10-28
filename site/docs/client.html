@@ -82,9 +82,9 @@
 </table></div>
 
 <h2 id="transports">Transports</h2>
-<figure class="code"><figcaption>transports</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
-<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'apue/http2'</span>;
-<span class="tok-k">import</span> { autoTransport, webSocketTransport } <span class="tok-k">from</span> <span class="tok-s">'apue/websocket'</span>;
+<figure class="code"><figcaption>transports</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
+<span class="tok-k">import</span> { http2Transport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/http2'</span>;
+<span class="tok-k">import</span> { autoTransport, webSocketTransport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/websocket'</span>;
 
 <span class="tok-c">// Node, server to server: node:http2, full duplex (tier T1), zstd/br/gzip, 4 MiB windows.</span>
 <span class="tok-k">const</span> ca = readFileSync(<span class="tok-s">'ca.pem'</span>);
@@ -118,8 +118,8 @@
 
 <h2 id="in-the-browser">In the browser</h2>
 <p><code>apue</code> and <code>apue/websocket</code> are ES modules without dependencies and use web-platform APIs only. Serving the page and the API from one origin (the server’s <code>fallback</code> hook) needs no CORS:</p>
-<figure class="code"><figcaption>app.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
-<span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'apue/websocket'</span>;
+<figure class="code"><figcaption>app.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueClient, fetchTransport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
+<span class="tok-k">import</span> { autoTransport } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/websocket'</span>;
 
 <span class="tok-c">// Same origin: no CORS, no preflights. fetch for calls and response streams (HTTP caching, HTTP/2).</span>
 <span class="tok-k">const</span> client = <span class="tok-k">new</span> ApueClient(api, fetchTransport(location.origin));

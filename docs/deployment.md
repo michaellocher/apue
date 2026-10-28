@@ -7,7 +7,7 @@ end to end by `node scripts/verify-deployment.ts` (needs Docker).
 
 ## Runtime
 
-- **Node ≥ 26.11** (`npm install apue`; the package ships JavaScript, no type stripping needed).
+- **Node ≥ 26.11** (`npm install @michaellocher/apue`; the package ships JavaScript, no type stripping needed).
 - **TLS is required**: the server speaks HTTP/2 over TLS with HTTP/1.1 fallback (`key`, `cert`).
   Terminating TLS at a proxy is fine; the proxy then talks to the replica over TLS as well.
 - One process per CPU core is the usual layout; the server is single-threaded like any Node server.

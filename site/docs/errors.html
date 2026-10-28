@@ -58,7 +58,7 @@ cache-control: no-store
 
 <h2 id="throwing-and-catching">Throwing and catching</h2>
 <p>Handlers throw <code>ApueError(status, title, detail?, extensions?, headers?)</code>. Its extension members end up in the problem, its headers in the response. Clients throw the same class, carrying the decoded problem.</p>
-<figure class="code"><figcaption>server and client</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
+<figure class="code"><figcaption>server and client</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
 
 <span class="tok-k">const</span> handlers: Handlers&lt;<span class="tok-k">typeof</span> api&gt; = {
   <span class="tok-s">'orders.cancel'</span>: ({ id }) =&gt; {

@@ -1,5 +1,5 @@
 {
-  "name": "apue",
+  "name": "@michaellocher/apue",
   "version": "0.1.0-beta.1",
   "description": "apü — typed API operations on plain HTTP: cacheable reads, streaming in every direction, resumable streams, uploads and downloads, pipelined batches. Server, clients and code generators.",
   "type": "module",
@@ -30,6 +30,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/michaellocher/apue.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "bugs": {
     "url": "https://github.com/michaellocher/apue/issues"

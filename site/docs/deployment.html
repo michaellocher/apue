@@ -43,7 +43,7 @@
 
 <h2 id="runtime">Runtime</h2>
 <ul>
-  <li><strong>Node ≥ 26.11</strong> and <code>npm install apue@beta</code>. The package ships JavaScript, so no type stripping is needed inside <code>node_modules</code>.</li>
+  <li><strong>Node ≥ 26.11</strong> and <code>npm install @michaellocher/apue@beta</code>. The package ships JavaScript, so no type stripping is needed inside <code>node_modules</code>.</li>
   <li><strong>TLS is required</strong>: the server speaks HTTP/2 over TLS with HTTP/1.1 fallback (<code>key</code>, <code>cert</code>). Terminating TLS at a proxy is fine; the proxy then talks to the replica over TLS as well.</li>
   <li>One process per CPU core is the usual layout; the server is single-threaded like any Node server.</li>
 </ul>
@@ -51,8 +51,8 @@
 <h2 id="a-production-server">A production server</h2>
 <p>The repository’s template (<code>examples/production/server.ts</code>, typechecked with the project) with package imports. Configuration comes from the environment; plug in your handlers, authentication and a shared idempotency store.</p>
 <figure class="code"><figcaption>server.ts</figcaption><pre tabindex="0"><code class="language-ts"><span class="tok-k">import</span> { readFileSync } <span class="tok-k">from</span> <span class="tok-s">'node:fs'</span>;
-<span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'apue'</span>;
-<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'apue/server'</span>;
+<span class="tok-k">import</span> { ApueError } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue'</span>;
+<span class="tok-k">import</span> { createApueServer, <span class="tok-k">type</span> Handlers } <span class="tok-k">from</span> <span class="tok-s">'@michaellocher/apue/server'</span>;
 
 <span class="tok-k">const</span> server = createApueServer(api, handlers, {
   key: readFileSync(env(<span class="tok-s">'TLS_KEY'</span>)),

@@ -14,13 +14,18 @@ export type BeginResult =
   | { state: 'in-progress' }
   | { state: 'mismatch' };
 
+/**
+ * Where Idempotency-Key claims and results live. The built-in MemoryIdempotencyStore is per
+ * process; replicas share keys through a store implementing this contract over shared storage
+ * (e.g. Redis: `SET key … NX PX` for begin) — methods may return promises for that.
+ */
 export interface IdempotencyStore {
   /** Atomically claims `key` for `fingerprint`, or reports why it can't be claimed. */
-  begin(key: string, fingerprint: string): BeginResult;
+  begin(key: string, fingerprint: string): BeginResult | Promise<BeginResult>;
   /** Stores the final response of a claimed key. */
-  complete(key: string, response: StoredResponse): void;
+  complete(key: string, response: StoredResponse): void | Promise<void>;
   /** Releases a claimed key without storing (e.g. on 5xx), so a retry can execute again. */
-  release(key: string): void;
+  release(key: string): void | Promise<void>;
 }
 
 interface Entry {

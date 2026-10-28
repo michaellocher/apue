@@ -20,6 +20,8 @@ export interface DownloadOptions {
   ttlMs?: number;
   /** Download resources held at once (oldest dropped first). Default 10,000. */
   maxEntries?: number;
+  /** Prefix of download ids (`<instance>.<random>`) for routing by replica; set by the server's `instance` option. */
+  instance?: string;
 }
 
 /** Ready-made sources for t.download() outputs. */
@@ -68,12 +70,15 @@ export class DownloadStore {
   #entries = new Map<string, Entry>(); // insertion order = expiry order
   #now: () => number;
 
-  constructor({ ttlMs = 15 * 60 * 1000, maxEntries = 10_000 }: DownloadOptions = {}, now: () => number = Date.now) {
+  #prefix: string;
+
+  constructor({ ttlMs = 15 * 60 * 1000, maxEntries = 10_000, instance }: DownloadOptions = {}, now: () => number = Date.now) {
     for (const [name, value] of Object.entries({ ttlMs, maxEntries })) {
       if (!(Number.isSafeInteger(value) && value > 0)) throw new RangeError(`downloads.${name} must be a positive integer, got ${value}`);
     }
     this.ttlMs = ttlMs;
     this.maxEntries = maxEntries;
+    this.#prefix = instance === undefined ? '' : `${instance}.`;
     this.#now = now;
   }
 
@@ -81,7 +86,7 @@ export class DownloadStore {
   register(source: DownloadSource): DownloadRef {
     this.#sweep();
     if (this.#entries.size >= this.maxEntries) this.#entries.delete(this.#entries.keys().next().value!);
-    const id = randomBytes(16).toString('base64url');
+    const id = `${this.#prefix}${randomBytes(16).toString('base64url')}`;
     const expires = this.#now() + this.ttlMs;
     this.#entries.set(id, { source, expires, etag: `"${id}"` });
     return {
@@ -91,6 +96,20 @@ export class DownloadStore {
       ...(source.sha256 === undefined ? {} : { sha256: source.sha256 }),
       expires: new Date(expires).toISOString(),
     };
+  }
+
+  /**
+   * For an Idempotency-Key replay: the reference again with a fresh expiry, if its download is
+   * still registered — undefined once it is gone (the stored response can't revive it).
+   */
+  refresh(ref: DownloadRef): DownloadRef | undefined {
+    const id = ref.$download.slice(DOWNLOADS_PATH.length + 1);
+    const entry = this.get(id);
+    if (!entry) return undefined;
+    entry.expires = this.#now() + this.ttlMs;
+    this.#entries.delete(id); // re-inserted last: insertion order stays expiry order
+    this.#entries.set(id, entry);
+    return { ...ref, expires: new Date(entry.expires).toISOString() };
   }
 
   get(id: string): Entry | undefined {

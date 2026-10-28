@@ -31,7 +31,7 @@ import { ResumeTokens, type ResumeOptions } from './resume.ts';
 import { compileSelection, MAX_SELECT_PATHS, project, SelectionError, type Selection } from './select.ts';
 import { HTTP_CONVENTIONS, opErrors, opExample, opHttp, PROTOCOL_ERRORS } from './docs.ts';
 import { BlobAssembler, blobChunks, decodeFramedValue, messageFrames, splitMessage } from './blobs.ts';
-import { containsBytes, containsDownload, isDownloadSource, mapBytes, mapDownloads, ValidationError } from './schema.ts';
+import { containsBytes, containsDownload, isDownloadRef, isDownloadSource, mapBytes, mapDownloads, ValidationError } from './schema.ts';
 import { DownloadStore, DOWNLOADS_PATH, serveDownload, type DownloadOptions } from './downloads.ts';
 import { handleUpload, UploadStore, UPLOADS_PATH, type UploadOptions } from './uploads.ts';
 
@@ -113,6 +113,12 @@ export interface ApueServerOptions {
    * are dropped. Infinity waits for every call. Default 10 s.
    */
   shutdownGraceMs?: number;
+  /**
+   * This replica's name, prefixed to upload and download ids (`/$uploads/eu-1.<id>`): uploads and
+   * download resources live in the replica that created them, and a load balancer routes their
+   * URLs by this prefix (docs/deployment.md). 1–32 characters: letters, digits, `-`.
+   */
+  instance?: string;
   /** A unary request body must arrive within this time, else 408 (slow-body protection). Default 30 s. */
   bodyTimeoutMs?: number;
   /**
@@ -400,8 +406,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   let drainedWaiter: (() => void) | undefined;
   if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
   checkWindow('webSocketWindow', webSocketWindow);
-  const uploads = options.uploads ? new UploadStore(options.uploads) : undefined;
-  const downloads = Object.values(api).some((def) => containsDownload(def.output)) || options.downloads ? new DownloadStore(options.downloads) : undefined;
+  if (options.instance !== undefined && !/^[A-Za-z0-9-]{1,32}$/.test(options.instance)) throw new RangeError(`instance must be 1–32 letters, digits or '-', got ${JSON.stringify(options.instance)}`);
+  const uploads = options.uploads ? new UploadStore({ ...options.uploads, ...(options.instance === undefined ? {} : { instance: options.instance }) }) : undefined;
+  const downloads =
+    Object.values(api).some((def) => containsDownload(def.output)) || options.downloads ? new DownloadStore({ ...options.downloads, ...(options.instance === undefined ? {} : { instance: options.instance }) }) : undefined;
   /** t.download() values in an output → references to download resources. */
   const withDownloads = (def: OpDef, value: unknown): unknown =>
     downloads && containsDownload(def.output) ? mapDownloads(def.output, value, (v) => (isDownloadSource(v) ? downloads.register(v) : v)) : value;
@@ -784,10 +792,27 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     let scope: string | undefined;
     if (key !== undefined && idempotency && def.effect !== 'safe') {
       scope = `${opName}\n${caller.scope}\n${key}`;
-      const claim = idempotency.begin(scope, hash(canonicalJson(identity ?? null)));
+      const claiming = idempotency.begin(scope, hash(canonicalJson(identity ?? null)));
+      const claim = claiming instanceof Promise ? await claiming : claiming; // no await for the in-memory store
       if (claim.state === 'replay') {
         const stored = claim.response;
-        const payload = baseMediaType(stored.headers['content-type']) === MediaType.STREAM_JSON ? decodeFramedValue(stored.body) : decodeJson(stored.body);
+        const framed = baseMediaType(stored.headers['content-type']) === MediaType.STREAM_JSON;
+        const payload = framed ? decodeFramedValue(stored.body) : decodeJson(stored.body);
+        if (downloads && containsDownload(def.output) && stored.status === 200) {
+          // The stored response's download URLs live minutes: refresh them, or say they're gone
+          // (never hand out a dead link, never run the operation twice).
+          let expired = false;
+          const refreshed = mapDownloads(def.output, payload, (ref) => (isDownloadRef(ref) ? (downloads.refresh(ref) ?? ((expired = true), ref)) : ref));
+          if (expired) {
+            return problemOutcome(
+              new ApueError(410, 'Download Expired', 'the stored result of this Idempotency-Key refers to a download that has expired; the operation was not run again', {
+                type: ProblemType.DOWNLOAD_EXPIRED,
+              }).problem,
+            );
+          }
+          const body = framed ? concatBytes([...messageFrames(refreshed), endFrame({ status: 200 })]) : encodeJson(refreshed);
+          return { ...stored, body, payload: refreshed, replayed: true };
+        }
         return { ...stored, payload, replayed: true };
       }
       if (claim.state === 'in-progress') {
@@ -819,7 +844,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         body: containsBytes(def.output) ? concatBytes([...messageFrames(value), endFrame({ status: 200 })]) : encodeJson(value),
         payload: value,
       };
-      if (scope) idempotency!.complete(scope, outcome);
+      const recorded = scope ? settleKey(idempotency!.complete(scope, outcome)) : undefined;
+      if (recorded) await recorded;
       return outcome;
     } catch (error) {
       const clientGone = ctx.signal.aborted && ctx.signal.reason instanceof ApueError && ctx.signal.reason.status === 499;
@@ -827,8 +853,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       if (scope) {
         // Deterministic client errors are stored so a retry gets the same answer; server errors
         // and aborted calls release the key so a retry can execute again.
-        if (outcome.status < 500 && !clientGone) idempotency!.complete(scope, outcome);
-        else idempotency!.release(scope);
+        const settled = settleKey(outcome.status < 500 && !clientGone ? idempotency!.complete(scope, outcome) : idempotency!.release(scope));
+        if (settled) await settled;
       }
       return outcome;
     }
@@ -1458,6 +1484,15 @@ function problemOutcome(problem: Problem, error?: unknown): StoredResponse & { p
   const headers: Record<string, string> = { 'content-type': MediaType.PROBLEM, 'cache-control': 'no-store' };
   if (error instanceof ApueError) Object.assign(headers, error.headers);
   return { status: problem.status, headers, body: encodeJson(problem), payload: problem };
+}
+
+/**
+ * Waits for an idempotency store to record a result (before the response goes out, so a fast retry
+ * sees it). A failure to store doesn't change the response — the operation already ran — it is
+ * logged: a retry with that key may run the operation again.
+ */
+function settleKey(result: void | Promise<void>): Promise<void> | void {
+  if (result instanceof Promise) return result.catch((error) => console.error('apü: the idempotency store failed to record a result', error));
 }
 
 /** True if `promise` settles within `ms` (Infinity: waits); the timer never keeps the process alive. */

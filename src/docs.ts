@@ -3,7 +3,7 @@
 // hand and nothing changes the API; it is computed once, with the manifest.
 import { hasRequestStream, hasResponseStream, isCacheableRead, MAX_GET_URL, type OpDef } from './api.ts';
 import { Header, MediaType, ProblemType, WS_AUTH_PREFIX, WS_SUBPROTOCOL } from './protocol.ts';
-import { containsBytes, type Schema } from './schema.ts';
+import { containsBytes, containsDownload, type Schema } from './schema.ts';
 
 /** A problem a call can be answered with: status and RFC 9457 type (`about:blank` when generic). */
 export interface ProblemRef {
@@ -75,6 +75,8 @@ export function opErrors(def: OpDef): ProblemRef[] {
   }
   if (def.effect !== 'safe' && def.stream === 'none') {
     errors.push(problem(409, 'Idempotency Key In Progress', ProblemType.IDEMPOTENCY_IN_PROGRESS), problem(422, 'Idempotency Key Reused', ProblemType.IDEMPOTENCY_MISMATCH));
+    // A replay whose stored result refers to a download that has expired (src/server.ts runUnary).
+    if (containsDownload(def.output)) errors.push(problem(410, 'Download Expired', ProblemType.DOWNLOAD_EXPIRED));
   }
   if (def.resumable) errors.push(problem(400, 'Invalid Resume Token', ProblemType.INVALID_RESUME_TOKEN));
   return errors;

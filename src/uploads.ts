@@ -15,8 +15,8 @@ export const PARTIAL_UPLOAD = 'application/partial-upload';
 const PROBLEMS = 'https://iana.org/assignments/http-problem-types';
 /** File-backed uploads are written in blocks of this size. */
 const WRITE_BLOCK = 1024 * 1024;
-/** Upload ids: 128 random bits, base64url. */
-const UPLOAD_ID = /^[A-Za-z0-9_-]{22}$/;
+/** Upload ids: an optional replica prefix, then 128 random bits, base64url. */
+const UPLOAD_ID = /^(?:[A-Za-z0-9-]{1,32}\.)?[A-Za-z0-9_-]{22}$/;
 
 export interface UploadOptions {
   /** Largest upload (Upload-Limit max-size). Default 64 MiB. */
@@ -50,6 +50,8 @@ export interface UploadOptions {
    * server's `listen()` does) before serving.
    */
   persistent?: boolean;
+  /** Prefix of upload ids (`<instance>.<random>`) for routing by replica; set by the server's `instance` option. */
+  instance?: string;
   now?: () => number;
 }
 
@@ -106,10 +108,11 @@ export class UploadStore {
   #directory: string | undefined;
   #files: Promise<string> | undefined; // the per-process subdirectory, created on first use
   #persistent: boolean;
+  #prefix: string;
   #ready: Promise<void> | undefined;
   #lock: string | undefined;
 
-  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, directory, persistent = false, now = Date.now }: UploadOptions = {}) {
+  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, directory, persistent = false, instance, now = Date.now }: UploadOptions = {}) {
     // A typo like `2 << 30` (negative) or a fraction would silently refuse or misaccount everything.
     for (const [name, value] of Object.entries({ maxBytes, storeBytes, ttlMs, scopeBytes, scopeUploads })) {
       if (value !== undefined && !(Number.isSafeInteger(value) && value > 0)) throw new RangeError(`uploads.${name} must be a positive integer, got ${value}`);
@@ -117,6 +120,7 @@ export class UploadStore {
     if (persistent && directory === undefined) throw new Error('uploads.persistent needs uploads.directory');
     this.#directory = directory;
     this.#persistent = persistent;
+    this.#prefix = instance === undefined ? '' : `${instance}.`;
     this.maxBytes = maxBytes;
     this.storeBytes = storeBytes;
     this.ttlMs = ttlMs;
@@ -149,7 +153,7 @@ export class UploadStore {
     // An announced length is reserved now, so parallel creations can't all pass and fail midway.
     if (length !== undefined && usage.bytes + length > this.scopeBytes) throw quotaExceeded(`${this.scopeBytes} bytes`);
     const upload: Upload = {
-      id: randomBytes(16).toString('base64url'),
+      id: `${this.#prefix}${randomBytes(16).toString('base64url')}`,
       scope,
       quota,
       expires: this.#now() + this.ttlMs,
@@ -479,7 +483,7 @@ export async function handleUpload(req: Exchange, store: UploadStore, scope: str
     if (req.method !== 'POST') throw notAllowed('OPTIONS, POST');
     return create(req, store, scope, quota);
   }
-  if (!/^[A-Za-z0-9_-]{22}$/.test(id)) throw notFound();
+  if (!UPLOAD_ID.test(id)) throw notFound();
   const upload = store.get(id, scope);
   switch (req.method) {
     case 'HEAD':

@@ -28,7 +28,9 @@ const api = defineApi({
   'export.many': op({ effect: 'safe', stream: 'server', input: t.object({ n: t.number() }), output: t.object({ i: t.number(), part: t.download() }) }),
   'export.optional': op({ effect: 'safe', input: t.void(), output: t.object({ archive: t.optional(t.download()) }) }),
   'export.corrupt': op({ effect: 'safe', input: t.void(), output: t.download() }),
+  'export.create': op({ effect: 'unsafe', input: t.object({ name: t.string() }), output: t.object({ n: t.number(), file: t.download() }) }),
 });
+let created = 0;
 const handlers: Handlers<typeof api> = {
   'export.bytes': () => ({ name: 'backup', archive: download.fromBytes(content, { type: 'application/zip', filename: 'Backup ü.zip' }) }),
   'export.file': () => fileSource(),
@@ -36,6 +38,7 @@ const handlers: Handlers<typeof api> = {
     for (let i = 0; i < n; i++) yield { i, part: download.fromBytes(new Uint8Array([i, i, i])) };
   },
   'export.optional': () => ({}),
+  'export.create': ({ name }) => ({ n: ++created, file: download.fromBytes(new TextEncoder().encode(name)) }),
   // Announces the digest of other content: a corrupted store, a bug, a tampering intermediary.
   'export.corrupt': () => ({ ...download.fromBytes(new Uint8Array(1000)), sha256: sha(new Uint8Array(1000).fill(1)) }),
 };
@@ -210,5 +213,22 @@ describe('over the wire', () => {
     const corrupt = await client.call('export.corrupt');
     await assert.rejects(corrupt.bytes(), (e: ApueError) => e.status === 502 && /SHA-256/.test(e.message + JSON.stringify(e.problem)));
     await assert.rejects(Array.fromAsync(corrupt.stream()), (e: ApueError) => e.status === 502);
+  });
+
+  test('an Idempotency-Key replay refreshes its download URLs; once they expired it is a 410, never a second run', async (ctx) => {
+    const { client } = await setup(ctx, { downloads: { ttlMs: 300 } });
+    const before = created;
+    const first = await client.call('export.create', { name: 'a' }, { idempotencyKey: 'k-download' });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const replay = await client.call('export.create', { name: 'a' }, { idempotencyKey: 'k-download' });
+    assert.equal(created, before + 1, 'the replay did not run the operation');
+    assert.equal(replay.n, first.n);
+    assert.equal(replay.file.url, first.file.url);
+    assert.ok(replay.file.expires.getTime() > first.file.expires.getTime(), 'expiry refreshed');
+    await new Promise((resolve) => setTimeout(resolve, 200)); // beyond the first expiry, within the refreshed one
+    assert.equal(new TextDecoder().decode(await replay.file.bytes()), 'a');
+    await new Promise((resolve) => setTimeout(resolve, 350)); // now expired
+    await assert.rejects(client.call('export.create', { name: 'a' }, { idempotencyKey: 'k-download' }), (e: ApueError) => e.status === 410 && e.problem.type === 'https://apue.dev/problems/download-expired');
+    assert.equal(created, before + 1, 'still not run again');
   });
 });

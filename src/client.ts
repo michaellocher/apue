@@ -451,7 +451,7 @@ export class ApueClient<A extends Api> {
     if (created.res.status !== 201) throw problemError(created.body, created.res.status);
     const location = created.res.headers.get('location') ?? '';
     // Only ever PATCH (and later DELETE) our own upload resources: the id comes from this checked location.
-    const id = /^\/\$uploads\/([A-Za-z0-9_-]+)$/.exec(location)?.[1];
+    const id = /^\/\$uploads\/((?:[A-Za-z0-9-]{1,32}\.)?[A-Za-z0-9_-]+)$/.exec(location)?.[1]; // optional replica prefix
     if (!id) throw new ApueError(502, 'Bad Gateway', `unexpected upload location ${JSON.stringify(location)}`);
     try {
       let offset = 0;

@@ -154,21 +154,23 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
   // Chrome as "Inspected target navigated or closed").
   const script = `(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const count = () => document.querySelectorAll('#list li').length;
-    const until = async (fn) => { for (let i = 0; i < 250 && !fn(); i++) await sleep(20); return fn(); };
-    // The change stream replays earlier browsers' todos after the page is ready: count only once the
-    // list has been stable for 300 ms (counting mid-replay gave 102 instead of 101 in Firefox).
-    for (let last = -1, stableSince = Date.now(); Date.now() - stableSince < 300; await sleep(20)) {
-      if (count() !== last) [last, stableSince] = [count(), Date.now()];
-    }
-    const before = count();
+    const rendered = () => document.querySelectorAll('#list li').length;
+    const until = async (fn) => { for (let i = 0; i < 250; i++) { if (await fn()) return true; await sleep(20); } return false; };
+    // Counted on the server, not in the list: the change stream replays earlier browsers' todos for
+    // a while after the page is ready, and counting the list mid-replay was off (102 in Firefox
+    // locally, 109 in WebKit on a slower CI machine).
+    const serverCount = async () => (await (await fetch('/todos.list', { cache: 'no-store' })).json()).length;
+    const before = await serverCount();
     const form = document.querySelector('#add');
     form.title.value = 'from the browser';
     form.requestSubmit();
-    const added = await until(() => count() >= before + 1);
+    const added = await until(async () => (await serverCount()) >= before + 1);
     document.querySelector('#import').click();
-    const imported = await until(() => count() >= before + 101);
-    return JSON.stringify({ added, imported, count: count() - before, log: document.querySelector('#log').textContent.split('\\n')[0] });
+    const imported = await until(() => document.querySelector('#log').textContent.includes('imported 100'));
+    const after = await serverCount();
+    // …and the live stream shows every todo the server has.
+    const shown = await until(() => rendered() === after);
+    return JSON.stringify({ added, imported, count: after - before, shown, log: document.querySelector('#log').textContent.split('\\n')[0] });
   })()`;
 
   for (const [name, binary, drive] of [
@@ -177,11 +179,12 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
     ['WebKit', WEBKIT, runInWebKit],
   ] as const) {
     test(name, { skip: existsSync(binary) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
-      const result = (await drive(binary, `${example!.url}/`, "document.readyState === 'complete' && document.querySelector('#add')?.onsubmit != null", script)) as { added: boolean; imported: boolean; count: number; log: string };
+      const result = (await drive(binary, `${example!.url}/`, "document.readyState === 'complete' && document.querySelector('#add')?.onsubmit != null", script)) as { added: boolean; imported: boolean; count: number; shown: boolean; log: string };
       t.diagnostic(JSON.stringify(result));
       assert.equal(result.added, true);
       assert.equal(result.imported, true);
       assert.equal(result.count, 101);
+      assert.equal(result.shown, true, 'the page renders every todo the server has');
     });
   }
 });

@@ -123,10 +123,12 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     }
     await Array.fromAsync(ws.duplex('echo.duplex', one()));
     const version = await credentialed.call('stats.lastDuplexVersion');
-    // Browser behaviour, not apü's (the server takes both): WebKit on Linux opened WebSockets over
-    // HTTP/1.1 in CI (no RFC 8441 in that build) — reported, not failed; anywhere else it fails.
-    const linuxWebKit = /Linux/.test(navigator.userAgent) && /AppleWebKit/.test(navigator.userAgent) && !/Chrome|Chromium/.test(navigator.userAgent);
-    if (version !== 'HTTP/2.0' && linuxWebKit) throw new Skip(`this WebKit build opened the WebSocket over ${version} (no RFC 8441)`);
+    // A claim about Chrome (§8: it reuses the h2 session only with credentials) and Firefox (RFC 8441
+    // always). WebKit varies by build — macOS used h2, Playwright's Linux build HTTP/1.1 (CI), and it
+    // reports a Safari user agent everywhere — so for WebKit the result is reported, not asserted;
+    // the server takes both.
+    const chromeOrFirefox = /Chrome\/|Firefox\//.test(navigator.userAgent);
+    if (version !== 'HTTP/2.0' && !chromeOrFirefox) throw new Skip(`this WebKit build opened the WebSocket over ${version}`);
     if (version !== 'HTTP/2.0') throw new Error(`WebSocket used ${version}, not the shared h2 connection`);
     return `server saw the WebSocket over ${version}`;
   });

@@ -161,6 +161,23 @@ describe('server fuzzing', () => {
     for (const [headers, expected] of cases) assert.equal(await send(headers), expected, JSON.stringify(headers).slice(0, 80));
   });
 
+  test('deeply nested JSON → 400 before parsing, at every entry point (was a 500 from ~10,000 levels)', async () => {
+    const deep = (n: number) => '['.repeat(n) + ']'.repeat(n);
+    const json = { ':method': 'POST', 'content-type': MediaType.JSON };
+    for (const n of [65, 10_000, 400_000]) {
+      // 400,000 levels are ~800 KB: the size limit (64 KiB here) answers first with 413.
+      const expected = n * 2 > 64 * 1024 ? 413 : 400;
+      assert.equal(await send({ ...json, ':path': '/orders.create', 'idempotency-key': `"deep-${n}"` }, `{"items":${deep(n)}}`), expected, `body depth ${n}`);
+      assert.equal(await send({ ...json, ':path': '/$batch' }, `{"calls":[{"op":"users.get","in":{"id":${deep(n)}}}]}`), expected, `batch depth ${n}`);
+    }
+    assert.equal(await send({ ':path': `/users.get?i=${encodeURIComponent(`{"id":${deep(200)}}`)}` }), 400);
+    const frame = (payload: string) => encodeFrame(0, new TextEncoder().encode(payload));
+    assert.equal(await send({ ':method': 'POST', ':path': '/sum.client', 'content-type': MediaType.STREAM_JSON }, concatBytes([frame(deep(5_000))])), 400);
+    // Strings full of brackets are not nesting; 64 levels are fine.
+    assert.equal(await send({ ...json, ':path': '/users.get' }, JSON.stringify({ id: '[[[', pad: '['.repeat(500) })), 200);
+    assert.equal(await send({ ...json, ':path': '/$batch' }, JSON.stringify({ calls: [{ op: 'users.get', in: { id: 'x', extra: JSON.parse(deep(60)) } }] })), 200);
+  });
+
   test('garbage request streams → 4xx, server stays healthy', async () => {
     const r = prng(99);
     for (let i = 0; i < 100; i++) {

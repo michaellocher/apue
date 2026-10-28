@@ -91,6 +91,12 @@ export interface ApueServerOptions {
   idleTimeoutMs?: number;
   /** A unary request body must arrive within this time, else 408 (slow-body protection). Default 30 s. */
   bodyTimeoutMs?: number;
+  /**
+   * Maximum nesting of incoming JSON (bodies, `?i=`, stream messages, batches). Deeper input is a
+   * 400 before parsing — deeply nested values overflowed the stack of recursive helpers (500s at
+   * ~10,000 levels before this limit). Default 64.
+   */
+  maxJsonDepth?: number;
   /** Validate (and strip unknown fields from) handler output. Default true: no accidental data leaks. */
   validateOutput?: boolean;
   /** Store for Idempotency-Key replays; `false` disables the feature. */
@@ -308,6 +314,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     maxConcurrentStreams = 256,
     idleTimeoutMs = 120_000,
     bodyTimeoutMs = 30_000,
+    maxJsonDepth = 64,
   } = options;
   const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
@@ -445,14 +452,14 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
       let input: unknown;
       if (method === 'GET' || head) {
-        input = parseQueryInput(url);
+        input = parseQueryInput(url, maxJsonDepth);
       } else if (hasRequestStream(def)) {
         if (baseMediaType(req.headers['content-type']) !== MediaType.STREAM_JSON) {
           throw new ApueError(415, 'Unsupported Media Type', `${opName} expects ${MediaType.STREAM_JSON}`);
         }
-        input = validatedStream(readInputStream(req, maxBodyBytes, containsBytes(def.input)), def);
+        input = validatedStream(readInputStream(req, maxBodyBytes, containsBytes(def.input), maxJsonDepth), def);
       } else {
-        input = await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs);
+        input = await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs, maxJsonDepth);
       }
       if (!hasRequestStream(def)) input = validateInput(def, input);
 
@@ -617,7 +624,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   ): Promise<void> {
     const method = req.method;
     if (method !== 'POST' && method !== 'QUERY') throw methodNotAllowed(method, 'QUERY, POST');
-    const calls = parseBatch(await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs));
+    const calls = parseBatch(await readJsonBody(req, maxBodyBytes, method === 'QUERY', bodyTimeoutMs, maxJsonDepth));
     if (method === 'QUERY' && calls.some((call) => call.def.effect !== 'safe')) {
       throw new ApueError(422, 'Unprocessable Content', 'a QUERY batch may only contain safe calls');
     }
@@ -981,31 +988,32 @@ function methodNotAllowed(method: string, allow: string): ApueError {
   return new ApueError(405, 'Method Not Allowed', `${method} is not allowed here`, {}, { allow });
 }
 
-function parseQueryInput(url: { search: string }): unknown {
+function parseQueryInput(url: { search: string }, maxDepth: number): unknown {
   if (url.search === '') return undefined;
   const values = new URLSearchParams(url.search).getAll('i');
   if (values.length > 1) throw new ApueError(400, 'Bad Request', 'query parameter i given more than once');
   if (values.length === 0) return undefined;
   try {
+    checkJsonDepth(values[0]!, maxDepth);
     return JSON.parse(values[0]!);
   } catch {
     throw new ApueError(400, 'Bad Request', 'query parameter i is not valid JSON');
   }
 }
 
-async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean, timeoutMs: number): Promise<unknown> {
+async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean, timeoutMs: number, maxDepth: number): Promise<unknown> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new ApueError(408, 'Request Timeout', `request body not received within ${timeoutMs} ms`)), timeoutMs);
   });
   try {
-    return await Promise.race([readJsonBodyNow(req, maxBodyBytes, query), timeout]);
+    return await Promise.race([readJsonBodyNow(req, maxBodyBytes, query, maxDepth), timeout]);
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function readJsonBodyNow(req: Exchange, maxBodyBytes: number, query: boolean): Promise<unknown> {
+async function readJsonBodyNow(req: Exchange, maxBodyBytes: number, query: boolean, maxDepth: number): Promise<unknown> {
   const type = baseMediaType(req.headers['content-type']);
   // RFC 10008 §2: servers MUST fail a QUERY whose Content-Type is missing.
   if (query && !type) throw new ApueError(400, 'Bad Request', 'QUERY requires a Content-Type');
@@ -1021,14 +1029,16 @@ async function readJsonBodyNow(req: Exchange, maxBodyBytes: number, query: boole
   if (size === 0) return undefined;
   if (type !== MediaType.JSON) throw new ApueError(415, 'Unsupported Media Type', `expected ${MediaType.JSON}, got ${type || 'none'}`);
   try {
-    return decodeJson(concatBytes(chunks, size));
+    const bytes = concatBytes(chunks, size);
+    checkJsonDepth(bytes, maxDepth);
+    return decodeJson(bytes);
   } catch {
     throw new ApueError(400, 'Bad Request', 'body is not valid JSON');
   }
 }
 
 /** Request stream messages; each message is limited to maxMessageBytes. Garbage → 400/413, never 500. */
-async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: boolean): AsyncGenerator<unknown> {
+async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: boolean, maxDepth: number): AsyncGenerator<unknown> {
   const assembler = blobs ? new BlobAssembler() : undefined;
   try {
     for await (const frame of decodeFrames(req as AsyncIterable<Uint8Array>, maxMessageBytes)) {
@@ -1036,10 +1046,10 @@ async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: b
         if (!assembler) throw new ApueError(400, 'Malformed Stream', 'BLOB frame for an op without bytes', { type: ProblemType.MALFORMED_STREAM });
         assembler.push(frame);
       } else if (frame.type === FrameType.MSG) {
-        const value = parseJson(frame.payload, 'request stream message');
+        const value = parseJson(frame.payload, 'request stream message', maxDepth);
         yield assembler ? assembler.resolve(value) : value;
       } else if (frame.type === FrameType.END) {
-        const info = parseJson(frame.payload, 'END frame') as EndInfo;
+        const info = parseJson(frame.payload, 'END frame', maxDepth) as EndInfo;
         if (typeof info?.status !== 'number') throw new ApueError(400, 'Malformed Stream', 'END frame without status', { type: ProblemType.MALFORMED_STREAM });
         if (info.status >= 400) throw ApueError.fromProblem(info.problem, info.status);
         return;
@@ -1055,7 +1065,8 @@ async function* readInputStream(req: Exchange, maxMessageBytes: number, blobs: b
   throw new ApueError(400, 'Truncated Stream', 'request body ended without END frame', { type: ProblemType.TRUNCATED_STREAM });
 }
 
-function parseJson(payload: Uint8Array, what: string): unknown {
+function parseJson(payload: Uint8Array, what: string, maxDepth: number): unknown {
+  checkJsonDepth(payload, maxDepth);
   try {
     return decodeJson(payload);
   } catch {
@@ -1206,6 +1217,30 @@ function parseTimeout(value: string | string[] | undefined): number | undefined 
   const ms = Number(value);
   if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMEOUT_MS) throw new ApueError(400, 'Bad Request', `invalid ${Header.TIMEOUT}`);
   return ms;
+}
+
+/**
+ * Rejects JSON nested deeper than maxDepth with one linear scan (strings skipped) before parsing.
+ * Text shorter than 2 × maxDepth cannot exceed it, so small payloads skip the scan.
+ */
+function checkJsonDepth(text: Uint8Array | string, maxDepth: number): void {
+  if (text.length <= maxDepth * 2) return;
+  const bytes = typeof text === 'string';
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = bytes ? (text as string).charCodeAt(i) : (text as Uint8Array)[i]!;
+    if (inString) {
+      if (c === 0x5c) i++; // backslash: skip the escaped character
+      else if (c === 0x22) inString = false;
+    } else if (c === 0x22) {
+      inString = true;
+    } else if (c === 0x5b || c === 0x7b) {
+      if (++depth > maxDepth) throw new ApueError(400, 'Bad Request', `JSON nested deeper than ${maxDepth} levels`);
+    } else if (c === 0x5d || c === 0x7d) {
+      depth--;
+    }
+  }
 }
 
 function decodePathSegment(segment: string): string {

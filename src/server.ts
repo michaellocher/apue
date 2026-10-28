@@ -78,6 +78,11 @@ export interface ApueServerOptions {
   streamWindow?: number;
   /** HTTP/2 per-connection receive window. */
   connectionWindow?: number;
+  /**
+   * SETTINGS_MAX_CONCURRENT_STREAMS. Node's default is unlimited (2³²−1) — a DoS surface. Clients
+   * queue (node:http2) or open more connections (undici) beyond it. Default 256.
+   */
+  maxConcurrentStreams?: number;
   /** Validate (and strip unknown fields from) handler output. Default true: no accidental data leaks. */
   validateOutput?: boolean;
   /** Store for Idempotency-Key replays; `false` disables the feature. */
@@ -272,6 +277,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     validateOutput = true,
     maxBatchCalls = 64,
     maxBufferedBytes = 256 * 1024,
+    maxConcurrentStreams = 256,
   } = options;
   const codings = options.compression === false ? [] : (options.compression?.codings ?? DEFAULT_CODINGS);
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
@@ -290,7 +296,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     cert: options.cert,
     allowHTTP1: true,
     // enableConnectProtocol: RFC 8441 WebSockets over HTTP/2 (tier T3).
-    settings: { initialWindowSize: streamWindow, enableConnectProtocol: true },
+    settings: { initialWindowSize: streamWindow, enableConnectProtocol: true, maxConcurrentStreams },
     connectionWindowSize: connectionWindow, // Node ≥ 26.11
   };
   const server = http2.createSecureServer(serverOptions);

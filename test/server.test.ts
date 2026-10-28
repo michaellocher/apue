@@ -247,6 +247,27 @@ describe('wire behaviour', () => {
   });
 });
 
+describe('limits', () => {
+  test('advertises SETTINGS_MAX_CONCURRENT_STREAMS (default 256); clients beyond it are queued, not failed', async () => {
+    const http2 = await import('node:http2');
+    const local = await startServer(api, handlers, { maxConcurrentStreams: 4 });
+    const session = http2.connect(local.url, { ca: testCert().cert });
+    const settings = await new Promise<import('node:http2').Settings>((resolve) => session.once('remoteSettings', resolve));
+    assert.equal(settings.maxConcurrentStreams, 4);
+    const client = new ApueClient(api, new Map(transports(local.url)).get('http2')!);
+    const results = await Promise.all(Array.from({ length: 20 }, (_, i) => client.call('math.add', { a: i, b: 1 })));
+    assert.deepEqual(results, Array.from({ length: 20 }, (_, i) => i + 1));
+    await client.close();
+    session.close();
+    await local.close();
+    const defaults = await startServer(api, handlers);
+    const s2 = http2.connect(defaults.url, { ca: testCert().cert });
+    assert.equal((await new Promise<import('node:http2').Settings>((resolve) => s2.once('remoteSettings', resolve))).maxConcurrentStreams, 256);
+    s2.close();
+    await defaults.close();
+  });
+});
+
 describe('shutdown', () => {
   test('close() resolves when clients already closed their sessions', async () => {
     // Regression: session.close(callback) never calls back for a session that is already closed.

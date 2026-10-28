@@ -11,7 +11,7 @@ import { decodeFrames, decodeJson, endFrame, FrameDecoder, FrameType, msgFrame, 
 import { ApueError } from '../src/protocol.ts';
 import { t } from '../src/schema.ts';
 import type { Handlers } from '../src/server.ts';
-import { webSocketTransport } from '../src/transport-ws.ts';
+import { MAX_BUFFERED, pump, webSocketTransport } from '../src/transport-ws.ts';
 import { drained } from '../src/node-streams.ts';
 import { encodeWsFrame, WsConnection, WsParser } from '../src/websocket.ts';
 import { sleep, startServer, testCert } from './helpers.ts';
@@ -291,7 +291,7 @@ describe('WsParser', () => {
     for (let i = 0; i < payload.byteLength; i++) out[header + 4 + i] = payload[i]! ^ key[i & 3]!;
     return out;
   }
-  const sizes = [0, 1, 125, 126, 300, 65535, 65536, 70_000];
+  const sizes = [0, 1, 125, 126, 127, 128, 129, 130, 131, 300, 65535, 65536, 70_000]; // word unmasking from 128: every tail length
   const payloads = sizes.map((n) => new Uint8Array(randomBytes(n)));
   const wire = Buffer.concat([...payloads.map((p) => masked(0x2, p)), masked(0x9, new Uint8Array([7])), masked(0x1, payloads[2]!, false)]);
   const check = (frames: Array<{ fin: boolean; opcode: number; payload: Uint8Array }>) => {
@@ -361,6 +361,66 @@ describe('WsParser', () => {
     assert.throws(() => new WsParser(1024).push(tooBig.subarray(0, 4)), /too large/);
     const reserved = Buffer.from([0xc2, 0x80]);
     assert.throws(() => new WsParser(1024).push(reserved), /reserved bits/);
+  });
+});
+
+describe('upload pacing (WebSocket has no drain event)', () => {
+  /** A socket whose send buffer drains at `bytesPerMs`; counts how often bufferedAmount is read. */
+  function fakeSocket(bytesPerMs: number) {
+    let buffered = 0;
+    let last = performance.now();
+    const drain = () => {
+      const now = performance.now();
+      buffered = Math.max(0, buffered - (now - last) * bytesPerMs);
+      last = now;
+    };
+    const socket = {
+      OPEN: 1 as const,
+      readyState: 1,
+      polls: 0,
+      maxBuffered: 0,
+      get bufferedAmount() {
+        drain();
+        socket.polls++;
+        return buffered;
+      },
+      send(chunk: Uint8Array) {
+        drain();
+        buffered += chunk.byteLength;
+        socket.maxBuffered = Math.max(socket.maxBuffered, buffered);
+      },
+      close() {},
+    };
+    return socket;
+  }
+  async function* chunks(count: number, size: number) {
+    for (let i = 0; i < count; i++) yield new Uint8Array(size);
+  }
+
+  test('memory stays bounded and a fast link stays busy', async () => {
+    const socket = fakeSocket(1024 * 1024); // 1 GiB/s
+    const start = performance.now();
+    await pump(socket as unknown as WebSocket, chunks(256, 64 * 1024)); // 16 MiB
+    const ms = performance.now() - start;
+    assert.ok(socket.maxBuffered <= MAX_BUFFERED + 64 * 1024, `buffered up to ${socket.maxBuffered}`);
+    // 16 ms of pure drain time; the old fixed 5 ms poll needed ≥ 80 ms (1 MiB per poll)
+    assert.ok(ms < 60, `${ms.toFixed(0)} ms for 16 MiB at 1 GiB/s`);
+  });
+
+  test('a slow link is polled rarely (the interval backs off)', async () => {
+    const socket = fakeSocket(10 * 1024); // 10 MiB/s
+    await pump(socket as unknown as WebSocket, chunks(48, 64 * 1024)); // 3 MiB, ≥ 200 ms
+    assert.ok(socket.maxBuffered <= MAX_BUFFERED + 64 * 1024);
+    // ~one wake-up (two reads) per chunk once the buffer is full; a fixed 1 ms poll: ~400 reads
+    assert.ok(socket.polls < 120, `${socket.polls} polls`);
+  });
+
+  test('a socket closing mid-upload ends the pump', async () => {
+    const socket = fakeSocket(0); // never drains
+    const done = pump(socket as unknown as WebSocket, chunks(1000, 64 * 1024));
+    await sleep(20);
+    socket.readyState = 3;
+    await Promise.race([done, sleep(500).then(() => assert.fail('pump still running'))]);
   });
 });
 

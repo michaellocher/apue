@@ -6,7 +6,8 @@ import { Header, MediaType } from './protocol.ts';
 export const WS_SUBPROTOCOL = 'apue.v0';
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
 export const WS_CLOSE_CANCELLED = 4000;
-const MAX_BUFFERED = 1024 * 1024;
+export const MAX_BUFFERED = 1024 * 1024;
+const MAX_POLL_MS = 64;
 
 export function webSocketTransport(baseUrl: string, WebSocketImpl: typeof WebSocket = WebSocket): Transport {
   const base = baseUrl.replace(/\/$/, '').replace(/^http/, 'ws');
@@ -81,13 +82,24 @@ export function webSocketTransport(baseUrl: string, WebSocketImpl: typeof WebSoc
   };
 }
 
-/** WebSocket has no 'drain' event: poll bufferedAmount to keep uploads from piling up in memory. */
-async function pump(ws: WebSocket, body: AsyncIterable<Uint8Array>): Promise<void> {
+/**
+ * WebSocket has no 'drain' event: poll bufferedAmount to keep uploads from piling up in memory.
+ * The poll interval adapts: a fixed 5 ms capped uploads at MAX_BUFFERED / 5 ms (measured 140 MiB/s
+ * on loopback, the socket idle a quarter of the time); it halves when the buffer ran empty while
+ * waiting (the socket idled) and doubles while the buffer is still full (slow link, save CPU).
+ */
+export async function pump(ws: Pick<WebSocket, 'send' | 'close' | 'bufferedAmount' | 'readyState' | 'OPEN'>, body: AsyncIterable<Uint8Array>): Promise<void> {
+  let waitMs = 4;
   try {
     for await (const chunk of body) {
       if (ws.readyState !== ws.OPEN) return;
       ws.send(chunk as Uint8Array<ArrayBuffer>);
-      while (ws.bufferedAmount > MAX_BUFFERED && ws.readyState === ws.OPEN) await new Promise((resolve) => setTimeout(resolve, 5));
+      while (ws.bufferedAmount > MAX_BUFFERED && ws.readyState === ws.OPEN) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        const left = ws.bufferedAmount;
+        if (left === 0) waitMs = Math.max(1, waitMs / 2);
+        else if (left > MAX_BUFFERED) waitMs = Math.min(MAX_POLL_MS, waitMs * 2);
+      }
     }
   } catch {
     ws.close(WS_CLOSE_CANCELLED, 'input failed');

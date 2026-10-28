@@ -45,6 +45,12 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 | browsers | Chrome only reuses an h2 session for WebSockets with an identical key (credentials mode) |
 | code review | unbounded request-stream blob memory; bytes lost on idempotent replay; CORS `Vary`/preflight gaps; missing `Retry-After` retried with no delay; duplicate items after two losses in one resume; quadratic WebSocket buffering; WebSocket writes hanging on close; regex flags dropped from the manifest |
 
+## Known flake (not reproduced)
+
+`examples/todo in real browsers › Chrome` failed once in ~16 full runs at 04:4x (a thrown error, not
+an assertion; output not kept). 10 stress runs under CPU load and 5 further full runs passed.
+If it shows up again, keep the full `npm test` log.
+
 ## Decisions taken without you (easy to revisit)
 
 - Operation-based, TS-first schemas, working name apü (as agreed).

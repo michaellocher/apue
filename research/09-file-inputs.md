@@ -66,10 +66,9 @@ the right answer? A short spike to find out what it costs and what it changes.
 
 ## Limits of the spike (not done)
 
-- **Uploads don't survive a restart** (by design here: the subdirectory is per process). A crashed
-  process leaves its subdirectory behind (`apue-uploads-*`); nothing sweeps it — a sweep at startup
-  is unsafe when several processes share the directory. Operators clear it, or use a directory per
-  instance.
+- ~~Uploads don't survive a restart~~ → S24: `uploads.persistent` (a locked, fixed directory;
+  durable lengths; startup recovery). The per-process mode still leaves its subdirectory behind
+  after a crash.
 - ~~An upload deleted while a handler streams it fails the call~~ → S23: a call opens its files when
   it starts (an open file outlives its unlink). S23 also found that every file-backed upload held a
   write descriptor until deleted; now only a request that writes holds one.

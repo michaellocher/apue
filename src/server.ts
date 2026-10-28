@@ -1116,7 +1116,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
 
   return {
     server,
-    listen(port = 0, host = '127.0.0.1') {
+    async listen(port = 0, host = '127.0.0.1') {
+      await uploads?.init(); // persistent uploads are restored before the first request
       return new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, host, () => {

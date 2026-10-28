@@ -2,7 +2,8 @@
 // values are uploaded to `/$uploads` — resumably, over plain HTTP requests — and op inputs reference
 // them as { "$upload": id } where the schema says t.bytes() (SPEC-DRAFT §6). Node-only.
 import { createHash, randomBytes, type Hash } from 'node:crypto';
-import { mkdtemp, open, readFile, rm, unlink, type FileHandle } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdir, mkdtemp, open, readdir, readFile, rename, rm, stat, truncate, unlink, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FileValue } from './schema.ts';
 import type { Exchange } from './exchange.ts';
@@ -14,6 +15,8 @@ export const PARTIAL_UPLOAD = 'application/partial-upload';
 const PROBLEMS = 'https://iana.org/assignments/http-problem-types';
 /** File-backed uploads are written in blocks of this size. */
 const WRITE_BLOCK = 1024 * 1024;
+/** Upload ids: 128 random bits, base64url. */
+const UPLOAD_ID = /^[A-Za-z0-9_-]{22}$/;
 
 export interface UploadOptions {
   /** Largest upload (Upload-Limit max-size). Default 64 MiB. */
@@ -33,9 +36,20 @@ export interface UploadOptions {
   /**
    * Keep upload content in files under this directory instead of memory (spike S20): uploads in
    * progress cost no RAM, and t.file() inputs reach handlers as streams from these files. A
-   * per-process subdirectory is created and removed on close; uploads don't survive a restart.
+   * per-process subdirectory is created and removed on close; uploads don't survive a restart
+   * unless `persistent`.
    */
   directory?: string;
+  /**
+   * With `directory`: uploads survive a restart. They live in `<directory>/apue-uploads` (one
+   * process per directory, guarded by a lock file a dead process's lock doesn't block), each with
+   * a metadata file. At the end of every request the received content is synced to disk and its
+   * length recorded; on startup a file is cut back to that length (bytes never acknowledged are
+   * dropped, so content is never corrupt — the client's offset retrieval sends them again),
+   * expired and orphaned files are removed, and the quotas are rebuilt. Call `init()` (the
+   * server's `listen()` does) before serving.
+   */
+  persistent?: boolean;
   now?: () => number;
 }
 
@@ -91,13 +105,18 @@ export class UploadStore {
   #usage = new Map<string, Usage>();
   #directory: string | undefined;
   #files: Promise<string> | undefined; // the per-process subdirectory, created on first use
+  #persistent: boolean;
+  #ready: Promise<void> | undefined;
+  #lock: string | undefined;
 
-  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, directory, now = Date.now }: UploadOptions = {}) {
+  constructor({ maxBytes = 64 * 1024 * 1024, storeBytes = 256 * 1024 * 1024, ttlMs = 60 * 60 * 1000, scopeBytes, scopeUploads = 100, directory, persistent = false, now = Date.now }: UploadOptions = {}) {
     // A typo like `2 << 30` (negative) or a fraction would silently refuse or misaccount everything.
     for (const [name, value] of Object.entries({ maxBytes, storeBytes, ttlMs, scopeBytes, scopeUploads })) {
       if (value !== undefined && !(Number.isSafeInteger(value) && value > 0)) throw new RangeError(`uploads.${name} must be a positive integer, got ${value}`);
     }
+    if (persistent && directory === undefined) throw new Error('uploads.persistent needs uploads.directory');
     this.#directory = directory;
+    this.#persistent = persistent;
     this.maxBytes = maxBytes;
     this.storeBytes = storeBytes;
     this.ttlMs = ttlMs;
@@ -116,7 +135,13 @@ export class UploadStore {
     return Math.min(this.maxBytes, this.scopeBytes);
   }
 
+  /** Loads the persisted uploads (persistent mode; a no-op otherwise). Call once before serving. */
+  init(): Promise<void> {
+    return (this.#ready ??= this.#persistent ? this.#load() : Promise.resolve());
+  }
+
   async create(scope: string, quota: string, length: number | undefined): Promise<Upload> {
+    if (this.#persistent) await this.init();
     this.#sweep();
     if (length !== undefined && length > this.maxSize) throw tooLarge(this.maxSize);
     const usage = this.#usageOf(quota);
@@ -148,6 +173,7 @@ export class UploadStore {
     this.#uploads.set(upload.id, upload);
     usage.uploads++;
     usage.bytes += upload.reserved;
+    await this.#writeMeta(upload);
     return upload;
   }
 
@@ -216,11 +242,16 @@ export class UploadStore {
     };
   }
 
-  /** Removes the per-process directory (and every upload file in it). */
+  /** Removes the per-process directory (and every upload file in it) — or, persistent, releases it. */
   async close(): Promise<void> {
     const directory = await this.#files;
     for (const upload of this.#uploads.values()) await upload.file?.handle?.close().catch(() => {});
-    if (directory) await rm(directory, { recursive: true, force: true });
+    if (this.#persistent) {
+      if (this.#lock) await unlink(this.#lock).catch(() => {});
+      this.#lock = undefined;
+    } else if (directory) {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 
   async append(upload: Upload, chunk: Uint8Array): Promise<void> {
@@ -280,19 +311,125 @@ export class UploadStore {
     if (this.#uploads.get(upload.id) !== upload) throw notFound();
   }
 
-  /** Closes the write handle at the end of a request (the next one opens its own). */
+  /**
+   * Closes the write handle at the end of a request (the next one opens its own). Persistent:
+   * syncs the content first and records its length — what a restart keeps.
+   */
   async closeWriter(upload: Upload): Promise<void> {
     const handle = upload.file?.handle;
-    if (!handle) return;
-    upload.file!.handle = undefined;
-    await handle.close().catch(() => {});
+    if (handle) {
+      upload.file!.handle = undefined;
+      if (this.#persistent) await handle.sync().catch(() => {});
+      await handle.close().catch(() => {});
+    }
+    await this.#writeMeta(upload);
   }
 
   /** Marks the upload complete: its content and digest are final. */
-  seal(upload: Upload): void {
+  async seal(upload: Upload): Promise<void> {
     upload.complete = true;
     upload.length = upload.offset;
     upload.digest ??= upload.hash.digest('hex');
+    await this.#writeMeta(upload);
+  }
+
+  /** Persistent: the upload's metadata, written atomically (temporary file, sync, rename). */
+  async #writeMeta(upload: Upload): Promise<void> {
+    if (!this.#persistent || !upload.file || this.#uploads.get(upload.id) !== upload) return;
+    const { id, scope, quota, expires, length, complete, digest } = upload;
+    const meta = { v: 1, id, scope, quota, expires, offset: upload.file.written, length: length ?? null, complete, digest: digest ?? null };
+    const path = `${upload.file.path}.json`;
+    const temporary = `${path}.tmp`;
+    const handle = await open(temporary, 'w');
+    try {
+      await handle.writeFile(JSON.stringify(meta));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await rename(temporary, path);
+    // Deleted meanwhile: don't leave its metadata behind.
+    if (this.#uploads.get(upload.id) !== upload) await unlink(path).catch(() => {});
+  }
+
+  /** Persistent startup: lock the directory, restore valid uploads, remove everything else. */
+  async #load(): Promise<void> {
+    const directory = join(this.#directory!, 'apue-uploads');
+    await mkdir(directory, { recursive: true });
+    await this.#acquireLock(directory);
+    this.#files = Promise.resolve(directory);
+    const names = await readdir(directory);
+    const restored: Upload[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      const upload = await this.#restore(directory, name.slice(0, -'.json'.length)).catch(() => undefined);
+      if (upload) restored.push(upload);
+    }
+    const kept = new Set(restored.flatMap((upload) => [upload.id, `${upload.id}.json`]));
+    // Expired, invalid or orphaned (data without metadata, metadata without data, temporary files).
+    for (const name of names) if (name !== '.lock' && !kept.has(name)) await unlink(join(directory, name)).catch(() => {});
+    restored.sort((a, b) => a.expires - b.expires); // insertion order = expiry order (#sweep)
+    for (const upload of restored) {
+      this.#uploads.set(upload.id, upload);
+      this.#stored += upload.offset;
+      const usage = this.#usageOf(upload.quota);
+      usage.uploads++;
+      usage.bytes += upload.offset + upload.reserved;
+    }
+  }
+
+  async #restore(directory: string, id: string): Promise<Upload | undefined> {
+    if (!UPLOAD_ID.test(id)) return undefined;
+    const meta = JSON.parse(await readFile(join(directory, `${id}.json`), 'utf8')) as Record<string, unknown>;
+    const { scope, quota, expires, offset, length, complete, digest } = meta;
+    const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+    if (meta.v !== 1 || meta.id !== id || typeof scope !== 'string' || typeof quota !== 'string' || !count(expires) || !count(offset)) return undefined;
+    if (!(length === null || (count(length) && length >= offset)) || typeof complete !== 'boolean') return undefined;
+    if (complete && (length !== offset || typeof digest !== 'string' || !/^[0-9a-f]{64}$/.test(digest))) return undefined;
+    if (expires <= this.#now()) return undefined;
+    const path = join(directory, id);
+    const size = (await stat(path)).size;
+    if (size < offset) return undefined; // recorded content missing: unusable
+    if (size > offset) await truncate(path, offset); // never acknowledged: dropped
+    const hash = createHash('sha256');
+    // An incomplete upload's digest continues where it stopped: recomputed from the content.
+    if (!complete) for await (const chunk of createReadStream(path)) hash.update(chunk as Uint8Array);
+    return {
+      id,
+      scope,
+      quota,
+      expires,
+      chunks: [],
+      offset,
+      length: length ?? undefined,
+      complete,
+      writer: undefined,
+      bytes: undefined,
+      reserved: length === null ? 0 : length - offset,
+      file: { path, handle: undefined, written: offset, pending: [], pendingBytes: 0 },
+      hash,
+      digest: complete ? (digest as string) : undefined,
+    };
+  }
+
+  /** One process per directory: a lock file with the owner's pid; a dead owner's lock is taken over. */
+  async #acquireLock(directory: string): Promise<void> {
+    const lock = join(directory, '.lock');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const handle = await open(lock, 'wx');
+        await handle.writeFile(String(process.pid));
+        await handle.close();
+        this.#lock = lock;
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        const owner = Number(await readFile(lock, 'utf8').catch(() => ''));
+        if (Number.isSafeInteger(owner) && owner > 0 && isAlive(owner)) throw new Error(`uploads.directory ${this.#directory} is in use by process ${owner}`);
+        await unlink(lock).catch(() => {}); // stale: its process is gone
+      }
+    }
+    throw new Error(`uploads.directory ${this.#directory}: could not take the lock`);
   }
 
   delete(upload: Upload): void {
@@ -307,6 +444,7 @@ export class UploadStore {
       const { handle, path } = upload.file;
       upload.file.handle = undefined;
       void (handle ? handle.close().catch(() => {}) : Promise.resolve()).then(() => unlink(path)).catch(() => {});
+      if (this.#persistent) void unlink(`${path}.json`).catch(() => {});
     }
   }
 
@@ -449,12 +587,12 @@ async function receive(req: Exchange, store: UploadStore, upload: Upload): Promi
   }
 }
 
-function finish(store: UploadStore, upload: Upload, location: string): UploadResponse {
+async function finish(store: UploadStore, upload: Upload, location: string): Promise<UploadResponse> {
   if (upload.length !== undefined && upload.offset !== upload.length) {
     store.delete(upload);
     throw inconsistentLength(`completed at ${upload.offset} bytes, Upload-Length was ${upload.length}`);
   }
-  store.seal(upload);
+  await store.seal(upload);
   // The target resource's response (§8.2): a reference for op inputs.
   const body = new TextEncoder().encode(JSON.stringify({ upload: upload.id, size: upload.offset }));
   return { status: 201, headers: { location, 'upload-complete': '?1', 'content-type': MediaType.JSON, 'cache-control': 'no-store' }, body };
@@ -501,3 +639,12 @@ function parseInteger(value: string | string[] | undefined, name: string): numbe
   return Number(value);
 }
 
+/** Whether a process exists (EPERM: it does, owned by someone else). */
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}

@@ -22,6 +22,7 @@ const FIREFOX = process.env.FIREFOX_PATH ?? '/Applications/Firefox.app/Contents/
 const ROOT = resolve(import.meta.dirname, '..');
 
 let cancelledStreams = 0;
+let lastDuplexVersion = '';
 let nextOrder = 1;
 const handlers: Handlers<typeof browserApi> = {
   'users.get': ({ id }) => ({ id, name: `user ${id}` }),
@@ -48,6 +49,11 @@ const handlers: Handlers<typeof browserApi> = {
     for await (const n of inputs) sum += n;
     return sum;
   },
+  'stats.lastDuplexVersion': () => lastDuplexVersion,
+  'echo.duplex': async function* (inputs, ctx) {
+    lastDuplexVersion = `HTTP/${ctx.httpVersion}`;
+    for await (const value of inputs) yield { echo: value };
+  },
 };
 
 let page: { url: string; close(): Promise<void> };
@@ -72,7 +78,7 @@ describe('in real browsers', () => {
       for (const r of results) t.diagnostic(`${r.ok ? (r.skipped ? 'SKIP' : 'ok  ') : 'FAIL'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
       const failed = results.filter((r) => !r.ok);
       assert.deepEqual(failed, [], `${name}: ${failed.map((f) => `${f.name}: ${f.detail}`).join('; ')}`);
-      assert.ok(results.length >= 11, `only ${results.length} checks ran`);
+      assert.ok(results.length >= 13, `only ${results.length} checks ran`);
     });
   }
 });

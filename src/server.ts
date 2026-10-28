@@ -19,7 +19,9 @@ import {
 } from './frame.ts';
 import { MemoryIdempotencyStore, type IdempotencyStore, type StoredResponse } from './idempotency.ts';
 import { compressAsync, compressSync, createCompressor, DEFAULT_CODINGS, flushCompressor, negotiate, type Coding } from './compression.ts';
-import { onExchange, type Exchange } from './exchange.ts';
+import { STATUS_CODES } from 'node:http';
+import { onExchange, WsExchange, type Exchange, type WebSocketUpgrade } from './exchange.ts';
+import { acceptKey, checkHandshake, WS_SUBPROTOCOL, WsClose, WsConnection } from './websocket.ts';
 import { drained } from './node-streams.ts';
 import { ApueError, baseMediaType, Header, isAsyncIterable, MediaType, ProblemType } from './protocol.ts';
 import { collectRefs, RefError, resolveRefs } from './refs.ts';
@@ -268,7 +270,8 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     key: options.key,
     cert: options.cert,
     allowHTTP1: true,
-    settings: { initialWindowSize: streamWindow },
+    // enableConnectProtocol: RFC 8441 WebSockets over HTTP/2 (tier T3).
+    settings: { initialWindowSize: streamWindow, enableConnectProtocol: true },
     connectionWindowSize: connectionWindow, // Node ≥ 26.11
   };
   const server = http2.createSecureServer(serverOptions);
@@ -284,7 +287,49 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     sessions.add(session);
     session.on('close', () => sessions.delete(session));
   });
-  onExchange(server, (exchange) => void handle(exchange, exchange));
+  const webSockets = new Set<WsConnection>();
+  onExchange(server, (exchange) => void handle(exchange, exchange), acceptWebSocket);
+
+  /** Tier T3: validates the handshake, then runs the call over the WebSocket like any request. */
+  function acceptWebSocket(upgrade: WebSocketUpgrade): void {
+    const headers = upgrade.kind === 'h2' ? upgrade.headers : upgrade.req.headers;
+    const authority = String(headers[':authority'] ?? headers.host ?? '');
+    const check = checkHandshake(headers, (origin) =>
+      cors ? cors.origins === '*' || cors.origins.includes(origin) : origin === `https://${authority}`,
+    );
+    const key = headers['sec-websocket-key'];
+    if (upgrade.kind === 'h1' && check.ok && (typeof key !== 'string' || Buffer.from(key, 'base64').byteLength !== 16)) {
+      Object.assign(check, { ok: false, status: 400, reason: 'invalid Sec-WebSocket-Key' });
+    }
+    if (!check.ok) {
+      if (upgrade.kind === 'h2') {
+        upgrade.stream.respond({ ':status': check.status, ...(check.status === 426 ? { 'sec-websocket-version': '13' } : {}) });
+        upgrade.stream.end(check.reason);
+      } else {
+        const extra = check.status === 426 ? 'Sec-WebSocket-Version: 13\r\n' : '';
+        upgrade.socket.end(`HTTP/1.1 ${check.status} ${STATUS_CODES[check.status]}\r\nConnection: close\r\n${extra}\r\n`);
+      }
+      return;
+    }
+    let conn: WsConnection;
+    let path: string;
+    if (upgrade.kind === 'h2') {
+      upgrade.stream.respond({ ':status': 200, 'sec-websocket-protocol': WS_SUBPROTOCOL });
+      conn = new WsConnection(upgrade.stream);
+      path = String(upgrade.headers[':path'] ?? '/');
+    } else {
+      upgrade.socket.setNoDelay(true);
+      upgrade.socket.write(
+        `HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key as string)}\r\nSec-WebSocket-Protocol: ${WS_SUBPROTOCOL}\r\n\r\n`,
+      );
+      conn = new WsConnection(upgrade.socket, { head: upgrade.head });
+      path = upgrade.req.url ?? '/';
+    }
+    webSockets.add(conn);
+    conn.onClose(() => webSockets.delete(conn));
+    const exchange = new WsExchange(conn, path, headers, upgrade.kind === 'h2' ? '2.0' : '1.1');
+    void handle(exchange, exchange);
+  }
 
   // `req` and `res` are the same Exchange; the two names keep request- and response-side code readable.
   async function handle(req: Exchange, res: Exchange): Promise<void> {
@@ -691,6 +736,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     },
     async close() {
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+      for (const conn of webSockets) conn.close(WsClose.GOING_AWAY, 'server shutting down');
       // Graceful GOAWAY for h2 sessions, then drop remaining (HTTP/1.1 keep-alive) sockets.
       // Wait for 'close' rather than the close() callback: a session the client already closed
       // never calls the callback, which left close() pending forever.
@@ -770,6 +816,8 @@ async function readJsonBody(req: Exchange, maxBodyBytes: number, query: boolean)
   const type = baseMediaType(req.headers['content-type']);
   // RFC 10008 §2: servers MUST fail a QUERY whose Content-Type is missing.
   if (query && !type) throw new ApueError(400, 'Bad Request', 'QUERY requires a Content-Type');
+  // Reject before reading: some bodies only end when the connection does (WebSocket, tier T3).
+  if (type && type !== MediaType.JSON) throw new ApueError(415, 'Unsupported Media Type', `expected ${MediaType.JSON}, got ${type}`);
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Uint8Array>) {

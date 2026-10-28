@@ -34,3 +34,4 @@ Benchmark results: [`docs/benchmarks.md`](docs/benchmarks.md).
 | `src/exchange.ts` | HTTP/2 core stream API / HTTP/1.1 behind one interface |
 | `src/compression.ts` | Accept-Encoding negotiation, zstd/br/gzip, streaming flush |
 | `src/transport-http2.ts` | node:http2 transport (full duplex) |
+| `src/websocket.ts`, `src/transport-ws.ts` | tier T3: apü frames over WebSocket (RFC 8441 / RFC 6455), `autoTransport` for browsers |

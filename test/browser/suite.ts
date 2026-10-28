@@ -1,6 +1,7 @@
 // Runs inside a real browser (served type-stripped). Returns one result per check.
 import { ApueClient, fetchTransport } from '../../src/client.ts';
 import { ApueError } from '../../src/protocol.ts';
+import { autoTransport, webSocketTransport } from '../../src/transport-ws.ts';
 import { browserApi } from './api.ts';
 
 export interface CheckResult {
@@ -83,6 +84,33 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
       for (let i = 1; i <= 100; i++) yield i;
     }
     equal(await Array.fromAsync(client.duplex('sum.client', numbers())), [5050]);
+  });
+  await check('full duplex over WebSocket (tier T3), cross-origin', async () => {
+    const ws = new ApueClient(browserApi, webSocketTransport(apiUrl));
+    let lastEcho = 0;
+    async function* inputs() {
+      for (let i = 1; i <= 5; i++) {
+        yield i;
+        // Only possible with true full duplex: wait for the echo before sending more.
+        while (lastEcho < i) await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+    }
+    const out: number[] = [];
+    for await (const { echo } of ws.duplex('echo.duplex', inputs())) {
+      lastEcho = echo;
+      out.push(echo);
+    }
+    equal(out, [1, 2, 3, 4, 5]);
+    // fetch would revalidate a cached GET; cache: private + no-cache keeps this fresh.
+    return `server saw the WebSocket over ${await client.call('stats.lastDuplexVersion')}`;
+  });
+  await check('autoTransport: streaming upload in every browser (fetch T2 or WebSocket T3)', async () => {
+    const auto = new ApueClient(browserApi, autoTransport(apiUrl));
+    async function* numbers() {
+      for (let i = 1; i <= 100; i++) yield i;
+    }
+    equal(await Array.fromAsync(auto.duplex('sum.client', numbers())), [5050]);
+    return supportsRequestStreams() ? 'via fetch (T2)' : 'via WebSocket (T3)';
   });
   return results;
 }

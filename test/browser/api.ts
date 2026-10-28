@@ -12,4 +12,6 @@ export const browserApi = defineApi({
   'slow.get': op({ effect: 'safe', input: t.void(), output: t.string() }),
   'big.get': op({ effect: 'safe', input: t.void(), output: t.string() }),
   'sum.client': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.number() }),
+  'stats.lastDuplexVersion': op({ effect: 'safe', input: t.void(), output: t.string(), cache: { private: true } }),
+  'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.object({ echo: t.number() }) }),
 });

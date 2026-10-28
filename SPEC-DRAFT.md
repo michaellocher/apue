@@ -128,7 +128,8 @@ Flags: bit0 `compressed` (per-frame, independent context), bit1 `last` (BLOB), o
 | T4 | WebTransport bidi stream carrying the same frames | ← | all engines since Safari 26.4; draft |
 
 - Clients negotiate down: T1 → T4 → T3.
-- **Verified in real browsers (S5, Chrome 156 and Firefox, headless):** T0 everywhere incl. h2, QUERY and preflighted custom headers, compression (zstd) and cancellation; **T2 works in Chrome, not in Firefox** (feature-detected, skipped). T3/T4 not implemented yet (Node has no built-in WebSocket/WebTransport server).
+- **Verified in real browsers (S5, Chrome 156 and Firefox, headless):** T0 everywhere incl. h2, QUERY and preflighted custom headers, compression (zstd) and cancellation; **T2 works in Chrome, not in Firefox** (feature-detected); **T3 works in both** (full duplex verified). T4 not implemented (no WebTransport server in Node).
+- **T3 (implemented):** one WebSocket per call (`wss://…/{op}`, subprotocol `apue.v0` required), carrying the *unchanged* apü frame stream in both directions inside binary messages (message boundaries are irrelevant; fragmentation allowed). Handshake via HTTP/2 extended CONNECT (RFC 8441; the server advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL`) or HTTP/1.1 Upgrade. Observed: Firefox and Node's WebSocket client use RFC 8441 over the existing h2 connection, Chrome 156 opened HTTP/1.1. Origin is checked against the CORS list (or same-origin) to prevent cross-site WebSocket hijacking. Browsers can't set WebSocket headers, so the deadline is `?timeout=ms`; errors (including handshake-independent ones like 404/415) arrive in-band as END frames; the server closes with 1000 after END, 1001 on shutdown; the client closes with 4000 to cancel. Text frames → 1003, unmasked/invalid frames → 1002. `autoTransport()` picks fetch for everything and WebSocket only for request streams when fetch can't stream uploads (Firefox, Safari).
 - Consumer-paced streams use **CREDIT** frames (transport backpressure doesn't survive buffering proxies; browsers buffer 6–15 MiB).
 - **Resume**: CHECKPOINT tokens are self-contained (signed position), so any replica can resume — no sticky sessions.
 
@@ -261,3 +262,9 @@ Bugs found by benchmarking/profiling and fixed with regression tests: O(n) idemp
 Implemented: CORS (`cors` server option), `test/browser.test.ts` driving **headless Chrome via CDP and Firefox via WebDriver BiDi** with only Node built-ins (WebSocket client, `module.stripTypeScriptTypes` to serve `src/*.ts` to the browser — no bundler). 11 in-browser checks per browser against a cross-origin apü server. Safari not automated (safaridriver needs `sudo safaridriver --enable`).
 
 Totals after S5: 127 tests (`node --test`), all passing repeatedly; typecheck clean.
+
+### S6 — 2026-10-28 ✅ fuzzing + tier T3 (WebSocket)
+
+- Seeded fuzz tests (frame decoder, random JSON/query/stream bodies); fixed: garbage request streams surfaced as 500 → now 400/413; clients map undecodable responses to 502.
+- `src/websocket.ts` (RFC 6455 framing, background reader with bounded buffering, ping/pong, close handshake), `WsExchange` (a WebSocket call runs through the same handler as HTTP), `src/transport-ws.ts` (`webSocketTransport`, `autoTransport`). Found on the way: a JSON body was read to its end before the Content-Type check — over WebSocket that end never comes; the check now happens first.
+- 144 tests, incl. RFC 6455 protocol details over a raw HTTP/1.1 TLS socket and T3 full duplex in Chrome and Firefox.

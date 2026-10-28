@@ -2,7 +2,11 @@
 // stream API directly (~23% faster than the compat layer, bench S4); HTTP/1.1 uses node:http.
 import http2 from 'node:http2';
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'node:http';
-import type { Writable } from 'node:stream';
+import type { Socket } from 'node:net';
+import type { Duplex, Writable } from 'node:stream';
+import { decodeJson, endFrame, msgFrame } from './frame.ts';
+import { Header, MediaType } from './protocol.ts';
+import type { WsConnection } from './websocket.ts';
 
 export interface Exchange extends AsyncIterable<Uint8Array> {
   readonly method: string;
@@ -159,14 +163,92 @@ function mergeHeaders(extra: Record<string, string>, headers: Record<string, str
 }
 
 /**
+ * A WebSocket call (tier T3) seen as an Exchange: the handshake already happened, the request body
+ * is the incoming byte stream and the response body the outgoing one. A complete response
+ * (`send`) has no WebSocket equivalent and is delivered in-band as MSG/END frames.
+ */
+export class WsExchange implements Exchange {
+  readonly method = 'POST';
+  readonly url: string;
+  readonly headers: IncomingHttpHeaders;
+  readonly httpVersion: string;
+  headersSent = false;
+  #conn: WsConnection;
+
+  constructor(conn: WsConnection, path: string, headers: IncomingHttpHeaders, httpVersion: string) {
+    this.#conn = conn;
+    this.url = path;
+    this.httpVersion = httpVersion;
+    // Browsers can't set headers on a WebSocket: metadata comes from the URL instead.
+    const timeout = new URLSearchParams(path.split('?')[1] ?? '').get('timeout');
+    const { 'accept-encoding': _, ...rest } = headers;
+    this.headers = { ...rest, 'content-type': MediaType.STREAM_JSON, accept: MediaType.STREAM_JSON, ...(timeout ? { [Header.TIMEOUT]: timeout } : {}) };
+  }
+
+  get sink(): Writable {
+    return this.#conn.sink;
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+    return this.#conn[Symbol.asyncIterator]();
+  }
+
+  setHeader(): void {}
+
+  writeHead(): void {
+    this.headersSent = true;
+  }
+
+  send(status: number, _headers: Record<string, string>, body?: Uint8Array): void {
+    this.headersSent = true;
+    const payload = body && body.byteLength > 0 ? decodeJson(body) : undefined;
+    if (status >= 400) {
+      this.#conn.sink.write(endFrame({ status, problem: (payload as never) ?? { title: 'Error', status } }));
+    } else {
+      if (payload !== undefined) this.#conn.sink.write(msgFrame(payload));
+      this.#conn.sink.write(endFrame({ status }));
+    }
+    this.#conn.sink.end();
+  }
+
+  end(): void {
+    this.#conn.sink.end();
+  }
+
+  onClose(callback: () => void): void {
+    this.#conn.onClose(callback);
+  }
+}
+
+export type WebSocketUpgrade =
+  | { kind: 'h2'; stream: http2.ServerHttp2Stream; headers: http2.IncomingHttpHeaders }
+  | { kind: 'h1'; req: IncomingMessage; socket: Socket; head: Buffer };
+
+/**
  * Routes HTTP/2 streams to the core API and HTTP/1.1 requests (allowHTTP1) to node:http.
  * Registering a 'request' listener makes node:http2 install its compat 'stream' listener; that
- * one is removed again so HTTP/2 never pays for the compat layer.
+ * one is removed again so HTTP/2 never pays for the compat layer. WebSocket handshakes (HTTP/2
+ * extended CONNECT, HTTP/1.1 Upgrade) go to `onWebSocket`.
  */
-export function onExchange(server: http2.Http2SecureServer, handler: (exchange: Exchange) => void): void {
-  const onStream = (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => handler(new H2Exchange(stream, headers));
+export function onExchange(
+  server: http2.Http2SecureServer,
+  handler: (exchange: Exchange) => void,
+  onWebSocket?: (upgrade: WebSocketUpgrade) => void,
+): void {
+  const onStream = (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
+    if (headers[':method'] === 'CONNECT') {
+      if (headers[':protocol'] === 'websocket' && onWebSocket) return onWebSocket({ kind: 'h2', stream, headers });
+      stream.respond({ ':status': 405, allow: 'GET, HEAD, POST, QUERY' });
+      return void stream.end();
+    }
+    handler(new H2Exchange(stream, headers));
+  };
   server.on('stream', onStream);
   server.on('request', (req: unknown, res: unknown) => handler(new H1Exchange(req as IncomingMessage, res as ServerResponse)));
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    if (onWebSocket && String(req.headers.upgrade).toLowerCase() === 'websocket') onWebSocket({ kind: 'h1', req, socket: socket as Socket, head });
+    else socket.destroy();
+  });
   for (const listener of server.listeners('stream') as unknown[]) {
     if (listener !== onStream) server.removeListener('stream', listener as (...args: unknown[]) => void);
   }

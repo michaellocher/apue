@@ -80,9 +80,8 @@ the right answer? A short spike to find out what it costs and what it changes.
 - No browser test for `t.file()` with a `Blob` yet (the browser upload tests use `Uint8Array`; the
   `Blob` path is fetch with a `Blob` body, which browsers send without streaming).
 - Not measured over a real network or with several concurrent uploads.
-- `server.close()` still waits without a limit for in-flight streams, and the idle timeout only
-  calls `session.close()` (a no-op on a session that is already closing). Bug 1 showed how that turns
-  any stuck stream into a hang; a close deadline that destroys what is left would bound it.
+- ~~`server.close()` waits without a limit; the idle timeout only sends GOAWAY~~ → S22:
+  `shutdownGraceMs`, and idle sessions that GOAWAY can't finish are destroyed.
 
 ## Assessment
 

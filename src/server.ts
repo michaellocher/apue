@@ -100,8 +100,18 @@ export interface ApueServerOptions {
    * queue (node:http2) or open more connections (undici) beyond it. Default 256.
    */
   maxConcurrentStreams?: number;
-  /** Idle HTTP/2 sessions are closed (GOAWAY) after this long; heartbeats count as activity. 0 disables. Default 120 s. */
+  /**
+   * Idle HTTP/2 sessions are closed (GOAWAY) after this long, and destroyed if still idle one
+   * more period later (a GOAWAY waits for open streams, which a stuck peer never finishes);
+   * heartbeats count as activity. 0 disables. Default 120 s.
+   */
   idleTimeoutMs?: number;
+  /**
+   * `close()` lets calls in flight finish for this long; then the rest end with a retryable 503
+   * (streams get an END frame, so clients retry or resume elsewhere) and remaining connections
+   * are dropped. Infinity waits for every call. Default 10 s.
+   */
+  shutdownGraceMs?: number;
   /** A unary request body must arrive within this time, else 408 (slow-body protection). Default 30 s. */
   bodyTimeoutMs?: number;
   /**
@@ -363,6 +373,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     maxBufferedBytes = 256 * 1024,
     maxConcurrentStreams = 256,
     idleTimeoutMs = 120_000,
+    shutdownGraceMs = 10_000,
     bodyTimeoutMs = 30_000,
     maxJsonDepth = 64,
   } = options;
@@ -370,6 +381,10 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   const minCompressBytes = options.compression === false ? Infinity : (options.compression?.minBytes ?? 1024);
   const cors = options.cors;
   const resumeTokens = new ResumeTokens(options.resume);
+  if (!(shutdownGraceMs >= 0)) throw new RangeError(`shutdownGraceMs must be ≥ 0 (or Infinity), got ${shutdownGraceMs}`);
+  /** Calls in flight, by their call controller: `close()` aborts what outlives the grace period. */
+  const inflight = new Set<AbortController>();
+  let drainedWaiter: (() => void) | undefined;
   if (cors?.credentials && cors.origins === '*') throw new Error('cors: credentials require an explicit origin list');
   checkWindow('webSocketWindow', webSocketWindow);
   const uploads = options.uploads ? new UploadStore(options.uploads) : undefined;
@@ -468,7 +483,13 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     sessions.add(session);
     session.on('close', () => sessions.delete(session));
     // Node's default is no idle timeout at all: idle connections would be held forever.
-    if (idleTimeoutMs > 0) session.setTimeout(idleTimeoutMs, () => session.close());
+    if (idleTimeoutMs > 0) {
+      // Node fires a session timeout once: re-arm it to destroy a session still idle after GOAWAY.
+      session.setTimeout(idleTimeoutMs, () => {
+        session.close();
+        session.setTimeout(idleTimeoutMs, () => session.destroy());
+      });
+    }
   });
   const webSockets = new Set<WsConnection>();
   onExchange(server, (exchange) => void handle(exchange, exchange), acceptWebSocket);
@@ -529,12 +550,19 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
   async function handle(req: Exchange, res: Exchange): Promise<void> {
     // Own completion flag: 'close' fires for completed and for reset streams alike.
     const clientGone = new AbortController();
+    // The call's own signal: aborted when the client goes, and by close() after its grace period
+    // (then with a 503 that is still sent — clientGone stays unaborted).
+    const call = new AbortController();
+    inflight.add(call);
     let completed = false;
     const complete = () => (completed = true);
     res.onClose(() => {
-      if (!completed) clientGone.abort(new ApueError(499, 'Client Closed Request'));
+      if (completed) return;
+      const gone = new ApueError(499, 'Client Closed Request');
+      clientGone.abort(gone);
+      call.abort(gone);
     });
-    let signal = clientGone.signal;
+    let signal = call.signal;
     const method = req.method;
     const head = method === 'HEAD';
     try {
@@ -688,6 +716,9 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
       if (res.headersSent) return void res.end();
       const outcome = problemOutcome(problem, error);
       await sendBody(req, res, outcome.status, outcome.headers, outcome.body, false);
+    } finally {
+      inflight.delete(call);
+      if (inflight.size === 0) drainedWaiter?.();
     }
   }
 
@@ -1086,10 +1117,11 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     async close() {
       const closed = new Promise<void>((resolve) => server.close(() => resolve()));
       for (const conn of webSockets) conn.close(WsClose.GOING_AWAY, 'server shutting down');
-      // Graceful GOAWAY for h2 sessions, then drop remaining (HTTP/1.1 keep-alive) sockets.
-      // Wait for 'close' rather than the close() callback: a session the client already closed
-      // never calls the callback, which left close() pending forever.
-      await Promise.all(
+      // Graceful GOAWAY for h2 sessions: no new streams, open ones may finish (what is left after
+      // the grace period goes with its socket, below). Wait for 'close'
+      // rather than the close() callback: a session the client already closed never calls the
+      // callback, which left close() pending forever.
+      const sessionsClosed = Promise.all(
         [...sessions].map(
           (session) =>
             new Promise<void>((resolve) => {
@@ -1099,6 +1131,18 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
             }),
         ),
       );
+      const callsDone = new Promise<void>((resolve) => {
+        if (inflight.size === 0) return resolve();
+        drainedWaiter = resolve;
+      });
+      const graceful = Promise.all([sessionsClosed, callsDone]);
+      if (!(await within(graceful, shutdownGraceMs))) {
+        // Grace over: what is still running ends with a retryable 503 — written as the response
+        // or END frame where the client is still there — then gets a moment to be flushed.
+        const reason = new ApueError(503, 'Service Unavailable', 'server shutting down', { retryable: true }, { 'retry-after': '0' });
+        for (const call of inflight) call.abort(reason);
+        await within(graceful, 1_000);
+      }
       for (const socket of sockets) socket.destroy();
       await closed;
       await uploads?.close();
@@ -1374,6 +1418,18 @@ function problemOutcome(problem: Problem, error?: unknown): StoredResponse & { p
   const headers: Record<string, string> = { 'content-type': MediaType.PROBLEM, 'cache-control': 'no-store' };
   if (error instanceof ApueError) Object.assign(headers, error.headers);
   return { status: problem.status, headers, body: encodeJson(problem), payload: problem };
+}
+
+/** True if `promise` settles within `ms` (Infinity: waits); the timer never keeps the process alive. */
+async function within(promise: Promise<unknown>, ms: number): Promise<boolean> {
+  if (ms === Infinity) return promise.then(() => true);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), ms)));
+  try {
+    return await Promise.race([promise.then(() => true as const), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function timeoutSignal(signal: AbortSignal, req: Exchange): AbortSignal {

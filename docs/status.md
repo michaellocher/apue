@@ -83,8 +83,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
   (`net::ERR_FAILED` for e.g. `/src/batch.ts`, captured by the new CDP diagnostics at 07:17) — the
   page then never becomes ready (and once navigated by a native form submit). Server side shows no
   error; cause still open. The example server now logs abnormal streams (`APUE_DEBUG_STREAMS`, on in
-  the tests); 25 isolated browser runs afterwards did not reproduce it — it was seen under full-suite
-  load only.
+  the tests); 25 isolated browser runs and 23 consecutive full-suite runs (07:20–07:35) afterwards
+  did not reproduce it.
 - WebKit lost the last messages of a WebSocket stream and reported 1006 in ~1 of 10 runs: a
   server-initiated close right after the data, over RFC 8441. Reproduced with a raw WebSocket page
   (3–4 of 40), gone after letting the client close after END (0 of 40; spec §8).

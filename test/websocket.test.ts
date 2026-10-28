@@ -909,11 +909,14 @@ describe('second review (b91f057..HEAD)', () => {
     const closed = new Promise((resolve) => ws.socket.once('close', resolve));
     ws.send(0x2, msgFrame(1), { mask: false }); // unmasked → 1002; we never answer or close
     for await (const frame of ws.frames()) if (frame.opcode === 0x8) break;
-    await sleep(100);
     // Only a really closed server socket answers further client data with a reset; a half-open
-    // one (end() alone) keeps accepting it silently.
-    for (let i = 0; i < 5; i++) ws.socket.write(Buffer.alloc(1024));
-    await Promise.race([closed, sleep(1000).then(() => assert.fail('the server kept the transport half-open'))]);
+    // one (end() alone) keeps accepting it silently. Keep writing until the reset (slow under load).
+    let isClosed = false;
+    void closed.then(() => (isClosed = true));
+    for (const deadline = Date.now() + 3000; !isClosed && Date.now() < deadline; await sleep(50)) {
+      if (!ws.socket.destroyed) ws.socket.write(Buffer.alloc(1024));
+    }
+    assert.ok(isClosed, 'the server kept the transport half-open');
   });
 
   // Documents behaviour: in Node, 'close' (→ 499) is handled before the reader's catch sees the reset,

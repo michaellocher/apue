@@ -17,7 +17,7 @@ try {
   const paths = files.map((f) => f.path);
   const unexpected = paths.filter((p) => !/^(dist\/(src|bin)\/|README\.md$|LICENSE$|CHANGELOG\.md$|package\.json$)/.test(p));
   if (unexpected.length) throw new Error(`unexpected files in the package: ${unexpected.join(', ')}`);
-  for (const required of ['dist/src/index.js', 'dist/src/index.d.ts', 'dist/bin/apue-types.js', 'dist/src/python/runtime.py', 'dist/src/go/runtime.go', 'LICENSE', 'README.md']) {
+  for (const required of ['dist/src/index.js', 'dist/src/index.d.ts', 'dist/bin/apue-types.js', 'dist/src/python/runtime.py', 'dist/src/go/runtime.go', 'dist/src/java/Runtime.java', 'LICENSE', 'README.md']) {
     if (!paths.includes(required)) throw new Error(`missing from the package: ${required}`);
   }
   console.log(`package: ${filename}, ${paths.length} files, ${(size / 1024).toFixed(0)} KiB`);
@@ -94,6 +94,31 @@ process.exit(0);
     run(join(app, 'node_modules', '.bin', 'apue-types'), [url, '--ca', 'cert.pem', '--lang', 'python', '--out', 'api_client.py'], app);
     run('python3', ['-m', 'py_compile', 'api_client.py'], app);
     console.log('python: the CLI from the package generates a compiling Python client');
+    const has = (tool: string) => {
+      try {
+        execFileSync(tool, ['--version'], { stdio: 'ignore' });
+        return true;
+      } catch {
+        try {
+          execFileSync(tool, ['version'], { stdio: 'ignore' });
+          return true;
+        } catch {
+          return false;
+        }
+      }
+    };
+    if (has('go')) {
+      execFileSync('mkdir', ['-p', join(app, 'goclient')]);
+      run(join(app, 'node_modules', '.bin', 'apue-types'), [url, '--ca', 'cert.pem', '--lang', 'go', '--package', 'api', '--out', join('goclient', 'api.go')], app);
+      writeFileSync(join(app, 'goclient', 'go.mod'), 'module example.com/goclient\n\ngo 1.24\n');
+      execFileSync('go', ['vet', './...'], { cwd: join(app, 'goclient'), stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, GOFLAGS: '-mod=mod', GOTOOLCHAIN: 'local' } });
+      console.log('go: the CLI from the package generates a Go client that passes go vet');
+    } else console.log('go: skipped (no go)');
+    if (has('javac')) {
+      run(join(app, 'node_modules', '.bin', 'apue-types'), [url, '--ca', 'cert.pem', '--lang', 'java', '--out', 'Api.java'], app);
+      run('javac', ['-d', join(app, 'classes'), 'Api.java'], app);
+      console.log('java: the CLI from the package generates a Java client that compiles');
+    } else console.log('java: skipped (no javac)');
 
     // The README's quick start, verbatim: api.ts, server.ts, client.ts against the installed package.
     const readme = readFileSync(join(root, 'README.md'), 'utf8');

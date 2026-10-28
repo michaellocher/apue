@@ -32,6 +32,10 @@ jobs:
         with:
           go-version: stable
           cache: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
       - run: npm ci
       - name: Install WebKit (Playwright build) with its system dependencies
         run: npx playwright-core install --with-deps webkit

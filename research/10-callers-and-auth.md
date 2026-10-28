@@ -75,8 +75,13 @@ reasoning. Decision by you: option 2 below. Implemented as S21.
 
 - DPoP profile (option 3) — deferred: one signature per call and a replay cache, while DBSC covers
   cookie apps transparently.
-- Cross-site WebSockets under third-party-cookie partitioning: not verified (with the rule above,
-  cross-site cookie auth needs `credentials: true` anyway).
+- ~~Cross-site WebSockets under third-party-cookie partitioning: not verified~~ → probed 2026-10-28
+  (page on 127.0.0.1, API on localhost = another site; headless default profiles; one-off probe in
+  the browser suite, not kept): **the WebSocket handshake gets exactly the cookies fetch gets** —
+  Chrome and Firefox sent both a plain `SameSite=None` and a partitioned (CHIPS) cookie cross-site,
+  Playwright's WebKit only the partitioned one; same-site all three sent both. So cross-site cookie
+  authentication over T3 works where it works for fetch, and the CSWSH rule (cookies only with CORS
+  credentials) matters in every browser. Real Safari (tracking prevention) not checked.
 - Proxies may log `Sec-WebSocket-Protocol` like any header (the token travels like `Authorization`,
   which they may log as well); tokens should be short-lived (RFC 6750 §5.3: one hour or less in
   browsers).

@@ -222,7 +222,7 @@ Open:
 3. CREDIT frames for message-level consumer pacing across tiers (T3 byte windows: done in S17).
 4. WebTransport (T4) once a server implementation exists for Node; HTTP/3 in Node — checked 2026-10-28: the official Node 26.12.1 build has `node_use_quic: false` (no ngtcp2/nghttp3); `node:quic` is unknown even with `--experimental-quic`, so it needs a custom build.
 5. Problem type namespace (placeholder `https://apue.dev/problems/`).
-6. ~~Auth~~ → callers (S21, research/10): `principal` hook, credentials over T3 as a subprotocol, no ambient credentials on cross-origin handshakes without CORS credentials. Open: a DPoP profile (deferred), cross-site WebSockets under third-party-cookie partitioning (unverified).
+6. ~~Auth~~ → callers (S21, research/10): `principal` hook, credentials over T3 as a subprotocol, no ambient credentials on cross-origin handshakes without CORS credentials. Cross-site cookies (probed in Chrome, Firefox, WebKit): a WebSocket handshake gets exactly the cookies fetch gets. Open: a DPoP profile (deferred).
 7. ~~Long-running operations~~ → a pattern of start (idempotent) + resumable watch stream + cacheable get (§8).
 8. Generators for other languages (the manifest is JSON Schema; TypeScript generation exists).
 
@@ -385,3 +385,4 @@ Checked the open items first. Verified by probe: `server.close()` never returned
 - An upload deleted while a call reads it (a second party's DELETE, expiry) failed that call in file mode (`ENOENT`). A call now opens its `t.file()` inputs when it starts and closes them when the request is done; an open file outlives its unlink.
 - Found while testing that: a file-backed upload held its write descriptor from creation until deletion — complete ones too, and empty "careful" creations (100 allowed per client) — so a few clients could exhaust the process's descriptors (macOS default 256), after which even `accept()` fails. Descriptors are now open only while a request writes (positional writes at the stored length, a fresh handle per request).
 - 4 new tests (an in-band 400 through raw WebSocket and through the client; a deletion during the call with no descriptor left; 20 waiting uploads holding none, then a resumed append landing at the right offset); 7 mutations, all caught. 328 tests.
+- Also checked: `t.file()` with a `Blob` in Chrome, Firefox and WebKit (new browser check); 8 concurrent 64 MiB uploads (file store 419–459 MiB/s aggregate at 297–335 MiB server RSS, memory store 460–494 MiB/s at ≈ 870 MiB); cross-site cookies on WebSocket handshakes (same as fetch in all three browsers — research/10).

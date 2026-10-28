@@ -76,9 +76,11 @@ the right answer? A short spike to find out what it costs and what it changes.
 - **`Upload-Offset` may count bytes not yet written** (up to 1 MiB buffered per upload). If the
   write then fails, the upload is deleted (507) rather than resumed with a hole; the client must
   start over.
-- No browser test for `t.file()` with a `Blob` yet (the browser upload tests use `Uint8Array`; the
-  `Blob` path is fetch with a `Blob` body, which browsers send without streaming).
-- Not measured over a real network or with several concurrent uploads.
+- ~~No browser test for `t.file()` with a `Blob`~~ → added: 3 MiB `Blob` in Chrome, Firefox, WebKit
+  (server digest = browser digest; an oversized `Blob` refused on the client).
+- Concurrency (added later; 8 × 64 MiB, one connection each, separate server process): file store
+  419–459 MiB/s aggregate, server peak RSS 297–335 MiB; memory store 460–494 MiB/s, peak 868–873 MiB;
+  all digests correct. Aggregate ≈ one upload (one server thread). Not measured over a real network.
 - ~~`server.close()` waits without a limit; the idle timeout only sends GOAWAY~~ → S22:
   `shutdownGraceMs`, and idle sessions that GOAWAY can't finish are destroyed.
 

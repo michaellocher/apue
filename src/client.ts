@@ -97,15 +97,24 @@ export interface ClientOptions {
    * none. Over WebSocket (tier T3) it travels as an `apue.auth.` subprotocol.
    */
   authorization?: string | (() => string | undefined | Promise<string | undefined>);
+  /**
+   * Extra headers per request, asked before each one with its method and path — e.g. a fresh
+   * DPoP proof (`{ dpop: … }`). Over WebSocket (tier T3) `dpop` travels as an `apue.dpop.`
+   * subprotocol; other headers don't travel there. WebSocket calls are POST.
+   */
+  headers?: (request: { method: string; path: string }) => Record<string, string> | undefined | Promise<Record<string, string> | undefined>;
 }
 
-/** Adds the caller's credentials to every request the client sends through `transport`. */
-function withAuthorization(transport: Transport, authorization: NonNullable<ClientOptions['authorization']>): Transport {
+/** Adds the caller's credentials and per-request headers to every request sent through `transport`. */
+function withRequestHeaders(transport: Transport, options: ClientOptions): Transport {
+  const { authorization, headers } = options;
   const current = typeof authorization === 'string' ? () => authorization : authorization;
   return {
     async request(req) {
-      const value = await current();
-      return transport.request(value === undefined ? req : { ...req, headers: { ...req.headers, authorization: value } });
+      const value = await current?.();
+      const extra = await headers?.({ method: req.method, path: req.path });
+      if (value === undefined && extra === undefined) return transport.request(req);
+      return transport.request({ ...req, headers: { ...req.headers, ...extra, ...(value === undefined ? {} : { authorization: value }) } });
     },
     close: () => transport.close?.() ?? Promise.resolve(),
   };
@@ -144,7 +153,7 @@ export class ApueClient<A extends Api> {
 
   constructor(api: A, transport: Transport, options: ClientOptions = {}) {
     this.#api = api;
-    this.#transport = options.authorization === undefined ? transport : withAuthorization(transport, options.authorization);
+    this.#transport = options.authorization === undefined && options.headers === undefined ? transport : withRequestHeaders(transport, options);
     this.#retries = options.retries ?? 2;
     this.#backoffMs = options.backoffMs ?? 100;
     this.#maxBackoffMs = options.maxBackoffMs ?? 2_000;

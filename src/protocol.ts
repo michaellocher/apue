@@ -76,6 +76,13 @@ export const WS_SUBPROTOCOL = 'apue.v1';
  * server never selects (echoes) it and hands it to the call as the `authorization` header.
  */
 export const WS_AUTH_PREFIX = 'apue.auth.';
+/**
+ * A proof of possession for the call (a `DPoP` header value: a compact JWS, which consists of token
+ * characters already) travels unencoded as `apue.dpop.<value>`; handed to the call as `dpop`.
+ */
+export const WS_DPOP_PREFIX = 'apue.dpop.';
+/** Values that can travel as a subprotocol token unencoded (base64url segments joined by dots). */
+export const WS_TOKEN_VALUE = /^[A-Za-z0-9_.-]+$/;
 
 /** `Authorization` value → offered subprotocol (base64url: token characters only, RFC 6455 §4.1). */
 export function wsAuthProtocol(authorization: string): string {

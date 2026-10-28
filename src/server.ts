@@ -160,6 +160,13 @@ export interface ApueServerOptions {
 export interface PrincipalRequest {
   headers: http2.IncomingHttpHeaders;
   remoteAddress: string | undefined;
+  /**
+   * The call's method and path with query, as a proof of possession (e.g. a DPoP proof's
+   * `htm`/`htu`) would bind them. A WebSocket call reports POST — its logical method, what the
+   * client signs whichever tier carries the call — and its path (query: transport parameters).
+   */
+  method: string;
+  url: string;
 }
 
 /** Who a request is from, resolved once per request (see `principal`). */
@@ -411,7 +418,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         },
       };
     }
-    const answer = principalHook({ headers: req.headers, remoteAddress: req.remoteAddress });
+    const answer = principalHook({ headers: req.headers, remoteAddress: req.remoteAddress, method: req.method, url: req.url });
     return answer instanceof Promise ? answer.then(toCaller) : toCaller(answer);
   };
   /**
@@ -540,10 +547,15 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
     }
     webSockets.add(conn);
     conn.onClose(() => webSockets.delete(conn));
-    // The call sees subprotocol credentials as `authorization`, like on every other tier, and
-    // never the subprotocol carrying them (it would end up wherever headers get logged).
+    // The call sees subprotocol credentials as `authorization` (and a proof as `dpop`), like on
+    // every other tier, and never the subprotocols carrying them (they'd end up in header logs).
     const { 'sec-websocket-protocol': _offered, ...rest } = headers;
-    const callHeaders = { ...rest, 'sec-websocket-protocol': check.protocols!.join(', '), ...(check.authorization === undefined ? {} : { authorization: check.authorization }) };
+    const callHeaders = {
+      ...rest,
+      'sec-websocket-protocol': check.protocols!.join(', '),
+      ...(check.authorization === undefined ? {} : { authorization: check.authorization }),
+      ...(check.dpop === undefined ? {} : { dpop: check.dpop }),
+    };
     const exchange = new WsExchange(conn, path, callHeaders, upgrade.kind === 'h2' ? '2.0' : '1.1');
     if (check.credentialError !== undefined) {
       // Nothing runs; the client gets a status and a reason instead of a bare failed connection.
@@ -1375,8 +1387,8 @@ function hash(text: string | Uint8Array): string {
 
 // PATCH/DELETE and the Upload-* fields are for resumable uploads (`/$uploads`).
 const CORS_ALLOW_METHODS = 'DELETE, GET, HEAD, PATCH, POST, QUERY';
-const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version']);
-const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding, location, upload-offset, upload-complete, upload-limit, upload-length';
+const CORS_ALLOW_HEADERS = new Set(['accept', 'authorization', 'dpop', 'content-type', 'idempotency-key', 'if-none-match', 'incremental', Header.TIMEOUT, Header.RESUME, 'last-event-id', 'upload-complete', 'upload-offset', 'upload-length', 'upload-draft-interop-version']);
+const CORS_EXPOSE_HEADERS = 'etag, apue-replayed, deprecation, sunset, link, retry-after, accept-query, content-encoding, location, upload-offset, upload-complete, upload-limit, upload-length, www-authenticate, dpop-nonce';
 
 /**
  * Adds CORS response headers for an allowed Origin and answers preflights. Returns true when the

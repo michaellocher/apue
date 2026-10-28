@@ -4,7 +4,7 @@
 // extend it; the browser API can't pause receiving, so the window is what bounds client memory.
 import { fetchTransport, type Transport, type TransportResponse } from './client.ts';
 import { concatBytes } from './frame.ts';
-import { checkWindow, Header, MediaType, parseCredit, parseWsAuthProtocol, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL, wsAuthProtocol } from './protocol.ts';
+import { checkWindow, Header, MediaType, parseCredit, parseWsAuthProtocol, WS_DPOP_PREFIX, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL, WS_TOKEN_VALUE, wsAuthProtocol } from './protocol.ts';
 
 /** Client close code for "call cancelled" (4000–4999 is the private-use range). */
 export const WS_CLOSE_CANCELLED = 4000;
@@ -51,8 +51,8 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       const { path, headers, body, signal } = req;
       signal.throwIfAborted(); // an already-aborted signal never fires 'abort'
       // Browsers can't set WebSocket headers: the deadline travels as a query parameter, the
-      // credentials as a second offered subprotocol (never selected by the server). Request streams
-      // carry no other header that matters here: Idempotency-Key and resume tokens only apply to
+      // credentials and a DPoP proof as further offered subprotocols (never selected by the
+      // server). No other header matters here: Idempotency-Key and resume tokens only apply to
       // calls without a request stream, which go over fetch.
       const timeout = headers[Header.TIMEOUT];
       const url = `${base}${path}${timeout ? `${path.includes('?') ? '&' : '?'}timeout=${encodeURIComponent(timeout)}` : ''}`;
@@ -61,7 +61,10 @@ export function webSocketTransport(baseUrl: string, options: WebSocketTransportO
       if (credentials !== undefined && parseWsAuthProtocol(credentials) !== authorization) {
         throw new TypeError('Authorization must be visible ASCII (spaces inside) to travel over WebSocket');
       }
-      const ws = new WebSocketImpl(url, credentials === undefined ? WS_SUBPROTOCOL : [WS_SUBPROTOCOL, credentials]);
+      const dpop = headers.dpop;
+      if (dpop !== undefined && !WS_TOKEN_VALUE.test(dpop)) throw new TypeError('a DPoP proof must be a compact JWS to travel over WebSocket');
+      const protocols = [WS_SUBPROTOCOL, ...(credentials === undefined ? [] : [credentials]), ...(dpop === undefined ? [] : [`${WS_DPOP_PREFIX}${dpop}`])];
+      const ws = new WebSocketImpl(url, protocols.length === 1 ? WS_SUBPROTOCOL : protocols);
       ws.binaryType = 'arraybuffer';
       live.add(ws);
       let input: AsyncIterator<Uint8Array> | undefined;

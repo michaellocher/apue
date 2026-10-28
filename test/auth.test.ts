@@ -22,6 +22,8 @@ const api = defineApi({
   'files.size': op({ effect: 'unsafe', input: t.object({ data: t.bytes() }), output: t.number() }),
   'events.watch': op({ effect: 'safe', stream: 'server', resumable: true, input: t.object({ n: t.number() }), output: t.number() }),
   'who.streaming': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: Seen }),
+  'proof.unary': op({ effect: 'unsafe', input: t.void(), output: t.nullable(t.string()) }),
+  'proof.streaming': op({ effect: 'unsafe', stream: 'client', input: t.number(), output: t.nullable(t.string()) }),
 });
 const seen = (ctx: CallContext) => ({
   principal: ctx.principal ?? null,
@@ -43,6 +45,11 @@ const handlers: Handlers<typeof api> = {
   'who.streaming': async (inputs, ctx) => {
     for await (const _ of inputs);
     return seen(ctx);
+  },
+  'proof.unary': (_, ctx) => (ctx.headers.dpop as string | undefined) ?? null,
+  'proof.streaming': async (inputs, ctx) => {
+    for await (const _ of inputs);
+    return (ctx.headers.dpop as string | undefined) ?? null;
   },
 };
 
@@ -365,5 +372,67 @@ describe('cross-site WebSocket hijacking: ambient credentials on cross-origin ha
       yield 1;
     })()));
     assert.deepEqual(seen, { principal: 'alice', authorization: 'Bearer alice-1', cookie: null, protocols: 'apue.v1' });
+  });
+});
+
+describe('groundwork for proofs of possession (DPoP, research/11)', () => {
+  const jws = 'eyJ0eXAiOiJkcG9wK2p3dCJ9.eyJodG0iOiJQT1NUIn0.c2lnbmF0dXJl'; // shape only: three base64url segments
+  const one = async function* () {
+    yield 1;
+  };
+
+  test('the principal hook sees the call\'s method and path on every tier (WebSocket calls are POST)', async (ctx) => {
+    const requests: Array<{ method: string; url: string }> = [];
+    const server = await startServer(api, handlers, { uploads: {}, principal: ({ method, url }) => (requests.push({ method, url }), undefined) });
+    ctx.after(() => server.close());
+    const http = client(server.url);
+    await http.call('who.am');
+    await http.call('orders.create', { item: 'x' });
+    const ws = new ApueClient(api, webSocketTransport(server.url));
+    ctx.after(() => ws.close());
+    await Array.fromAsync(ws.duplex('who.streaming', one()));
+    assert.deepEqual(requests.map((r) => r.method), ['GET', 'POST', 'POST']);
+    assert.match(requests[0]!.url, /^\/who\.am(\?|$)/);
+    assert.equal(requests[1]!.url, '/orders.create');
+    assert.match(requests[2]!.url, /^\/who\.streaming(\?|$)/);
+  });
+
+  test('a per-request headers hook (method, path) adds e.g. a DPoP proof — over WebSocket as apue.dpop.', async (ctx) => {
+    const server = await startServer(api, handlers, { uploads: {} });
+    ctx.after(() => server.close());
+    const asked: Array<{ method: string; path: string }> = [];
+    const headers = (request: { method: string; path: string }) => (asked.push(request), { dpop: jws });
+    const http = new ApueClient(api, http2Transport(server.url, { ca: testCert().cert }), { headers });
+    ctx.after(() => http.close());
+    assert.equal(await http.call('proof.unary'), jws);
+    const ws = new ApueClient(api, webSocketTransport(server.url), { headers, authorization: 'Bearer alice-1' });
+    ctx.after(() => ws.close());
+    assert.deepEqual(await Array.fromAsync(ws.duplex('proof.streaming', one())), [jws]);
+    assert.deepEqual(asked, [{ method: 'POST', path: '/proof.unary' }, { method: 'POST', path: '/proof.streaming' }]);
+    // The carrying subprotocols stay hidden from handlers.
+    const seenOverWs = await Array.fromAsync(ws.duplex('who.streaming', one()));
+    assert.equal(seenOverWs[0]!.protocols, 'apue.v1');
+    assert.equal(seenOverWs[0]!.authorization, 'Bearer alice-1');
+    const bad = new ApueClient(api, webSocketTransport(server.url), { headers: () => ({ dpop: 'not a jws!' }) });
+    ctx.after(() => bad.close());
+    await assert.rejects(Array.fromAsync(bad.duplex('proof.streaming', one())), TypeError);
+  });
+
+  test('apue.dpop. rules: one at most, a compact JWS, not next to a DPoP header — else an in-band 400', () => {
+    const offer = (...protocols: string[]) => ({ 'sec-websocket-version': '13', 'sec-websocket-protocol': protocols.join(', ') });
+    const any = () => true;
+    assert.deepEqual(checkHandshake(offer('apue.v1', `apue.dpop.${jws}`), any), { ok: true, status: 200, protocols: ['apue.v1'], dpop: jws });
+    assert.match(checkHandshake(offer('apue.v1', `apue.dpop.${jws}`, `apue.dpop.${jws}`), any).credentialError!, /more than one/);
+    assert.match(checkHandshake({ ...offer('apue.v1', `apue.dpop.${jws}`), dpop: jws }, any).credentialError!, /both/);
+    assert.match(checkHandshake(offer('apue.v1', 'apue.dpop.'), any).credentialError!, /malformed/);
+  });
+
+  test('CORS: browsers may send DPoP and read WWW-Authenticate / DPoP-Nonce', async (ctx) => {
+    const server = await startServer(api, handlers, { uploads: {}, cors: { origins: ['https://app.example'] } });
+    ctx.after(() => server.close());
+    const preflight = await fetch(`${server.url}/orders.create`, { method: 'OPTIONS', headers: { origin: 'https://app.example', 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization, dpop' } });
+    assert.equal(preflight.headers.get('access-control-allow-headers'), 'authorization, dpop');
+    const res = await fetch(`${server.url}/who.am`, { headers: { origin: 'https://app.example' } });
+    assert.match(res.headers.get('access-control-expose-headers') ?? '', /www-authenticate, dpop-nonce/);
   });
 });

@@ -11,7 +11,7 @@ import { hash } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { Writable } from 'node:stream';
-import { ApueError, checkWindow, isClientGone, parseCredit, parseWsAuthProtocol, ProblemType, WS_AUTH_PREFIX, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
+import { ApueError, checkWindow, isClientGone, parseCredit, parseWsAuthProtocol, ProblemType, WS_AUTH_PREFIX, WS_DPOP_PREFIX, WS_TOKEN_VALUE, WS_INITIAL_WINDOW, WS_MAX_WINDOW, WS_SUBPROTOCOL } from './protocol.ts';
 
 /** How long the server waits for the peer's close frame before ending the transport anyway. */
 const CLOSE_HANDSHAKE_TIMEOUT_MS = 2000;
@@ -429,6 +429,8 @@ export interface HandshakeCheck {
   reason?: string;
   /** The `Authorization` value offered as an `apue.auth.` subprotocol, decoded. */
   authorization?: string;
+  /** A proof of possession offered as an `apue.dpop.` subprotocol. */
+  dpop?: string;
   /** The offered subprotocols without the credentials (what the call's headers may show). */
   protocols?: string[];
   /**
@@ -451,13 +453,25 @@ export function checkHandshake(headers: IncomingHttpHeaders, allowedOrigin: (ori
   if (!offered.includes(WS_SUBPROTOCOL)) return { ok: false, status: 400, reason: `subprotocol ${WS_SUBPROTOCOL} required` };
   const origin = headers.origin;
   if (typeof origin === 'string' && !allowedOrigin(origin)) return { ok: false, status: 403, reason: 'origin not allowed' };
+  const carried = (p: string) => p.startsWith(WS_AUTH_PREFIX) || p.startsWith(WS_DPOP_PREFIX);
   const credentials = offered.filter((p) => p.startsWith(WS_AUTH_PREFIX));
-  const protocols = offered.filter((p) => !p.startsWith(WS_AUTH_PREFIX));
-  if (credentials.length === 0) return { ok: true, status: 200, protocols };
+  const proofs = offered.filter((p) => p.startsWith(WS_DPOP_PREFIX));
+  const protocols = offered.filter((p) => !carried(p));
   const unusable = (credentialError: string): HandshakeCheck => ({ ok: true, status: 200, protocols, credentialError });
+  const check: HandshakeCheck = { ok: true, status: 200, protocols };
   if (credentials.length > 1) return unusable(`more than one ${WS_AUTH_PREFIX} subprotocol`);
-  if (headers.authorization !== undefined) return unusable(`credentials both in Authorization and in a ${WS_AUTH_PREFIX} subprotocol`);
-  const authorization = parseWsAuthProtocol(credentials[0]!);
-  if (authorization === undefined) return unusable(`malformed ${WS_AUTH_PREFIX} subprotocol (base64url without padding of a visible-ASCII Authorization value)`);
-  return { ok: true, status: 200, authorization, protocols };
+  if (credentials.length === 1) {
+    if (headers.authorization !== undefined) return unusable(`credentials both in Authorization and in a ${WS_AUTH_PREFIX} subprotocol`);
+    const authorization = parseWsAuthProtocol(credentials[0]!);
+    if (authorization === undefined) return unusable(`malformed ${WS_AUTH_PREFIX} subprotocol (base64url without padding of a visible-ASCII Authorization value)`);
+    check.authorization = authorization;
+  }
+  if (proofs.length > 1) return unusable(`more than one ${WS_DPOP_PREFIX} subprotocol`);
+  if (proofs.length === 1) {
+    if (headers.dpop !== undefined) return unusable(`a proof both in a DPoP header and in a ${WS_DPOP_PREFIX} subprotocol`);
+    const dpop = proofs[0]!.slice(WS_DPOP_PREFIX.length);
+    if (!WS_TOKEN_VALUE.test(dpop)) return unusable(`malformed ${WS_DPOP_PREFIX} subprotocol (a compact JWS: base64url segments joined by dots)`);
+    check.dpop = dpop;
+  }
+  return check;
 }

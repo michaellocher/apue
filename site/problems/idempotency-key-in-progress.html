@@ -61,7 +61,7 @@
 <h2 id="how-clients-should-react">How clients should react</h2>
 <ul><li>Wait and repeat the request with the same key and the same payload. Once the original has finished, the stored response is replayed (<code>apue-replayed: ?1</code>).</li><li>The TypeScript client does this by itself: a <code>409</code> with <code>retryable: true</code> is retried with backoff. Any other <code>409</code> is not.</li></ul>
 <p class="source">Raised in src/server.ts, src/idempotency.ts of the reference implementation. See also: <a href="/docs/concepts.html#idempotency-keys">Idempotency keys</a>, <a href="/docs/errors.html">Errors</a>.</p>
-<nav class="pager" aria-label="Previous and next problem type"><a class="prev" href="/problems/deadline-exceeded.html" rel="prev"><span>Previous</span><b>deadline-exceeded</b></a><a class="next" href="/problems/idempotency-key-reused.html" rel="next"><span>Next</span><b>idempotency-key-reused</b></a></nav>
+<nav class="pager" aria-label="Previous and next problem type"><a class="prev" href="/problems/download-expired.html" rel="prev"><span>Previous</span><b>download-expired</b></a><a class="next" href="/problems/idempotency-key-reused.html" rel="next"><span>Next</span><b>idempotency-key-reused</b></a></nav>
 </main>
 </div>
 <footer class="site-footer">

@@ -45,7 +45,7 @@
 <p>A client can give a call a deadline in milliseconds with the <code>apue-timeout</code> header (WebSocket: <code>?timeout=</code>; the TypeScript client’s <code>timeoutMs</code> option). When it passes, the server aborts the handler’s <code>ctx.signal</code> and answers <code>504</code> — also when a stream’s producer ignores the signal. A stream whose headers are already sent ends with this problem in its END frame. For a pipelined batch the deadline covers the whole batch.</p>
 <h2 id="members">Members</h2>
 <p>An RFC 9457 problem details object. Besides the standard members it may carry:</p>
-<dl class="facts"><dt><code>type</code></dt><dd><code>https://apue.dev/problems/deadline-exceeded</code></dd><dt><code>title</code></dt><dd><code>Deadline Exceeded</code>, the same for every occurrence of this type.</dd><dt><code>status</code></dt><dd><code>504</code> (response, or in an END frame)</dd><dt><code>detail</code></dt><dd>A human-readable explanation of this occurrence; don’t parse it.</dd><dt><code>retryable</code></dt><dd><code>true</code> — repeating the same request later may succeed.</dd></dl>
+<dl class="facts"><dt><code>type</code></dt><dd><code>https://apue.dev/problems/deadline-exceeded</code></dd><dt><code>title</code></dt><dd><code>Deadline Exceeded</code>, the same for every occurrence of this type.</dd><dt><code>status</code></dt><dd><code>504</code> (response, or in an END frame)</dd><dt><code>detail</code></dt><dd>A human-readable explanation of this occurrence; don’t parse it.</dd></dl>
 <h2 id="example">Example</h2>
 <figure class="code"><figcaption>unary call over its deadline (src/server.ts)</figcaption><pre tabindex="0"><code class="language-http"><span class="tok-k">HTTP/2 504</span>
 <span class="tok-c">content-type:</span> application/problem+json
@@ -54,13 +54,12 @@
 {
   <span class="tok-k">"type"</span>: <span class="tok-s">"https://apue.dev/problems/deadline-exceeded"</span>,
   <span class="tok-k">"title"</span>: <span class="tok-s">"Deadline Exceeded"</span>,
-  <span class="tok-k">"status"</span>: <span class="tok-n">504</span>,
-  <span class="tok-k">"retryable"</span>: <span class="tok-n">true</span>
+  <span class="tok-k">"status"</span>: <span class="tok-n">504</span>
 }</code></pre></figure>
 <h2 id="how-clients-should-react">How clients should react</h2>
 <ul><li>The reference clients don’t retry a 504 on their own: the deadline is the caller’s budget. Decide in the application whether to try again with a new deadline.</li><li>For a non-safe call, a 5xx releases its <code>Idempotency-Key</code>: repeating it with the same key executes it again.</li></ul>
 <p class="source">Raised in src/server.ts of the reference implementation. See also: <a href="/docs/concepts.html">Operations &amp; HTTP mapping</a>, <a href="/docs/client.html">Client reference</a>, <a href="/docs/errors.html">Errors</a>.</p>
-<nav class="pager" aria-label="Previous and next problem type"><a class="prev" href="/problems/truncated-stream.html" rel="prev"><span>Previous</span><b>truncated-stream</b></a><a class="next" href="/problems/idempotency-key-in-progress.html" rel="next"><span>Next</span><b>idempotency-key-in-progress</b></a></nav>
+<nav class="pager" aria-label="Previous and next problem type"><a class="prev" href="/problems/truncated-stream.html" rel="prev"><span>Previous</span><b>truncated-stream</b></a><a class="next" href="/problems/download-expired.html" rel="next"><span>Next</span><b>download-expired</b></a></nav>
 </main>
 </div>
 <footer class="site-footer">

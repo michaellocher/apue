@@ -136,12 +136,12 @@ export const PROBLEMS = [
     statuses: [['504', 'response, or in an END frame']],
     summary: 'The call’s deadline (apue-timeout) passed before it completed.',
     when: `<p>A client can give a call a deadline in milliseconds with the <code>apue-timeout</code> header (WebSocket: <code>?timeout=</code>; the TypeScript client’s <code>timeoutMs</code> option). When it passes, the server aborts the handler’s <code>ctx.signal</code> and answers <code>504</code> — also when a stream’s producer ignores the signal. A stream whose headers are already sent ends with this problem in its END frame. For a pipelined batch the deadline covers the whole batch.</p>`,
-    members: [RETRYABLE],
+    members: [],
     examples: [
       {
         caption: 'unary call over its deadline (src/server.ts)',
         lang: 'http',
-        code: response(504, { type: T('deadline-exceeded'), title: 'Deadline Exceeded', status: 504, retryable: true }),
+        code: response(504, { type: T('deadline-exceeded'), title: 'Deadline Exceeded', status: 504 }),
       },
     ],
     react: [
@@ -150,6 +150,27 @@ export const PROBLEMS = [
     ],
     source: 'src/server.ts',
     related: [['docs/concepts.html', 'Operations & HTTP mapping'], ['docs/client.html', 'Client reference']],
+  },
+  {
+    name: 'download-expired',
+    title: 'Download Expired',
+    statuses: [['410', 'response']],
+    summary: 'An Idempotency-Key replay whose stored result refers to a download that has expired.',
+    when: `<p>Outputs typed <code>t.download()</code> carry a short-lived download URL (<code>/$downloads/&lt;id&gt;</code>, 15 minutes by default). When a non-safe call is repeated with the same <code>Idempotency-Key</code>, the server replays the stored result and refreshes the expiry of its download URLs. If one of them has already expired, the stored result can’t be served with a working link: the server answers <code>410</code> with this problem instead — it never hands out a dead link and never runs the operation a second time.</p>`,
+    members: [],
+    examples: [
+      {
+        caption: 'replay after the download expired (src/server.ts)',
+        lang: 'http',
+        code: response(410, { type: T('download-expired'), title: 'Download Expired', status: 410, detail: 'the stored result of this Idempotency-Key refers to a download that has expired; the operation was not run again' }),
+      },
+    ],
+    react: [
+      'The operation already ran: don’t repeat it with a new key unless running it again is what you want.',
+      'Fetch the result another way the API offers (e.g. a read operation), or ask for a new download through it.',
+    ],
+    source: 'src/server.ts, src/downloads.ts',
+    related: [['docs/binary-data.html', 'Binary data'], ['docs/concepts.html', 'Operations & HTTP mapping']],
   },
   {
     name: 'idempotency-key-in-progress',

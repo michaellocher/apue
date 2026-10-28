@@ -18,6 +18,7 @@
   <url><loc>https://apue.dev/docs/wire-format.html</loc><lastmod>2026-10-28</lastmod></url>
   <url><loc>https://apue.dev/problems/</loc><lastmod>2026-10-28</lastmod></url>
   <url><loc>https://apue.dev/problems/deadline-exceeded</loc><lastmod>2026-10-28</lastmod></url>
+  <url><loc>https://apue.dev/problems/download-expired</loc><lastmod>2026-10-28</lastmod></url>
   <url><loc>https://apue.dev/problems/failed-dependency</loc><lastmod>2026-10-28</lastmod></url>
   <url><loc>https://apue.dev/problems/idempotency-key-in-progress</loc><lastmod>2026-10-28</lastmod></url>
   <url><loc>https://apue.dev/problems/idempotency-key-reused</loc><lastmod>2026-10-28</lastmod></url>

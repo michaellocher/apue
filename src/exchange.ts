@@ -65,10 +65,16 @@ export class H2Exchange implements Exchange {
 
   send(status: number, headers: Record<string, string>, body?: Uint8Array): void {
     if (this.#gone()) return;
-    const empty = body === undefined || body.byteLength === 0;
-    this.#stream.respond({ ...mergeHeaders(this.#extra, headers), ':status': status }, { endStream: empty });
+    const all = { ...mergeHeaders(this.#extra, headers), ':status': status };
+    // respond() without an options object is measurably faster (bench S6); options only for
+    // bodiless responses (HEAD, 304, 204).
+    if (body === undefined || body.byteLength === 0) {
+      this.#stream.respond(all, { endStream: true });
+    } else {
+      this.#stream.respond(all);
+      this.#stream.end(body);
+    }
     this.headersSent = true;
-    if (!empty) this.#stream.end(body);
     this.#discardRequest();
   }
 
@@ -78,8 +84,14 @@ export class H2Exchange implements Exchange {
     this.#discardRequest();
   }
 
+  // Only after the response is fully written: resuming earlier ends the readable side at once and
+  // node:http2 then destroys the stream with the body write still pending (an ERR_STREAM_DESTROYED
+  // is created per request — 2.4% of server CPU in bench S6).
   #discardRequest(): void {
-    if (!this.#stream.readableEnded) this.#stream.resume();
+    const stream = this.#stream;
+    if (stream.readableEnded) return;
+    if (stream.writableFinished) stream.resume();
+    else stream.once('finish', () => stream.resume());
   }
 
   onClose(callback: () => void): void {

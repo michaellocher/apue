@@ -11,4 +11,6 @@ export const proxyApi = defineApi({
   'stats.cancelled': op({ effect: 'safe', input: t.void(), output: t.number(), cache: { private: true } }),
   'echo.duplex': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.number() }),
   'big.get': op({ effect: 'safe', input: t.void(), output: t.string() }),
+  'flood': op({ effect: 'unsafe', stream: 'bidi', input: t.number(), output: t.string() }),
+  'stats.flooded': op({ effect: 'safe', input: t.void(), output: t.number(), cache: { private: true } }),
 });

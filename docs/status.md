@@ -30,6 +30,8 @@ browsers are skipped if missing). `npm run typecheck` is clean.
 - vs grpc-js: 1.5× unary throughput, 30× small-message streaming.
 - 63 ms RTT / 100 Mbit/s: batches 3.0× faster than sequential calls, zstd streams 2.7×,
   tuned flow-control windows 5–12× (Node still defaults to 64 KiB).
+- Stalled consumer, server ahead: T3 credit 4.0 MiB behind every proxy; HTTP/2 up to 125 MiB through
+  Caddy (hop-by-hop windows) — docs/intermediaries.md.
 - Overhead vs a hand-written node:http2 handler (which validates nothing): 62 % of its unary
   throughput locally, 75 % of its stream throughput.
 

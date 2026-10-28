@@ -94,6 +94,26 @@ await check('WebSocket (tier T3)', async () => {
   for await (const n of ws.duplex('echo.duplex', inputs())) last = n;
   return '✓ full duplex';
 });
+async function stalledConsumer(transport: 'h2' | 'ws'): Promise<string> {
+  const caller = new ApueClient(proxyApi, transport === 'ws' ? webSocketTransport(url) : http2Transport(url, { ca, acceptEncoding: '' }), { retries: 0 });
+  let release!: () => void;
+  async function* one() {
+    yield 1;
+    await new Promise<void>((resolve) => (release = resolve));
+  }
+  const items = caller.duplex('flood', one())[Symbol.asyncIterator]();
+  await items.next();
+  await sleep(1500); // consumer stalls
+  const ahead = ((await client.call('stats.flooded')) * 64) / 1024;
+  release();
+  await items.return?.(undefined);
+  await caller.close();
+  // HTTP/2 flow control is hop-by-hop: reported as measured. T3 credit must hold end-to-end.
+  const verdict = transport === 'h2' ? 'ℹ' : ahead <= 8 ? '✓' : '✗';
+  return `${verdict} server ${ahead.toFixed(1)} MiB ahead of a stalled consumer`;
+}
+await check('stalled consumer, HTTP/2 (T1)', () => stalledConsumer('h2'));
+await check('stalled consumer, WebSocket (T3, credit)', () => stalledConsumer('ws'));
 await check('zstd response passes through', async () => {
   const session = http2.connect(url, { ca });
   session.on('error', () => {});

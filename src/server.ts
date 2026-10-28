@@ -425,7 +425,7 @@ export function createApueServer<A extends Api>(api: A, handlers: Handlers<A>, o
         return await sendBody(req, res, 200, { 'content-type': MediaType.JSON, 'cache-control': 'no-cache' }, manifest, true);
       }
       if (url.pathname === BATCH_PATH) return await handleBatch(req, res, timeoutSignal(signal, req), clientGone.signal, complete);
-      const opName = decodeURIComponent(url.pathname.slice(1));
+      const opName = decodePathSegment(url.pathname.slice(1));
       const def: OpDef | undefined = Object.hasOwn(api, opName) ? api[opName] : undefined;
       if (!def && options.fallback && (await options.fallback(req))) {
         complete();
@@ -1198,11 +1198,22 @@ function toProblem(error: unknown): Problem {
   return { title: 'Internal Server Error', status: 500 };
 }
 
+/** Upper bound for apue-timeout: what timers accept (2³¹−1 ms ≈ 24.8 days). */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 function parseTimeout(value: string | string[] | undefined): number | undefined {
   if (typeof value !== 'string') return undefined;
   const ms = Number(value);
-  if (!Number.isInteger(ms) || ms <= 0) throw new ApueError(400, 'Bad Request', `invalid ${Header.TIMEOUT}`);
+  if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMEOUT_MS) throw new ApueError(400, 'Bad Request', `invalid ${Header.TIMEOUT}`);
   return ms;
+}
+
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    throw new ApueError(400, 'Bad Request', 'malformed percent-encoding in the path');
+  }
 }
 
 function isClosed(sink: Writable): boolean {

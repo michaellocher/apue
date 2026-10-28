@@ -143,6 +143,24 @@ describe('server fuzzing', () => {
     }
   });
 
+  test('malformed paths and header values → 4xx, never 5xx', async () => {
+    const id = encodeURIComponent('{"id":"1"}');
+    const cases: Array<[Record<string, string>, number]> = [
+      [{ ':path': '/users%E0%A4%A.get' }, 400], // invalid percent-encoding (was a 500)
+      [{ ':path': `/users.get?i=${id}`, 'apue-timeout': '99999999999999999999' }, 400], // beyond timer range (was a 500)
+      [{ ':path': `/users.get?i=${id}`, 'apue-timeout': '2147483648' }, 400],
+      [{ ':path': `/users.get?i=${id}`, 'apue-timeout': '1.5' }, 400],
+      [{ ':path': '/users.get?i=%E0%A4%A' }, 400],
+      [{ ':path': '/../../etc/passwd' }, 404],
+      [{ ':path': '/__proto__' }, 404],
+      [{ ':path': '/constructor' }, 404],
+      [{ ':path': '//users.get' }, 404],
+      [{ ':path': '/' + 'a'.repeat(6000) }, 404],
+      [{ ':path': `/users%2Eget?i=${id}` }, 200], // percent-encoded op names are the same op
+    ];
+    for (const [headers, expected] of cases) assert.equal(await send(headers), expected, JSON.stringify(headers).slice(0, 80));
+  });
+
   test('garbage request streams → 4xx, server stays healthy', async () => {
     const r = prng(99);
     for (let i = 0; i < 100; i++) {

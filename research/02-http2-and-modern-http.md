@@ -161,3 +161,16 @@ Per-stream throughput ≤ min(stream window, connection window) / RTT. At 100 ms
 - Don't: raise MAX_FRAME_SIZE for throughput; assume end-to-end backpressure/cancel; let Node full-duplex mislead browser expectations; one URL per resource for cross-origin latency-sensitive calls.
 
 Open: Fastly h2/trailers; Cloudflare non-gRPC trailers & request buffering; Chrome buffer depth window→ReadableStream; which Node lines carry 4 MiB/32 MiB windows; Safari WS-over-h2 version; CVE-2026-49975 details (secondary).
+
+---
+
+# Empirical correction (S6, 2026-10-28)
+
+WebSocket over HTTP/2 in Chrome: supported by default since M91 (chromestatus 6251293127475200), but
+**reuse-only** — `net/http/http_stream_factory_job.cc`: "WebSocket is not supported over a fresh
+HTTP/2 connection"; an existing `SpdySession` is reused only for an identical `SpdySessionKey`
+(incl. privacy mode) that advertised SETTINGS_ENABLE_CONNECT_PROTOCOL. Verified with Chrome 156
+headless: after cross-origin fetches *without* credentials the WebSocket went over HTTP/1.1; after
+a fetch with `credentials: 'include'` it went over the same h2 connection (RFC 8441). Firefox
+(`network.http.http2.websockets = true`) used RFC 8441 in both cases. WebSockets over HTTP/3
+(RFC 9220) exist in Chromium behind `kEnableWebsocketsOverHttp3`, disabled by default.

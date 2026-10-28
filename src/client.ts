@@ -378,7 +378,18 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 // ---------------------------------------------------------------------------------------------
 // fetch transport: tier T0 everywhere; streaming request bodies (T2) need h2 and Chromium or Node.
 
-export function fetchTransport(baseUrl: string, fetchImpl: typeof fetch = fetch): Transport {
+export interface FetchTransportOptions {
+  fetch?: typeof fetch;
+  /**
+   * Cross-origin fetches default to no credentials, while WebSockets always send them; Chrome
+   * then can't share the HTTP/2 connection with a WebSocket (different session key) and opens
+   * HTTP/1.1. 'include' lets WebSockets reuse the h2 connection (needs CORS credentials).
+   */
+  credentials?: RequestCredentials;
+}
+
+export function fetchTransport(baseUrl: string, options: FetchTransportOptions | typeof fetch = {}): Transport {
+  const { fetch: fetchImpl = fetch, credentials } = typeof options === 'function' ? { fetch: options, credentials: undefined } : options;
   const base = baseUrl.replace(/\/$/, '');
   return {
     async request({ method, path, headers, body, signal }) {
@@ -387,6 +398,7 @@ export function fetchTransport(baseUrl: string, fetchImpl: typeof fetch = fetch)
         method,
         headers,
         signal,
+        ...(credentials ? { credentials } : {}),
         ...(body === undefined ? {} : { body: streaming ? toReadableStream(body) : (body as BodyInit) }),
         ...(streaming ? { duplex: 'half' } : {}),
       };

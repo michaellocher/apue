@@ -61,7 +61,7 @@ let api: { url: string; close(): Promise<void> };
 
 before(async () => {
   page = await startPageServer();
-  api = await startServer(browserApi, handlers, { cors: { origins: [page.url] } });
+  api = await startServer(browserApi, handlers, { cors: { origins: [page.url], credentials: true } });
 });
 after(async () => {
   await api?.close();
@@ -78,7 +78,7 @@ describe('in real browsers', () => {
       for (const r of results) t.diagnostic(`${r.ok ? (r.skipped ? 'SKIP' : 'ok  ') : 'FAIL'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
       const failed = results.filter((r) => !r.ok);
       assert.deepEqual(failed, [], `${name}: ${failed.map((f) => `${f.name}: ${f.detail}`).join('; ')}`);
-      assert.ok(results.length >= 13, `only ${results.length} checks ran`);
+      assert.ok(results.length >= 14, `only ${results.length} checks ran`);
     });
   }
 });

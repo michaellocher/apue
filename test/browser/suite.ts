@@ -104,6 +104,18 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
     // fetch would revalidate a cached GET; cache: private + no-cache keeps this fresh.
     return `server saw the WebSocket over ${await client.call('stats.lastDuplexVersion')}`;
   });
+  await check('WebSocket shares the h2 connection when fetch sends credentials (RFC 8441)', async () => {
+    const credentialed = new ApueClient(browserApi, fetchTransport(apiUrl, { credentials: 'include' }));
+    await credentialed.call('users.get', { id: 'warm-up' }); // h2 session with the WebSocket's key
+    const ws = new ApueClient(browserApi, webSocketTransport(apiUrl));
+    async function* one() {
+      yield 1;
+    }
+    await Array.fromAsync(ws.duplex('echo.duplex', one()));
+    const version = await credentialed.call('stats.lastDuplexVersion');
+    if (version !== 'HTTP/2.0') throw new Error(`WebSocket used ${version}, not the shared h2 connection`);
+    return `server saw the WebSocket over ${version}`;
+  });
   await check('autoTransport: streaming upload in every browser (fetch T2 or WebSocket T3)', async () => {
     const auto = new ApueClient(browserApi, autoTransport(apiUrl));
     async function* numbers() {

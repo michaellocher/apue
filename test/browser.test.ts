@@ -122,7 +122,8 @@ describe('in real browsers', () => {
     ['Firefox (headless, WebDriver BiDi)', FIREFOX, runInFirefox],
     ['WebKit (headless, Playwright)', WEBKIT, runInWebKit],
   ] as const) {
-    test(name, { skip: existsSync(binary) || (binary === WEBKIT && process.env.WEBKIT_ENDPOINT) ? false : `${binary} not installed`, timeout: 90_000 }, async (t) => {
+    // Generous: a busy CI runner can take most of a minute to start a browser (see bidiEndpoint).
+    test(name, { skip: existsSync(binary) || (binary === WEBKIT && process.env.WEBKIT_ENDPOINT) ? false : `${binary} not installed`, timeout: 180_000 }, async (t) => {
       const results = (await drive(binary, `${page.url}/`, "typeof window.__run === 'function'", `window.__run(${JSON.stringify(api.url)}).then(JSON.stringify)`)) as CheckResult[];
       for (const r of results) t.diagnostic(`${r.ok ? (r.skipped ? 'SKIP' : 'ok  ') : 'FAIL'} ${r.name}${r.detail ? ` — ${r.detail}` : ''}`);
       const failed = results.filter((r) => !r.ok);
@@ -178,7 +179,7 @@ describe('examples/todo in real browsers (same-origin app + API)', () => {
     ['Firefox', FIREFOX, runInFirefox],
     ['WebKit', WEBKIT, runInWebKit],
   ] as const) {
-    test(name, { skip: existsSync(binary) || (binary === WEBKIT && process.env.WEBKIT_ENDPOINT) ? false : `${binary} not installed`, timeout: 60_000 }, async (t) => {
+    test(name, { skip: existsSync(binary) || (binary === WEBKIT && process.env.WEBKIT_ENDPOINT) ? false : `${binary} not installed`, timeout: 120_000 }, async (t) => {
       const result = (await drive(binary, `${example!.url}/`, "document.readyState === 'complete' && document.querySelector('#add')?.onsubmit != null", script)) as { added: boolean; imported: boolean; count: number; shown: boolean; log: string };
       t.diagnostic(JSON.stringify(result));
       assert.equal(result.added, true);
@@ -369,12 +370,46 @@ async function freePort(): Promise<number> {
   return port;
 }
 
+/**
+ * Waits for Firefox to announce its WebDriver BiDi endpoint on stderr and returns it. Fails at once
+ * if Firefox exits, and with its output either way: a launch that once timed out on a busy CI runner
+ * (a full 30 s, output discarded) said nothing about why.
+ */
+function bidiEndpoint(proc: ChildProcess, timeoutMs: number): Promise<string> {
+  const started = Date.now();
+  let output = '';
+  return new Promise((resolve, reject) => {
+    const done = (error?: Error, url?: string) => {
+      clearTimeout(timer);
+      proc.stderr!.off('data', onData);
+      proc.off('exit', onExit);
+      if (error) reject(error);
+      else resolve(url!);
+    };
+    const tail = () => output.slice(-2000) || '(no output)';
+    const onData = (chunk: Buffer) => {
+      output += chunk.toString();
+      const url = /WebDriver BiDi listening on (ws:\/\/\S+)/.exec(output)?.[1];
+      if (!url) return;
+      const ms = Date.now() - started;
+      if (ms > 10_000) console.error(`[harness] Firefox took ${ms} ms to start`);
+      done(undefined, url);
+    };
+    const onExit = (code: number | null, signal: string | null) => done(new Error(`Firefox exited before listening (code ${code}, signal ${signal}): ${tail()}`));
+    const timer = setTimeout(() => done(new Error(`Firefox did not announce its WebDriver BiDi endpoint within ${timeoutMs} ms: ${tail()}`)), timeoutMs);
+    proc.stderr!.on('data', onData);
+    proc.once('exit', onExit);
+  });
+}
+
 async function runInFirefox(binary: string, pageUrl: string, ready: string, expression: string): Promise<unknown> {
   const dir = mkdtempSync(join(tmpdir(), 'apue-firefox-'));
   const port = await freePort();
-  const proc = spawn(binary, ['--headless', '--no-remote', '--profile', dir, '--remote-debugging-port', String(port)], { stdio: 'ignore' });
+  const proc = spawn(binary, ['--headless', '--no-remote', '--profile', dir, '--remote-debugging-port', String(port)], { stdio: ['ignore', 'ignore', 'pipe'] });
   try {
-    const bidi = await until('WebDriver BiDi endpoint', async () => rpc(`ws://127.0.0.1:${port}/session`), 30_000);
+    const endpoint = await bidiEndpoint(proc, 60_000);
+    proc.stderr!.resume(); // keep draining: a full pipe would block Firefox
+    const bidi = await until('WebDriver BiDi session', async () => rpc(`${endpoint}/session`), 10_000);
     await bidi.send('session.new', { capabilities: { alwaysMatch: { acceptInsecureCerts: true } } });
     const tree = await bidi.send('browsingContext.getTree', {});
     const context = tree.contexts[0].context;

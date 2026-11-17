@@ -1,5 +1,6 @@
 // Todo server: API + web page from one origin (no CORS preflights).
 //   node examples/todo/server.ts   →  https://localhost:8443
+import { X509Certificate } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import { join, normalize, resolve } from 'node:path';
@@ -64,6 +65,12 @@ const handlers: Handlers<typeof todoApi> = {
 
 // Static files: the page and the type-stripped TypeScript modules it imports (no build step).
 const root = resolve(import.meta.dirname, '../..');
+/** A self-signed cert (one this example made) that has run out, or will within the hour. */
+function renewable(pem: Buffer): boolean {
+  const cert = new X509Certificate(pem);
+  return cert.issuer === cert.subject && Date.parse(cert.validTo) - Date.now() < 3_600_000;
+}
+
 function serveStatic(exchange: Exchange): boolean {
   const path = exchange.url.split('?')[0]!;
   if (path === '/') {
@@ -78,9 +85,10 @@ function serveStatic(exchange: Exchange): boolean {
   return true;
 }
 
-// certs/ (gitignored): created once with a throwaway self-signed cert, or bring your own (mkcert).
+// certs/ (gitignored): a throwaway self-signed cert (valid for a day, renewed when it runs out), or
+// bring your own (mkcert); a cert that isn't self-signed is never replaced.
 const certDir = join(root, 'certs');
-if (!existsSync(join(certDir, 'cert.pem'))) {
+if (!existsSync(join(certDir, 'cert.pem')) || renewable(readFileSync(join(certDir, 'cert.pem')))) {
   const generated = testCert();
   mkdirSync(certDir, { recursive: true });
   writeFileSync(join(certDir, 'key.pem'), generated.key);

@@ -451,7 +451,7 @@ test('a generated Swift client against a live server', { skip: skipReason, timeo
   assert.match(keys[2]!, /^"[0-9a-f-]{36}"$/, 'a generated key for non-safe calls');
   assert.deepEqual(out.problem, { error: 409, type: 'https://example.com/problems/out-of-stock', title: 'Out Of Stock', detail: 'item gone' });
   assert.equal(out.validation.error, 400);
-  assert.equal(out.validation.type, 'https://apue.dev/problems/validation-failed');
+  assert.equal(out.validation.type, 'https://michaellocher.github.io/apue/problems/validation-failed');
   assert.deepEqual(out.stream, { ok: [1, 2, 3, 4, 5] });
   assert.deepEqual([out.stream_error.error, out.stream_error.detail, out.stream_error_seen], [409, 'midway', [1]]);
   assert.deepEqual(out.client_stream, { ok: 10 });

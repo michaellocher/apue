@@ -85,7 +85,7 @@ HTTP/2 400
 content-type: application/problem+json
 cache-control: no-store
 
-{"type":"https://apue.dev/problems/validation-failed","fields":[{"path":"title","message":"shorter than 1"}],"title":"Validation Failed","status":400,"detail":"input does not match the schema"}
+{"type":"https://michaellocher.github.io/apue/problems/validation-failed","fields":[{"path":"title","message":"shorter than 1"}],"title":"Validation Failed","status":400,"detail":"input does not match the schema"}
 ```
 
 ### Unknown op → 404
@@ -96,7 +96,7 @@ HTTP/2 404
 content-type: application/problem+json
 cache-control: no-store
 
-{"type":"https://apue.dev/problems/unknown-operation","title":"Unknown Operation","status":404,"detail":"nope.nothing"}
+{"type":"https://michaellocher.github.io/apue/problems/unknown-operation","title":"Unknown Operation","status":404,"detail":"nope.nothing"}
 ```
 
 ### Resumable stream rendered as SSE (debug view): checkpoints become id: lines

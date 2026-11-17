@@ -163,7 +163,7 @@ describe('the principal hook', () => {
     await resumed.body!.cancel();
     const stolen = await watch(checkpoint, 'Bearer bob-1');
     assert.equal(stolen.status, 400);
-    assert.equal((await stolen.json()).type, 'https://apue.dev/problems/invalid-resume-token');
+    assert.equal((await stolen.json()).type, 'https://michaellocher.github.io/apue/problems/invalid-resume-token');
   });
 
   test('batch lanes see the principal', async () => {

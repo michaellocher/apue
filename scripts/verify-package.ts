@@ -22,8 +22,8 @@ try {
     if (!paths.includes(required)) throw new Error(`missing from the package: ${required}`);
   }
   console.log(`package: ${filename}, ${paths.length} files, ${(size / 1024).toFixed(0)} KiB`);
-  // The manifest the registry would get: npm silently rewrites what it considers invalid (it once
-  // "corrected" the bin path) — the package.json must be what is published.
+  // npm silently rewrites manifest fields it considers invalid (it once "corrected" the bin path);
+  // `npm publish --dry-run` reports those corrections — the package.json must be what users get.
   const publish = spawnSync('npm', ['publish', '--dry-run', '--ignore-scripts', '--tag', 'beta'], { cwd: root, encoding: 'utf8' });
   if (publish.status !== 0 || /auto-corrected|errors corrected/.test(publish.stderr)) throw new Error(`npm publish --dry-run:\n${publish.stderr}`);
 

@@ -26,13 +26,10 @@
   },
   "license": "MIT",
   "author": "Michael Locher",
-  "homepage": "https://apue.dev",
+  "homepage": "https://michaellocher.github.io/apue/",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/michaellocher/apue.git"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   },
   "bugs": {
     "url": "https://github.com/michaellocher/apue/issues"

@@ -168,7 +168,7 @@ describe('drift guard: the server only answers with documented errors', () => {
     await expectDocumented('nope.nothing' in served.ops ? 'nope.nothing' : 'users.get', request('/nope.nothing', json, '{}'), 404);
     void endFrame;
     // Each documented kind was actually provoked at least once.
-    for (const kind of ['400 about:blank', '405 about:blank', '408 about:blank', '409 https://apue.dev/problems/idempotency-key-in-progress', '413 about:blank', '415 about:blank', '422 https://apue.dev/problems/idempotency-key-reused', '504 https://apue.dev/problems/deadline-exceeded']) {
+    for (const kind of ['400 about:blank', '405 about:blank', '408 about:blank', '409 https://michaellocher.github.io/apue/problems/idempotency-key-in-progress', '413 about:blank', '415 about:blank', '422 https://michaellocher.github.io/apue/problems/idempotency-key-reused', '504 https://michaellocher.github.io/apue/problems/deadline-exceeded']) {
       assert.ok(seen.includes(kind), `never provoked: ${kind}`);
     }
     assert.ok(opErrors(api['numbers.sum']).length === 2);

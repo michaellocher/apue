@@ -228,7 +228,7 @@ describe('over the wire', () => {
     await new Promise((resolve) => setTimeout(resolve, 200)); // beyond the first expiry, within the refreshed one
     assert.equal(new TextDecoder().decode(await replay.file.bytes()), 'a');
     await new Promise((resolve) => setTimeout(resolve, 350)); // now expired
-    await assert.rejects(client.call('export.create', { name: 'a' }, { idempotencyKey: 'k-download' }), (e: ApueError) => e.status === 410 && e.problem.type === 'https://apue.dev/problems/download-expired');
+    await assert.rejects(client.call('export.create', { name: 'a' }, { idempotencyKey: 'k-download' }), (e: ApueError) => e.status === 410 && e.problem.type === 'https://michaellocher.github.io/apue/problems/download-expired');
     assert.equal(created, before + 1, 'still not run again');
   });
 });

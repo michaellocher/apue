@@ -444,7 +444,7 @@ const COMPONENT_SCHEMAS: Record<string, () => Json> = {
   Problem: () => ({
     type: 'object',
     description:
-      'RFC 9457 problem details. apü protocol errors have type URIs under https://apue.dev/problems/ (placeholder namespace); generic errors omit type (about:blank) and use the status phrase as title.',
+      'RFC 9457 problem details. apü protocol errors have type URIs under https://michaellocher.github.io/apue/problems/; generic errors omit type (about:blank) and use the status phrase as title.',
     properties: {
       type: { type: 'string', format: 'uri-reference', default: 'about:blank' },
       title: { type: 'string' },

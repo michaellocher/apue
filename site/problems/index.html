@@ -4,21 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Problem types — apü</title>
-<meta name="description" content="The apü problem types under https://apue.dev/problems/: status codes, when each one happens, extension members and how clients should react.">
-<link rel="canonical" href="https://apue.dev/problems/">
+<meta name="description" content="The apü problem types under https://michaellocher.github.io/apue/problems/: status codes, when each one happens, extension members and how clients should react.">
+<link rel="canonical" href="https://michaellocher.github.io/apue/problems/">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#090b14" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/assets/style.css">
-<script src="/assets/site.js" defer></script>
+<link rel="icon" href="/apue/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/apue/assets/style.css">
+<script src="/apue/assets/site.js" defer></script>
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="apü">
 <meta property="og:locale" content="en">
 <meta property="og:title" content="Problem types — apü">
-<meta property="og:description" content="The apü problem types under https://apue.dev/problems/: status codes, when each one happens, extension members and how clients should react.">
-<meta property="og:url" content="https://apue.dev/problems/">
-<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:description" content="The apü problem types under https://michaellocher.github.io/apue/problems/: status codes, when each one happens, extension members and how clients should react.">
+<meta property="og:url" content="https://michaellocher.github.io/apue/problems/">
+<meta property="og:image" content="https://michaellocher.github.io/apue/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
@@ -28,59 +28,59 @@
 <a class="skip-link" href="#main">Skip to content</a>
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="/" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
-    <nav class="site-nav" aria-label="Main"><ul><li><a href="/docs/" aria-current="page">Docs</a></li><li><a href="/docs/wire-format.html">Wire format</a></li><li><a href="/docs/measurements.html">Measurements</a></li><li><a href="/docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg><span class="nav-gh-label">GitHub</span> <span class="tag tag-planned">private for now</span></a></li></ul></nav>
+    <a class="brand" href="/apue/" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="/apue/docs/" aria-current="page">Docs</a></li><li><a href="/apue/docs/wire-format.html">Wire format</a></li><li><a href="/apue/docs/measurements.html">Measurements</a></li><li><a href="/apue/docs/spec.html">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg><span class="nav-gh-label">GitHub</span></a></li></ul></nav>
   </div>
 </header>
 <div class="wrap docs-layout">
-<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="/docs/">Overview</a></li><li><a href="/docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="/docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="/docs/streaming.html">Streaming</a></li><li><a href="/docs/errors.html">Errors</a></li><li><a href="/docs/binary-data.html">Binary data</a></li><li><a href="/docs/batches.html">Pipelined batches</a></li><li><a href="/docs/auth.html">Callers &amp; auth</a></li><li><a href="/docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="/docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="/docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="/docs/server.html">Server reference</a></li><li><a href="/docs/client.html">Client reference</a></li><li><a href="/docs/wire-format.html">Wire format</a></li><li><a href="/problems/" aria-current="page">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="/docs/measurements.html">Measurements</a></li><li><a href="/docs/spec.html">Spec &amp; research</a></li></ul></nav>
+<nav class="docnav" aria-label="Documentation"><h2>Start</h2><ul><li><a href="/apue/docs/">Overview</a></li><li><a href="/apue/docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="/apue/docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="/apue/docs/streaming.html">Streaming</a></li><li><a href="/apue/docs/errors.html">Errors</a></li><li><a href="/apue/docs/binary-data.html">Binary data</a></li><li><a href="/apue/docs/batches.html">Pipelined batches</a></li><li><a href="/apue/docs/auth.html">Callers &amp; auth</a></li><li><a href="/apue/docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="/apue/docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="/apue/docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="/apue/docs/server.html">Server reference</a></li><li><a href="/apue/docs/client.html">Client reference</a></li><li><a href="/apue/docs/wire-format.html">Wire format</a></li><li><a href="/apue/problems/" aria-current="page">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="/apue/docs/measurements.html">Measurements</a></li><li><a href="/apue/docs/spec.html">Spec &amp; research</a></li></ul></nav>
 <main id="main" class="prose" tabindex="-1">
-<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="/docs/">Overview</a></li><li><a href="/docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="/docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="/docs/streaming.html">Streaming</a></li><li><a href="/docs/errors.html">Errors</a></li><li><a href="/docs/binary-data.html">Binary data</a></li><li><a href="/docs/batches.html">Pipelined batches</a></li><li><a href="/docs/auth.html">Callers &amp; auth</a></li><li><a href="/docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="/docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="/docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="/docs/server.html">Server reference</a></li><li><a href="/docs/client.html">Client reference</a></li><li><a href="/docs/wire-format.html">Wire format</a></li><li><a href="/problems/" aria-current="page">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="/docs/measurements.html">Measurements</a></li><li><a href="/docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
-<p class="breadcrumb"><a href="/docs/">Docs</a> / Reference</p>
+<details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="/apue/docs/">Overview</a></li><li><a href="/apue/docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="/apue/docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="/apue/docs/streaming.html">Streaming</a></li><li><a href="/apue/docs/errors.html">Errors</a></li><li><a href="/apue/docs/binary-data.html">Binary data</a></li><li><a href="/apue/docs/batches.html">Pipelined batches</a></li><li><a href="/apue/docs/auth.html">Callers &amp; auth</a></li><li><a href="/apue/docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="/apue/docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="/apue/docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="/apue/docs/server.html">Server reference</a></li><li><a href="/apue/docs/client.html">Client reference</a></li><li><a href="/apue/docs/wire-format.html">Wire format</a></li><li><a href="/apue/problems/" aria-current="page">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="/apue/docs/measurements.html">Measurements</a></li><li><a href="/apue/docs/spec.html">Spec &amp; research</a></li></ul></nav></details>
+<p class="breadcrumb"><a href="/apue/docs/">Docs</a> / Reference</p>
 <h1>Problem types</h1>
-<p class="page-intro">apü errors are real HTTP status codes with RFC 9457 problem details. Its own protocol errors have a <code>type</code> under <code>https://apue.dev/problems/</code>; each of those URIs resolves to its page here.</p>
-<ul class="ptypes"><li><a href="/problems/validation-failed.html"><span class="st">400</span><b>validation-failed</b><span>The input does not match the operation’s input schema.</span></a></li><li><a href="/problems/unknown-operation.html"><span class="st">404</span><b>unknown-operation</b><span>No operation with that name exists on this server.</span></a></li><li><a href="/problems/invalid-selection.html"><span class="st">400</span><b>invalid-selection</b><span>A field selection (?s=) names a path the output schema doesn’t have.</span></a></li><li><a href="/problems/malformed-stream.html"><span class="st">400<br>502</span><b>malformed-stream</b><span>A framed body contains frames that can’t be decoded.</span></a></li><li><a href="/problems/truncated-stream.html"><span class="st">400<br>502</span><b>truncated-stream</b><span>A framed body ended before its END frame.</span></a></li><li><a href="/problems/deadline-exceeded.html"><span class="st">504</span><b>deadline-exceeded</b><span>The call’s deadline (apue-timeout) passed before it completed.</span></a></li><li><a href="/problems/download-expired.html"><span class="st">410</span><b>download-expired</b><span>An Idempotency-Key replay whose stored result refers to a download that has expired.</span></a></li><li><a href="/problems/idempotency-key-in-progress.html"><span class="st">409</span><b>idempotency-key-in-progress</b><span>A request with the same Idempotency-Key is still being processed.</span></a></li><li><a href="/problems/idempotency-key-reused.html"><span class="st">422</span><b>idempotency-key-reused</b><span>The Idempotency-Key was already used with a different payload.</span></a></li><li><a href="/problems/invalid-batch.html"><span class="st">400</span><b>invalid-batch</b><span>A pipelined batch failed structural validation; nothing was executed.</span></a></li><li><a href="/problems/unresolvable-reference.html"><span class="st">400</span><b>unresolvable-reference</b><span>A $ref points to a path that the referenced call’s output doesn’t contain.</span></a></li><li><a href="/problems/failed-dependency.html"><span class="st">424</span><b>failed-dependency</b><span>A batch call was not executed because a call it references failed.</span></a></li><li><a href="/problems/invalid-resume-token.html"><span class="st">400</span><b>invalid-resume-token</b><span>A resume token is malformed, forged, expired or for another call.</span></a></li></ul>
+<p class="page-intro">apü errors are real HTTP status codes with RFC 9457 problem details. Its own protocol errors have a <code>type</code> under <code>https://michaellocher.github.io/apue/problems/</code>; each of those URIs resolves to its page here.</p>
+<ul class="ptypes"><li><a href="/apue/problems/validation-failed.html"><span class="st">400</span><b>validation-failed</b><span>The input does not match the operation’s input schema.</span></a></li><li><a href="/apue/problems/unknown-operation.html"><span class="st">404</span><b>unknown-operation</b><span>No operation with that name exists on this server.</span></a></li><li><a href="/apue/problems/invalid-selection.html"><span class="st">400</span><b>invalid-selection</b><span>A field selection (?s=) names a path the output schema doesn’t have.</span></a></li><li><a href="/apue/problems/malformed-stream.html"><span class="st">400<br>502</span><b>malformed-stream</b><span>A framed body contains frames that can’t be decoded.</span></a></li><li><a href="/apue/problems/truncated-stream.html"><span class="st">400<br>502</span><b>truncated-stream</b><span>A framed body ended before its END frame.</span></a></li><li><a href="/apue/problems/deadline-exceeded.html"><span class="st">504</span><b>deadline-exceeded</b><span>The call’s deadline (apue-timeout) passed before it completed.</span></a></li><li><a href="/apue/problems/download-expired.html"><span class="st">410</span><b>download-expired</b><span>An Idempotency-Key replay whose stored result refers to a download that has expired.</span></a></li><li><a href="/apue/problems/idempotency-key-in-progress.html"><span class="st">409</span><b>idempotency-key-in-progress</b><span>A request with the same Idempotency-Key is still being processed.</span></a></li><li><a href="/apue/problems/idempotency-key-reused.html"><span class="st">422</span><b>idempotency-key-reused</b><span>The Idempotency-Key was already used with a different payload.</span></a></li><li><a href="/apue/problems/invalid-batch.html"><span class="st">400</span><b>invalid-batch</b><span>A pipelined batch failed structural validation; nothing was executed.</span></a></li><li><a href="/apue/problems/unresolvable-reference.html"><span class="st">400</span><b>unresolvable-reference</b><span>A $ref points to a path that the referenced call’s output doesn’t contain.</span></a></li><li><a href="/apue/problems/failed-dependency.html"><span class="st">424</span><b>failed-dependency</b><span>A batch call was not executed because a call it references failed.</span></a></li><li><a href="/apue/problems/invalid-resume-token.html"><span class="st">400</span><b>invalid-resume-token</b><span>A resume token is malformed, forged, expired or for another call.</span></a></li></ul>
 <h2 id="generic-errors">Generic errors</h2>
 <p>Everything else uses the type <code>about:blank</code> with the HTTP status phrase as <code>title</code> — for example <code>405 Method Not Allowed</code> (with an <code>Allow</code> header), <code>408</code> when a request body doesn’t arrive in time, <code>413</code> beyond the size limits, <code>415</code> for a wrong content type, <code>429</code>/<code>503</code> (retried by clients, honouring <code>Retry-After</code>). Unexpected handler errors are a <code>500</code> without details. Errors your handlers throw can use types of your own.</p>
 <h2 id="extension-members">Extension members</h2>
-<dl class="facts"><dt><code>retryable</code></dt><dd>Boolean: repeating the same request later may succeed (e.g. <a href="/problems/idempotency-key-in-progress.html">idempotency-key-in-progress</a>, or a <code>503</code> while a server shuts down).</dd><dt><code>fields</code></dt><dd>Per-field validation errors, <code>[{ path, message }]</code> (<a href="/problems/validation-failed.html">validation-failed</a>).</dd></dl>
-<p>Where problems travel — responses, END frames of streams and batch lanes — is described in <a href="/docs/errors.html">Errors</a>.</p>
-<nav class="pager" aria-label="Previous and next page"><a class="prev" href="/docs/wire-format.html" rel="prev"><span>Previous</span><b>Wire format</b></a><a class="next" href="/docs/measurements.html" rel="next"><span>Next</span><b>Measurements</b></a></nav>
+<dl class="facts"><dt><code>retryable</code></dt><dd>Boolean: repeating the same request later may succeed (e.g. <a href="/apue/problems/idempotency-key-in-progress.html">idempotency-key-in-progress</a>, or a <code>503</code> while a server shuts down).</dd><dt><code>fields</code></dt><dd>Per-field validation errors, <code>[{ path, message }]</code> (<a href="/apue/problems/validation-failed.html">validation-failed</a>).</dd></dl>
+<p>Where problems travel — responses, END frames of streams and batch lanes — is described in <a href="/apue/docs/errors.html">Errors</a>.</p>
+<nav class="pager" aria-label="Previous and next page"><a class="prev" href="/apue/docs/wire-format.html" rel="prev"><span>Previous</span><b>Wire format</b></a><a class="next" href="/apue/docs/measurements.html" rel="next"><span>Next</span><b>Measurements</b></a></nav>
 </main>
 </div>
 <footer class="site-footer">
   <div class="wrap">
     <div>
-      <a class="brand" href="/" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
-      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
+      <a class="brand" href="/apue/" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>@michaellocher/apue</code> 0.1.0-beta.1, released on GitHub; the protocol is spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
       <h2>Learn</h2>
       <ul>
-        <li><a href="/docs/getting-started.html">Getting started</a></li>
-        <li><a href="/docs/concepts.html">Operations &amp; HTTP mapping</a></li>
-        <li><a href="/docs/streaming.html">Streaming</a></li>
-        <li><a href="/docs/errors.html">Errors</a></li>
-        <li><a href="/docs/manifest.html">Clients &amp; OpenAPI</a></li>
-        <li><a href="/docs/deployment.html">Deployment</a></li>
+        <li><a href="/apue/docs/getting-started.html">Getting started</a></li>
+        <li><a href="/apue/docs/concepts.html">Operations &amp; HTTP mapping</a></li>
+        <li><a href="/apue/docs/streaming.html">Streaming</a></li>
+        <li><a href="/apue/docs/errors.html">Errors</a></li>
+        <li><a href="/apue/docs/manifest.html">Clients &amp; OpenAPI</a></li>
+        <li><a href="/apue/docs/deployment.html">Deployment</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: reference">
       <h2>Reference</h2>
       <ul>
-        <li><a href="/docs/server.html">Server reference</a></li>
-        <li><a href="/docs/client.html">Client reference</a></li>
-        <li><a href="/docs/wire-format.html">Wire format</a></li>
-        <li><a href="/problems/">Problem types</a></li>
+        <li><a href="/apue/docs/server.html">Server reference</a></li>
+        <li><a href="/apue/docs/client.html">Client reference</a></li>
+        <li><a href="/apue/docs/wire-format.html">Wire format</a></li>
+        <li><a href="/apue/problems/">Problem types</a></li>
       </ul>
     </nav>
     <nav aria-label="Footer: project">
       <h2>Project</h2>
       <ul>
-        <li><a href="/docs/spec.html">Spec &amp; research</a></li>
-        <li><a href="/docs/measurements.html">Measurements</a></li>
-        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
+        <li><a href="/apue/docs/spec.html">Spec &amp; research</a></li>
+        <li><a href="/apue/docs/measurements.html">Measurements</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub</a></li>
       </ul>
     </nav>
   </div>

@@ -45,16 +45,15 @@ Versions follow semver; tags have **no `v` prefix**. Betas are `0.1.0-beta.N`.
    the release).
 2. Commit (`Release <version>`), push `main`, wait for CI to pass. Optionally run the **Release**
    workflow by hand (Actions → Release → Run workflow, or `gh workflow run release.yml`): a dry
-   run of the whole pipeline up to `npm publish --dry-run`, publishing nothing.
+   run of the whole pipeline, publishing nothing.
 3. Tag and push: `git tag -a <version> -m "<version>" && git push origin <version>`.
 4. The **Release** workflow verifies that tag, package.json and changelog agree, runs the full
-   checks, publishes `@michaellocher/apue` to GitHub Packages with the workflow's own
-   `GITHUB_TOKEN` (pre-releases under the `beta` dist-tag, so `npm install @michaellocher/apue`
-   keeps getting the latest stable) and creates a GitHub release with the tarball. No secret to set
-   up. GitHub Packages has no npm provenance, and installing needs a token with `read:packages`
-   (README, "Install").
+   checks, packs the tarball and creates a GitHub release with it (pre-releases marked as such),
+   then installs the release's tarball from its download URL into a fresh project, the way the
+   README tells users to. No registry and no secret: the workflow's own `GITHUB_TOKEN` creates the
+   release. Bump the version in README's install URL too (`site/` takes it from package.json).
 
 The website deploys from `main` through the **Pages**
-workflow once enabled — publishing makes it public, so it is opt-in: Settings → Pages → Source:
-GitHub Actions, then the repository variable `PAGES_ENABLED=true`; add `site/CNAME` with `apue.dev`
-once the domain points to GitHub Pages.
+workflow (Settings → Pages → Source: GitHub Actions). It is served at
+https://michaellocher.github.io/apue/ (`ORIGIN` in site-src/build.mjs and check.mjs); the problem
+type URIs in src/ are under that origin, so moving the site moves protocol identifiers.

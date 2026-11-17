@@ -11,8 +11,8 @@
   and, in CI, Linux). WebKit on Linux runs locally with `scripts/test-linux-webkit.sh`. Every fix
   has a test that fails without it (mutation-checked).
 - **CI/CD** (GitHub Actions): CI on every push (Linux: typecheck, tests incl. browsers, site,
-  package), Release on a version tag (GitHub Packages as `@michaellocher/apue`; GitHub release;
-  run by hand it is a dry run of all of it), Pages (opt-in).
+  package), Release on a version tag (GitHub release with the tarball, then installed from its URL
+  as users do; run by hand it is a dry run), Pages (https://michaellocher.github.io/apue/).
 - **Production**: replicas (shared idempotency stores, instance routing verified through nginx),
   bounded shutdown, logging hook, DPoP proofs (verifier and signer), deployment guide
   ([deployment.md](deployment.md)).
@@ -20,12 +20,11 @@
 
 ## Before the first release (needs you)
 
-1. License: MIT (confirmed). Register `apue.dev` (it was unregistered on 2026-10-28) before the
-   website goes public: enable Pages (Source: GitHub Actions) and set `PAGES_ENABLED=true`.
-2. Push the rewritten history to the reset repository (`git push -u origin main`).
-3. Release: date the CHANGELOG entry, run the Release workflow by hand (dry run), then
-   `git tag -a 0.1.0-beta.1 -m 0.1.0-beta.1 && git push origin 0.1.0-beta.1`. The package goes to
-   GitHub Packages as `@michaellocher/apue` with the workflow's own token — no secret needed.
+1. License: MIT (confirmed). The repository is public (users download the release tarball without
+   a token), Pages deploys `site/` from `main` (Source: GitHub Actions).
+2. Release: date the CHANGELOG entry, run the Release workflow by hand (dry run), then
+   `git tag -a 0.1.0-beta.1 -m 0.1.0-beta.1 && git push origin 0.1.0-beta.1`. No registry and no
+   secret: the workflow creates the GitHub release and installs its tarball by URL.
 
 ## Open (SPEC-DRAFT.md §13)
 

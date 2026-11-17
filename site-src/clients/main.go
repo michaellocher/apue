@@ -24,7 +24,7 @@ func main() {
 
 	var problem *api.Error
 	if _, err := c.TodosCreate(ctx, api.TodosCreateInput{Title: ""}); errors.As(err, &problem) {
-		fmt.Println(problem.Status, problem.Type) // 400 https://apue.dev/problems/validation-failed
+		fmt.Println(problem.Status, problem.Type) // 400 https://michaellocher.github.io/apue/problems/validation-failed
 	}
 
 	stream, err := c.TodosWatch(ctx) // a server stream; leaving the loop cancels it

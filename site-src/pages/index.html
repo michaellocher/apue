@@ -7,7 +7,7 @@
       <p class="lede">apü maps typed operations onto ordinary HTTP — reads are cacheable <code>GET</code> requests, writes carry idempotency keys, errors are real status codes — and adds streaming in every direction, resumable streams and uploads, and pipelined batches that work from browsers and through CDNs and proxies.</p>
       <div class="hero-install">
 {{pre:console|npm}}
-$ npm install @michaellocher/apue@beta
+$ npm install {{tarball}}
 {{/pre}}
       </div>
       <div class="actions">
@@ -15,7 +15,7 @@ $ npm install @michaellocher/apue@beta
         <a class="btn btn-ghost" href="docs/index.html">Read the docs</a>
         <a class="btn btn-ghost" href="docs/spec.html">Spec &amp; research</a>
       </div>
-      <p class="hero-note">From GitHub Packages: <a href="docs/getting-started.html#install">two lines of <code>.npmrc</code></a> first. Node ≥ 26.11 for the server and the Node client; the core runs in browsers too. No runtime dependencies. 404 tests, run in Chrome, Firefox and WebKit and through nginx, Caddy, HAProxy and Envoy. Betas may still change the wire format and APIs — every change is in the changelog.</p>
+      <p class="hero-note">One command, straight from the <a href="https://github.com/michaellocher/apue/releases">GitHub release</a> — no registry, no token. Node ≥ 26.11 for the server and the Node client; the core runs in browsers too. No runtime dependencies. 404 tests, run in Chrome, Firefox and WebKit and through nginx, Caddy, HAProxy and Envoy. Betas may still change the wire format and APIs — every change is in the changelog.</p>
     </div>
 
     <figure class="flow" aria-labelledby="flow-caption">
@@ -184,14 +184,14 @@ $ npm install @michaellocher/apue@beta
         <p>Every server also describes itself at <code>/.well-known/openapi.json</code>, derived from the same definitions and built on first request. Not described there: <code>/$batch</code> and the WebSocket tier.</p>
       </div>
     </div>
-{{pre:console|apue-types}}
+{{pre:console|apue-types, in the project that installed the package}}
 $ npx apue-types https://api.example --out api.ts
 $ npx apue-types https://api.example --lang python --out api.py
 $ npx apue-types https://api.example --lang go --package api --out api.go
 $ npx apue-types https://api.example --lang java --package com.example.api --out Api.java
 $ npx apue-types https://api.example --lang swift --out Api.swift
 {{/pre}}
-    <p class="footnote">The release check generates Python, Go, Java and Swift clients with the installed CLI and compiles them. Usage for each language: <a href="docs/manifest.html">Clients, manifest &amp; OpenAPI</a>.</p>
+    <p class="footnote">The release check generates Python, Go, Java and Swift clients with the installed CLI and compiles them. Usage for each language, and running the CLI without installing the package: <a href="docs/manifest.html#generated-clients">Clients, manifest &amp; OpenAPI</a>.</p>
   </div>
 </section>
 
@@ -267,7 +267,7 @@ HTTP/2 400
 content-type: application/problem+json
 cache-control: no-store
 
-{"type":"https://apue.dev/problems/validation-failed",
+{"type":"https://michaellocher.github.io/apue/problems/validation-failed",
  "fields":[{"path":"title","message":"shorter than 1"}],
  "title":"Validation Failed","status":400,
  "detail":"input does not match the schema"}
@@ -347,12 +347,12 @@ cache-control: no-store
     <div class="section-head">
       <span class="kicker">Status</span>
       <h2 id="status-title">Beta, honestly labelled</h2>
-      <p>The toolkit is <code>@michaellocher/apue</code> 0.1.0-beta on GitHub Packages; the protocol is spec draft 01, written alongside spikes S0–S33. Each spike’s goal, findings and measurements are logged in the spec, and every open question is now decided — or blocked by the platform.</p>
+      <p>The toolkit is <code>@michaellocher/apue</code> 0.1.0-beta, released on GitHub; the protocol is spec draft 01, written alongside spikes S0–S34. Each spike’s goal, findings and measurements are logged in the spec, and every open question is now decided — or blocked by the platform.</p>
     </div>
     <div class="spikes">
-      <div class="spike-bar" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-      <div class="legend" aria-hidden="true"><span>S0 skeleton</span><span>S32–S33 release</span></div>
-      <p>34 spikes, from the project skeleton (S0) to production readiness (S28), the Python, Go and Java clients (S29), beta hardening in WebKit on Linux and over emulated networks (S30–S31), the release dry run, Swift on Linux and DPoP (S32) and publishing through GitHub Packages (S33); the two newest are highlighted.</p>
+      <div class="spike-bar" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+      <div class="legend" aria-hidden="true"><span>S0 skeleton</span><span>S32–S34 release</span></div>
+      <p>35 spikes, from the project skeleton (S0) to production readiness (S28), the Python, Go and Java clients (S29), beta hardening in WebKit on Linux and over emulated networks (S30–S31), the release dry run, Swift on Linux and DPoP (S32) and the release itself (S33–S34: installed from the GitHub release, problem types on github.io); the two newest are highlighted.</p>
     </div>
     <div class="status-grid">
       <div class="card">
@@ -378,16 +378,16 @@ cache-control: no-store
 
     <div class="cta">
       <h2>Install the beta.</h2>
-      <p>Start with a first API in a few minutes (after <a href="docs/getting-started.html#install">the <code>.npmrc</code> for GitHub Packages</a>), or read what the spec covers and how it was measured.</p>
+      <p>Start with a first API in a few minutes, or read what the spec covers and how it was measured.</p>
       <div class="cta-install">
 {{pre:console|npm}}
-$ npm install @michaellocher/apue@beta
+$ npm install {{tarball}}
 {{/pre}}
       </div>
       <div class="actions">
         <a class="btn btn-primary" href="docs/getting-started.html">Get started</a>
         <a class="btn btn-ghost" href="docs/spec.html">What the spec covers</a>
-        <a class="btn btn-ghost" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub <span class="tag">private for now</span></a>
+        <a class="btn btn-ghost" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>GitHub</a>
       </div>
     </div>
   </div>

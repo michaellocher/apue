@@ -43,23 +43,23 @@ export function replicaOf(input: unknown): string | undefined {
 /**
  * Problem type URIs for apü-specific errors (RFC 9457 §3.1.1). Generic errors use the default
  * type about:blank with the HTTP status phrase as title (§4.2.1).
- * Each URI resolves to a page on https://apue.dev (site/problems/) with its members and how to react.
+ * Each URI resolves to a page on the website (site/problems/) with its members and how to react.
  */
 export const ProblemType = {
-  VALIDATION: 'https://apue.dev/problems/validation-failed',
-  UNKNOWN_OPERATION: 'https://apue.dev/problems/unknown-operation',
-  TRUNCATED_STREAM: 'https://apue.dev/problems/truncated-stream',
-  DEADLINE: 'https://apue.dev/problems/deadline-exceeded',
-  IDEMPOTENCY_IN_PROGRESS: 'https://apue.dev/problems/idempotency-key-in-progress',
-  IDEMPOTENCY_MISMATCH: 'https://apue.dev/problems/idempotency-key-reused',
+  VALIDATION: 'https://michaellocher.github.io/apue/problems/validation-failed',
+  UNKNOWN_OPERATION: 'https://michaellocher.github.io/apue/problems/unknown-operation',
+  TRUNCATED_STREAM: 'https://michaellocher.github.io/apue/problems/truncated-stream',
+  DEADLINE: 'https://michaellocher.github.io/apue/problems/deadline-exceeded',
+  IDEMPOTENCY_IN_PROGRESS: 'https://michaellocher.github.io/apue/problems/idempotency-key-in-progress',
+  IDEMPOTENCY_MISMATCH: 'https://michaellocher.github.io/apue/problems/idempotency-key-reused',
   /** An Idempotency-Key replay whose t.download() URL has expired: the operation is not run again. */
-  DOWNLOAD_EXPIRED: 'https://apue.dev/problems/download-expired',
-  FAILED_DEPENDENCY: 'https://apue.dev/problems/failed-dependency',
-  UNRESOLVABLE_REFERENCE: 'https://apue.dev/problems/unresolvable-reference',
-  INVALID_BATCH: 'https://apue.dev/problems/invalid-batch',
-  MALFORMED_STREAM: 'https://apue.dev/problems/malformed-stream',
-  INVALID_RESUME_TOKEN: 'https://apue.dev/problems/invalid-resume-token',
-  INVALID_SELECTION: 'https://apue.dev/problems/invalid-selection',
+  DOWNLOAD_EXPIRED: 'https://michaellocher.github.io/apue/problems/download-expired',
+  FAILED_DEPENDENCY: 'https://michaellocher.github.io/apue/problems/failed-dependency',
+  UNRESOLVABLE_REFERENCE: 'https://michaellocher.github.io/apue/problems/unresolvable-reference',
+  INVALID_BATCH: 'https://michaellocher.github.io/apue/problems/invalid-batch',
+  MALFORMED_STREAM: 'https://michaellocher.github.io/apue/problems/malformed-stream',
+  INVALID_RESUME_TOKEN: 'https://michaellocher.github.io/apue/problems/invalid-resume-token',
+  INVALID_SELECTION: 'https://michaellocher.github.io/apue/problems/invalid-selection',
 } as const;
 
 export class ApueError extends Error {

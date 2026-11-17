@@ -1,16 +1,14 @@
-<!--{"path":"docs/getting-started.html","layout":"docs","title":"Getting started — apü","description":"Install apü from GitHub Packages (npm install @michaellocher/apue@beta) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers."}-->
+<!--{"path":"docs/getting-started.html","layout":"docs","title":"Getting started — apü","description":"Install apü from its GitHub release (one npm install, no token) and write a first API: a contract, a server, a typed client, and the same calls with curl. Entry points for Node and browsers."}-->
 <p class="breadcrumb"><a href="index.html">Docs</a> / Start</p>
 <h1>Getting started</h1>
 <p class="page-intro">Install the package, then build a small API: one cacheable read and one server stream, called from a typed client and from curl.</p>
 {{toc}}
 
 <h2>Install</h2>
-<p>The beta is published to GitHub Packages, which asks for a token even to install: a personal access token (classic) with <code>read:packages</code>, read here from <code>GITHUB_TOKEN</code>. The two <code>.npmrc</code> lines can also go into <code>~/.npmrc</code>, once.</p>
+<p>The beta installs straight from its GitHub release — no registry, no token. npm records the URL in <code>package.json</code>; to update, install the next release’s tarball from the <a href="https://github.com/michaellocher/apue/releases">releases page</a>.</p>
 {{pre:console|a new project}}
 $ npm init -y && npm pkg set type=module
-$ echo '@michaellocher:registry=https://npm.pkg.github.com' >> .npmrc
-$ echo '//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}' >> .npmrc
-$ npm install @michaellocher/apue@beta
+$ npm install {{tarball}}
 {{/pre}}
 <ul>
   <li><strong>Node ≥ 26.11</strong> for the server and the Node client. Node runs your <code>.ts</code> files directly (type stripping) — no build step. The package itself ships JavaScript and type declarations.</li>
@@ -19,7 +17,7 @@ $ npm install @michaellocher/apue@beta
 </ul>
 <div class="callout">
   <span class="callout-title">Beta</span>
-  <p><code>0.1.0-beta</code> releases may still change the wire format and APIs. Every change is listed in the changelog that ships with the package (<code>node_modules/apue/CHANGELOG.md</code>).</p>
+  <p><code>0.1.0-beta</code> releases may still change the wire format and APIs. Every change is listed in the changelog that ships with the package (<code>node_modules/@michaellocher/apue/CHANGELOG.md</code>).</p>
 </div>
 
 <h2>Entry points</h2>
@@ -64,6 +62,13 @@ Hello, Ada!
 2
 3
 {{/pre}}
+<div class="callout">
+  <span class="callout-title">Client in another project?</span>
+  <p>The client needs the contract, not this file: <code>apue-types</code> generates the same module from the running server’s manifest (<code>/.well-known/apue</code>). It imports from <code>@michaellocher/apue</code> and exports <code>api</code>, so <code>client.ts</code> stays as it is. Rerun it when the API changes. For Python, Go, Java and Swift clients, see <a href="manifest.html#generated-clients">generated clients</a>.</p>
+</div>
+{{pre:console|in the client’s project}}
+$ npx apue-types https://localhost:8443 --ca certs/cert.pem --out api.ts
+{{/pre}}
 
 <h2>The same calls with curl</h2>
 <p>A safe operation is a <code>GET</code> whose input is canonical JSON (RFC 8785) in <code>?i=</code>. The response is cacheable for the 60 seconds the contract declares and carries a strong ETag:</p>
@@ -85,7 +90,7 @@ HTTP/2 400
 content-type: application/problem+json
 cache-control: no-store
 
-{"type":"https://apue.dev/problems/validation-failed","fields":[{"path":"name","message":"shorter than 1"}],"title":"Validation Failed","status":400,"detail":"input does not match the schema"}
+{"type":"https://michaellocher.github.io/apue/problems/validation-failed","fields":[{"path":"name","message":"shorter than 1"}],"title":"Validation Failed","status":400,"detail":"input does not match the schema"}
 {{/pre}}
 <p>Streams are binary frames by default (<code>application/vnd.apue.frames</code>). For curl and devtools, ask for <code>text/event-stream</code> and get the same stream rendered as server-sent events:</p>
 {{pre:console}}

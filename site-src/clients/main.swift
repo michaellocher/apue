@@ -11,7 +11,7 @@ print(Int(todo.id), todo.title)
 do {
   _ = try await c.todosCreate(.init(title: ""))
 } catch let problem as ApueError {
-  print(problem.status, problem.type)  // 400 https://apue.dev/problems/validation-failed
+  print(problem.status, problem.type)  // 400 https://michaellocher.github.io/apue/problems/validation-failed
 }
 
 for try await t in c.todosWatch() {  // a server stream; leaving the loop cancels it

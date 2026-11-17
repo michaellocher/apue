@@ -9,20 +9,19 @@ definition validates on both sides and types handlers and clients; other languag
 clients from the server's manifest.
 
 > **Beta.** `0.1.0-beta.x` releases may still change the wire format and APIs; every change is
-> listed in [CHANGELOG.md](CHANGELOG.md). Website and docs: [apue.dev](https://apue.dev) ·
+> listed in [CHANGELOG.md](CHANGELOG.md). Website and docs: [michaellocher.github.io/apue](https://michaellocher.github.io/apue/) ·
 > design: [SPEC-DRAFT.md](SPEC-DRAFT.md).
 
 ## Install
 
-The beta is published to GitHub Packages, which asks for a token even to install: a personal access
-token (classic) with `read:packages`, here read from `GITHUB_TOKEN`. Once per project (or in
-`~/.npmrc`):
+The beta installs straight from its GitHub release (no registry, no token):
 
 ```sh
-echo '@michaellocher:registry=https://npm.pkg.github.com' >> .npmrc
-echo '//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}' >> .npmrc
-npm install @michaellocher/apue@beta
+npm install https://github.com/michaellocher/apue/releases/download/0.1.0-beta.1/michaellocher-apue-0.1.0-beta.1.tgz
 ```
+
+npm records that URL in your `package.json`; to update, install the next release's tarball (listed
+on the [releases page](https://github.com/michaellocher/apue/releases)).
 
 Node ≥ 26.11 for the server and the Node client; the web-safe core (`@michaellocher/apue`,
 `@michaellocher/apue/websocket`) runs in browsers too. No runtime dependencies.
@@ -89,6 +88,9 @@ for await (const todo of client.stream('todos.watch')) console.log(todo.title);
 | `@michaellocher/apue/websocket` | `webSocketTransport`, `autoTransport` (streaming uploads in every browser) | browsers |
 | `@michaellocher/apue/codegen` | `generateApi`, `generatePython`, `generateGo`, `generateJava`, `generateSwift` | Node |
 | `apue-types` (CLI) | typed TypeScript modules, or Python, Go, Java and Swift clients, from a server's manifest | Node |
+
+In the project that installed the package (elsewhere, `npx --package <the install URL> apue-types …`
+runs it from the release; a bare `npx apue-types` would look the name up on the npm registry):
 
 ```sh
 npx apue-types https://api.example --out api.ts              # TypeScript, imports from '@michaellocher/apue'

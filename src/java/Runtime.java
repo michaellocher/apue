@@ -80,7 +80,7 @@ public final class Runtime {
   static final int BLOB_CHUNK = 64 * 1024;
   /** Largest message (JSON plus its blobs) or unary body accepted from a server. */
   static final int MAX_MESSAGE = 64 * 1024 * 1024;
-  static final String DEADLINE_EXCEEDED = "https://apue.dev/problems/deadline-exceeded";
+  static final String DEADLINE_EXCEEDED = "https://michaellocher.github.io/apue/problems/deadline-exceeded";
 
   /** An RFC 9457 problem: the call failed with {@code status} (HTTP semantics). */
   public static final class ApueException extends RuntimeException {

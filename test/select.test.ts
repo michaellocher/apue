@@ -144,7 +144,7 @@ describe('selection over HTTP', () => {
       const res = await fetch(`${server.url}${path}`);
       const problem = await res.json();
       assert.equal(res.status, 400);
-      assert.equal(problem.type, 'https://apue.dev/problems/invalid-selection');
+      assert.equal(problem.type, 'https://michaellocher.github.io/apue/problems/invalid-selection');
       assert.match(problem.detail, detail);
     }
     const batch = await fetch(`${server.url}/$batch`, {

@@ -1,6 +1,6 @@
 # Publishes the website (site/, generated from site-src/) to GitHub Pages on changes to main.
-# Custom domain: add a site/CNAME file with "apue.dev" once the domain is registered and its DNS
-# points to GitHub Pages (https://docs.github.com/pages/configuring-a-custom-domain-for-your-github-pages-site).
+# Served at https://michaellocher.github.io/apue/ (ORIGIN in site-src/build.mjs): the problem type
+# URIs in src/ resolve to pages here, so this address is part of the protocol.
 name: Pages
 
 on:
@@ -20,9 +20,6 @@ concurrency:
 
 jobs:
   deploy:
-    # Opt-in: publishing makes the site public. Enable Pages (Settings → Pages → Source: GitHub
-    # Actions) and set the repository variable PAGES_ENABLED=true.
-    if: vars.PAGES_ENABLED == 'true'
     runs-on: ubuntu-24.04
     environment:
       name: github-pages

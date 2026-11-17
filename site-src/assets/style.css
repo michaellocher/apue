@@ -435,10 +435,6 @@ a > code {
   .site-nav li:first-child a {
     margin-left: -0.6rem;
   }
-
-  .site-nav .nav-gh .tag {
-    display: none;
-  }
 }
 
 @media (max-width: 440px) {

@@ -34,8 +34,8 @@
       },
       "errors": [
         { "status": 408, "type": "about:blank", "title": "Request Timeout" },
-        { "status": 409, "type": "https://apue.dev/problems/idempotency-key-in-progress", "title": "Idempotency Key In Progress" },
-        { "status": 422, "type": "https://apue.dev/problems/idempotency-key-reused", "title": "Idempotency Key Reused" }
+        { "status": 409, "type": "https://michaellocher.github.io/apue/problems/idempotency-key-in-progress", "title": "Idempotency Key In Progress" },
+        { "status": 422, "type": "https://michaellocher.github.io/apue/problems/idempotency-key-reused", "title": "Idempotency Key Reused" }
       ],
       "example": { "input": { "title": "string" }, "output": { "id": 0, "title": "string", "done": true } }
     }
@@ -98,6 +98,10 @@ $ npx apue-types https://api.example --lang go --package api --out api.go       
 $ npx apue-types https://api.example --lang java --package com.example.api --out Api.java # Java 17
 $ npx apue-types https://api.example --lang swift --out Api.swift                         # Swift 6
 {{/pre}}
+<p>Run these in the project that installed the package: <code>npx</code> uses its <code>apue-types</code>. Without one — for a Python, Go, Java or Swift client, say — run the CLI straight from the release. A bare <code>npx apue-types</code> anywhere else would look the name up on the npm registry instead, where apü is not published.</p>
+{{pre:console|without installing the package}}
+$ npx --package {{tarball}} apue-types https://api.example --lang python --out api.py
+{{/pre}}
 <p>Options: <code>--ca cert.pem</code> for a private certificate authority; for TypeScript <code>--runtime</code> (default <code>@michaellocher/apue</code>) and <code>--name</code> (default <code>api</code>). The generator rejects JSON Schema keywords it can’t express instead of silently dropping constraints. The same generators are a library: <code>generateApi</code>, <code>generatePython</code>, <code>generateGo</code>, <code>generateJava</code> and <code>generateSwift</code> from <code>@michaellocher/apue/codegen</code>.</p>
 <table data-label="Generated clients compared">
   <thead><tr><th scope="col"></th><th scope="col">TypeScript</th><th scope="col">Python</th><th scope="col">Go</th><th scope="col">Java</th><th scope="col">Swift</th></tr></thead>
@@ -152,4 +156,4 @@ export const api = defineApi({
 <ul>
   <li>Anything else: the manifest and the OpenAPI document describe the HTTP contract, and the <a href="wire-format.html">wire format</a> the frames.</li>
 </ul>
-<p class="source">The four usage examples above were run against the quick start’s server with clients generated from its manifest; each printed the created todo, <code>400 https://apue.dev/problems/validation-failed</code> and the titles from the stream.</p>
+<p class="source">The four usage examples above were run against the quick start’s server with clients generated from its manifest; each printed the created todo, <code>400 https://michaellocher.github.io/apue/problems/validation-failed</code> and the titles from the stream.</p>

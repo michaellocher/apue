@@ -53,7 +53,7 @@ MSG, END, BLOB, HEARTBEAT, CHECKPOINT = 0x00, 0x01, 0x02, 0x03, 0x04
 FLAG_LAST = 0x02
 BLOB_CHUNK = 64 * 1024
 QUERY_REJECTED = (400, 403, 405, 501)  # intermediaries without QUERY support (Envoy, CloudFront, Akamai)
-PROBLEMS = "https://apue.dev/problems/"
+PROBLEMS = "https://michaellocher.github.io/apue/problems/"
 
 T = TypeVar("T")
 

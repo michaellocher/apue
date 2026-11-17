@@ -1,8 +1,7 @@
-# Releases on a version tag without "v" prefix (e.g. 0.1.0-beta.1, 0.1.0): verifies everything,
-# publishes @michaellocher/apue to GitHub Packages (npm.pkg.github.com, with the workflow's own
-# GITHUB_TOKEN; pre-releases under the "beta" dist-tag) and creates a GitHub release with the package
-# tarball and the changelog section. Run it by hand (Actions → Release → Run workflow) for a dry run
-# of the whole pipeline: everything up to `npm publish --dry-run`, nothing published.
+# Releases on a version tag without "v" prefix (e.g. 0.1.0-beta.1, 0.1.0): verifies everything and
+# creates a GitHub release with the package tarball and the changelog section. There is no registry:
+# users install the release's tarball by URL (README, "Install"), and the last step does exactly
+# that. Run it by hand (Actions → Release → Run workflow) for a dry run: everything but the release.
 name: Release
 
 on:
@@ -14,7 +13,6 @@ on:
 
 permissions:
   contents: write  # the GitHub release
-  packages: write  # GitHub Packages
 
 jobs:
   release:
@@ -28,8 +26,6 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          registry-url: https://npm.pkg.github.com
-          scope: '@michaellocher'
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
@@ -68,17 +64,14 @@ jobs:
       - run: npm run verify:package
       - name: Pack
         run: npm pack --ignore-scripts
-      - name: Publish to GitHub Packages
+      - name: The tarball is the one the README installs
         run: |
-          case "$VERSION" in
-            *-*) tag=beta ;;
-            *) tag=latest ;;
-          esac
-          dry=
-          [ "$DRY_RUN" = true ] && dry=--dry-run
-          npm publish --ignore-scripts $dry --tag "$tag"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          file="michaellocher-apue-$VERSION.tgz"
+          test -f "$file" || { echo "::error::npm pack did not write $file"; exit 1; }
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION/$file"
+          grep -qF "npm install $url" README.md || { echo "::error::README.md does not install $url"; exit 1; }
+          echo "TARBALL=$file" >> "$GITHUB_ENV"
+          echo "TARBALL_URL=$url" >> "$GITHUB_ENV"
       - name: Release notes from the changelog
         run: |
           awk -v v="## $VERSION " 'index($0, v) == 1 { on = 1; next } on && /^## / { exit } on' CHANGELOG.md > release-notes.md
@@ -89,4 +82,18 @@ jobs:
         with:
           body_path: release-notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: michaellocher-apue-*.tgz
+          files: ${{ env.TARBALL }}
+      - if: env.DRY_RUN != 'true'
+        name: Install the release the way users do
+        run: |
+          for i in 1 2 3 4 5 6; do curl -fsSL -o downloaded.tgz "$TARBALL_URL" && break; sleep 10; done
+          test -s downloaded.tgz || { echo "::error::cannot download $TARBALL_URL"; exit 1; }
+          cmp downloaded.tgz "$TARBALL" || { echo "::error::the release asset differs from the packed tarball"; exit 1; }
+          app=$(mktemp -d) && cd "$app"
+          npm init -y > /dev/null && npm pkg set type=module
+          npm install --no-audit --no-fund "$TARBALL_URL"
+          node --input-type=module -e '
+            const { exports } = JSON.parse(await (await import("node:fs/promises")).readFile("node_modules/@michaellocher/apue/package.json", "utf8"));
+            for (const entry of Object.keys(exports).filter((e) => e !== "./package.json")) await import(`@michaellocher/apue${entry.slice(1)}`);
+            console.log("imported", Object.keys(exports).length - 1, "entry points");'
+          test -x node_modules/.bin/apue-types

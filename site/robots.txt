@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://apue.dev/sitemap.xml
+Sitemap: https://michaellocher.github.io/apue/sitemap.xml

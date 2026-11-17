@@ -8,7 +8,9 @@ import { PROBLEMS } from './problems.mjs';
 
 const HERE = import.meta.dirname;
 const SITE = join(HERE, '..', 'site');
-const ORIGIN = 'https://apue.dev';
+const ORIGIN = 'https://michaellocher.github.io/apue';
+// The path the site is served under (a GitHub Pages project site: /apue/); root-absolute links start with it.
+const BASE = `${new URL(ORIGIN).pathname.replace(/\/$/, '')}/`;
 const GITHUB = 'https://github.com/michaellocher/apue';
 
 // Docs navigation, in reading order (also drives prev/next).
@@ -160,7 +162,9 @@ function snippet(name) {
     });
 }
 
-const PACKAGE = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).name;
+const { name: PACKAGE, version: VERSION } = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
+// The beta installs from the GitHub release's tarball (no registry, no token): {{tarball}} in pages.
+const TARBALL = `https://github.com/michaellocher/apue/releases/download/${VERSION}/${PACKAGE.slice(1).replace('/', '-')}-${VERSION}.tgz`;
 const ENTRY_POINTS = {
   index: PACKAGE,
   server: `${PACKAGE}/server`,
@@ -257,7 +261,7 @@ let absolute = false;
 function rel(from, to) {
   // Relative URL from page `from` to site path `to` (both relative to the site root). Pages that
   // can be served from more than one path (404, problem types) use root-absolute URLs instead.
-  if (absolute) return '/' + to.replace(/(^|\/)index\.html$/, '$1');
+  if (absolute) return BASE + to.replace(/(^|\/)index\.html$/, '$1');
   const depth = from.split('/').length - 1;
   return '../'.repeat(depth) + to;
 }
@@ -271,7 +275,7 @@ function header(path) {
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="${rel(path, 'index.html')}" aria-label="apü home">${WORDMARK}<span class="draft-tag">beta</span></a>
-    <nav class="site-nav" aria-label="Main"><ul>${nav}<li><a class="nav-gh" href="${GITHUB}">${GH_ICON}<span class="nav-gh-label">GitHub</span> <span class="tag tag-planned">private for now</span></a></li></ul></nav>
+    <nav class="site-nav" aria-label="Main"><ul>${nav}<li><a class="nav-gh" href="${GITHUB}">${GH_ICON}<span class="nav-gh-label">GitHub</span></a></li></ul></nav>
   </div>
 </header>`;
 }
@@ -282,7 +286,7 @@ function footer(path) {
   <div class="wrap">
     <div>
       <a class="brand" href="${r('index.html')}" aria-label="apü home">${WORDMARK}</a>
-      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>${PACKAGE}</code> ${VERSION}, released on GitHub; the protocol is spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -310,7 +314,7 @@ function footer(path) {
       <ul>
         <li><a href="${r('docs/spec.html')}">Spec &amp; research</a></li>
         <li><a href="${r('docs/measurements.html')}">Measurements</a></li>
-        <li><a href="${GITHUB}">GitHub (private for now)</a></li>
+        <li><a href="${GITHUB}">GitHub</a></li>
       </ul>
     </nav>
   </div>
@@ -384,6 +388,7 @@ ${meta.noindex ? '<meta name="robots" content="noindex">\n' : `<link rel="canoni
 function expand(body, path) {
   body = body.replace(/\{\{code:([^|}]+)(?:\|([^}]*))?\}\}/g, (_, name, caption) => codeBlock(name.trim(), caption?.trim()));
   body = body.replace(/\{\{readme:(\d)(?:\|([^}]*))?\}\}/g, (_, i, caption) => figure(highlight(readmeQuickStart(Number(i)), 'ts'), 'ts', caption?.trim()));
+  body = body.replace(/\{\{tarball\}\}/g, TARBALL).replace(/\{\{version\}\}/g, VERSION);
   body = inlineBlocks(body);
   body = body.replace(/\{\{root\}\}/g, rel(path, ''));
   body = addHeadingIds(body);
@@ -479,7 +484,7 @@ function problemIndex() {
   const path = 'problems/index.html';
   let body = `<p class="breadcrumb"><a href="${rel(path, 'docs/index.html')}">Docs</a> / Reference</p>
 <h1>Problem types</h1>
-<p class="page-intro">apü errors are real HTTP status codes with RFC 9457 problem details. Its own protocol errors have a <code>type</code> under <code>https://apue.dev/problems/</code>; each of those URIs resolves to its page here.</p>
+<p class="page-intro">apü errors are real HTTP status codes with RFC 9457 problem details. Its own protocol errors have a <code>type</code> under <code>https://michaellocher.github.io/apue/problems/</code>; each of those URIs resolves to its page here.</p>
 <ul class="ptypes">${PROBLEMS.map((p) => `<li><a href="${rel(path, `problems/${p.name}.html`)}"><span class="st">${p.statuses.map(([code]) => code).join('<br>')}</span><b>${p.name}</b><span>${esc(p.summary)}</span></a></li>`).join('')}</ul>
 <h2>Generic errors</h2>
 <p>Everything else uses the type <code>about:blank</code> with the HTTP status phrase as <code>title</code> — for example <code>405 Method Not Allowed</code> (with an <code>Allow</code> header), <code>408</code> when a request body doesn’t arrive in time, <code>413</code> beyond the size limits, <code>415</code> for a wrong content type, <code>429</code>/<code>503</code> (retried by clients, honouring <code>Retry-After</code>). Unexpected handler errors are a <code>500</code> without details. Errors your handlers throw can use types of your own.</p>
@@ -489,7 +494,7 @@ function problemIndex() {
   body = expand(body, path);
   const meta = {
     title: 'Problem types — apü',
-    description: 'The apü problem types under https://apue.dev/problems/: status codes, when each one happens, extension members and how clients should react.',
+    description: 'The apü problem types under https://michaellocher.github.io/apue/problems/: status codes, when each one happens, extension members and how clients should react.',
   };
   writePage(path, meta, docsMain(path, body));
   return { path, meta };
@@ -499,6 +504,9 @@ function problemIndex() {
 
 mkdirSync(join(SITE, 'assets'), { recursive: true });
 for (const asset of ['style.css', 'site.js', 'favicon.svg']) copyFileSync(join(HERE, 'assets', asset), join(SITE, 'assets', asset));
+// Crawlers read robots.txt only at a host's root: under a GitHub Pages project path it is inert,
+// but it stays correct if the site moves to a root (ORIGIN).
+writeFileSync(join(SITE, 'robots.txt'), `User-agent: *\nAllow: /\n\nSitemap: ${ORIGIN}/sitemap.xml\n`);
 
 const pages = readdirSync(join(HERE, 'pages')).filter((f) => f.endsWith('.html')).map(render);
 pages.push(problemIndex(), ...PROBLEMS.map(problemPage));

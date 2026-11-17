@@ -453,9 +453,9 @@ test('Python: resume, batches, compression, client-side validation', { skip: pyt
   assert.deepEqual(out.batch.ok, {
     user: { ok: { id: 'u1', friends: ['b'] } },
     orders: { ok: [{ id: 'u1-o1' }] },
-    friend: { error: 400, type: 'https://apue.dev/problems/validation-failed' },
+    friend: { error: 400, type: 'https://michaellocher.github.io/apue/problems/validation-failed' },
     fail: { error: 409, type: 'about:blank' },
-    dependent: { error: 424, type: 'https://apue.dev/problems/failed-dependency' },
+    dependent: { error: 424, type: 'https://michaellocher.github.io/apue/problems/failed-dependency' },
     create: { ok: { id: 1 } },
     ticks: [0, 1, 2],
     blob: '010203',
@@ -487,7 +487,7 @@ test('Python: resume, batches, compression, client-side validation', { skip: pyt
       return (error as { issues: unknown[] }).issues;
     }
   };
-  const problem = (value: unknown) => ({ error: 400, type: 'https://apue.dev/problems/validation-failed', detail: 'input does not match the schema', fields: issues(value) });
+  const problem = (value: unknown) => ({ error: 400, type: 'https://michaellocher.github.io/apue/problems/validation-failed', detail: 'input does not match the schema', fields: issues(value) });
   assert.deepEqual(out.invalid_user, problem({ name: 'x', age: 1.5, role: 'boss', tags: ['a', 'b', 'c'], nick: 5 }));
   assert.equal(out.invalid_user.fields.length, 5);
   assert.deepEqual(out.invalid_missing, problem({}));

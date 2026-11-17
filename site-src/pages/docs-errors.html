@@ -12,11 +12,11 @@ HTTP/2 404
 content-type: application/problem+json
 cache-control: no-store
 
-{"type":"https://apue.dev/problems/unknown-operation","title":"Unknown Operation","status":404,"detail":"nope.nothing"}
+{"type":"https://michaellocher.github.io/apue/problems/unknown-operation","title":"Unknown Operation","status":404,"detail":"nope.nothing"}
 {{/pre}}
 <ul>
   <li>Generic errors use the type <code>about:blank</code> with the HTTP status phrase as <code>title</code> — e.g. <code>405 Method Not Allowed</code> (with an <code>Allow</code> header), <code>408</code> when a request body doesn’t arrive within <code>bodyTimeoutMs</code>, <code>413</code> beyond the size limits, <code>415</code> for a wrong content type.</li>
-  <li>apü’s own protocol errors have type URIs under <code>https://apue.dev/problems/</code> (below).</li>
+  <li>apü’s own protocol errors have type URIs under <code>https://michaellocher.github.io/apue/problems/</code> (below).</li>
   <li>Extension members: <code>retryable</code> (boolean) and <code>fields</code> (per-field validation errors, <code>[{ path, message }]</code>).</li>
   <li>Unexpected handler errors become <code>500</code> without details; they are logged on the server.</li>
 </ul>
@@ -27,7 +27,7 @@ cache-control: no-store
 <p>The generated Python client raises <code>ApueError</code> as well, with <code>status</code>, <code>type</code>, <code>title</code>, <code>detail</code>, <code>retryable</code> and the whole <code>problem</code>.</p>
 
 <h2>Problem types</h2>
-<p>These URIs are identifiers in the <code>https://apue.dev/problems/</code> namespace, and each one resolves to a page with its members, an example and how clients should react — all of them are listed under <a href="../problems/index.html">Problem types</a>.</p>
+<p>These URIs are identifiers in the <code>https://michaellocher.github.io/apue/problems/</code> namespace, and each one resolves to a page with its members, an example and how clients should react — all of them are listed under <a href="../problems/index.html">Problem types</a>.</p>
 <table data-label="apü problem types">
   <thead><tr><th scope="col">Type (after <code>/problems/</code>)</th><th scope="col">Status</th><th scope="col">When</th></tr></thead>
   <tbody>

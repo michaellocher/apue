@@ -654,7 +654,7 @@ test('a generated Go client against a live server', { skip: go ? false : 'go not
   assert.match(generatedKey!, /^"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"$/);
   assert.deepEqual(out.problem, { error: 409, type: 'https://example.com/problems/out-of-stock', title: 'Out Of Stock', detail: 'item gone', retryable: false, message: 'apue: 409 Out Of Stock: item gone' });
   assert.equal(out.validation!.error, 400);
-  assert.equal(out.validation!.type, 'https://apue.dev/problems/validation-failed');
+  assert.equal(out.validation!.type, 'https://michaellocher.github.io/apue/problems/validation-failed');
   assert.deepEqual(out.retry_safe, { ok: 3 }, '503 + Retry-After retried twice');
   const flaky = out.retry_keyed!.ok as { attempts: number; keys: string[] };
   assert.equal(flaky.attempts, 2);

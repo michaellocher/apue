@@ -400,7 +400,7 @@ test('a generated Java client against a live server', { skip }, async (ctx) => {
   assert.equal(other, first! + 1);
   assert.deepEqual(out.problem, { error: 409, type: 'https://example.com/problems/out-of-stock', title: 'Out Of Stock', detail: 'item gone', retryable: false });
   assert.equal(out.validation!.error, 400);
-  assert.equal(out.validation!.type, 'https://apue.dev/problems/validation-failed');
+  assert.equal(out.validation!.type, 'https://michaellocher.github.io/apue/problems/validation-failed');
   assert.deepEqual(out.stream, { ok: [1, 2, 3, 4, 5] });
   assert.deepEqual([out.stream_error!.error, out.stream_error!.detail, out.stream_error_seen], [409, 'midway', [1]]);
   assert.deepEqual(out.stream_close, { ok: [[1, 2, 3], true] }, 'closing a stream early resets it and aborts the handler');

@@ -1,5 +1,5 @@
 // The apü problem types (src/protocol.ts `ProblemType`), one page each at
-// https://apue.dev/problems/<name>. Every statement here is taken from the code (src/), the tests
+// https://michaellocher.github.io/apue/problems/<name>. Every statement here is taken from the code (src/), the tests
 // (test/) or SPEC-DRAFT.md; the example documents are what the reference implementation sends, with
 // the member order it produces. check.mjs fails if a type in src/ has no entry or no page.
 //
@@ -7,7 +7,7 @@
 // when (HTML), members [[name, HTML]], examples [{ caption, lang, code }], react (HTML list items),
 // source (where it is raised), related [[site path, label]].
 
-const T = (name) => `https://apue.dev/problems/${name}`;
+const T = (name) => `https://michaellocher.github.io/apue/problems/${name}`;
 const json = (value) => JSON.stringify(value, null, 2);
 const response = (status, problem, extra = '') =>
   `HTTP/2 ${status}\ncontent-type: application/problem+json\ncache-control: no-store${extra}\n\n${json(problem)}`;
@@ -48,7 +48,7 @@ export const PROBLEMS = [
     statuses: [['404', 'response']],
     summary: 'No operation with that name exists on this server.',
     when: `<p>The request path names no operation of the API — and, if the server has a <code>fallback</code> (for example the web app served from the same origin), the fallback didn’t handle it either. <code>detail</code> is the operation name as requested.</p>
-<p>Clients raise the same problem without sending anything when asked to call an operation their API definition doesn’t contain. Inside a pipelined batch an unknown operation is a structural error instead: <a href="/problems/invalid-batch">invalid-batch</a>.</p>`,
+<p>Clients raise the same problem without sending anything when asked to call an operation their API definition doesn’t contain. Inside a pipelined batch an unknown operation is a structural error instead: <a href="{{root}}problems/invalid-batch">invalid-batch</a>.</p>`,
     members: [],
     examples: [
       {
@@ -70,7 +70,7 @@ export const PROBLEMS = [
     statuses: [['400', 'response, before the handler runs']],
     summary: 'A field selection (?s=) names a path the output schema doesn’t have.',
     when: `<p>Field selection (<code>?s=a,b.c</code>) is validated against the operation’s output schema before the handler runs: every path must exist in the schema (through objects, arrays, optional and nullable fields), the selection must not be empty, and it may have at most 64 paths. <code>detail</code> says what is wrong, e.g. <code>unknown field secret</code>.</p>
-<p>In a pipelined batch, an invalid <code>select</code> makes the whole batch an <a href="/problems/invalid-batch">invalid-batch</a>.</p>`,
+<p>In a pipelined batch, an invalid <code>select</code> makes the whole batch an <a href="{{root}}problems/invalid-batch">invalid-batch</a>.</p>`,
     members: [],
     examples: [
       {
@@ -240,7 +240,7 @@ export const PROBLEMS = [
     title: 'Unresolvable Reference',
     statuses: [['400', 'in the lane’s END frame']],
     summary: 'A $ref points to a path that the referenced call’s output doesn’t contain.',
-    when: `<p>References are resolved when a call’s dependencies have finished. If the referenced output has no value at the path — an optional field that is absent, say — the call ends with this problem on its own lane. Calls that depend on it then end with <a href="/problems/failed-dependency">failed-dependency</a>; independent calls are not affected.</p>`,
+    when: `<p>References are resolved when a call’s dependencies have finished. If the referenced output has no value at the path — an optional field that is absent, say — the call ends with this problem on its own lane. Calls that depend on it then end with <a href="{{root}}problems/failed-dependency">failed-dependency</a>; independent calls are not affected.</p>`,
     members: [],
     examples: [
       {

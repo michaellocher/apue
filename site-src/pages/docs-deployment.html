@@ -6,7 +6,7 @@
 
 <h2>Runtime</h2>
 <ul>
-  <li><strong>Node ≥ 26.11</strong> and <code>npm install @michaellocher/apue@beta</code>. The package ships JavaScript, so no type stripping is needed inside <code>node_modules</code>.</li>
+  <li><strong>Node ≥ 26.11</strong> and the package from its GitHub release (<a href="getting-started.html#install">Getting started</a>). The package ships JavaScript, so no type stripping is needed inside <code>node_modules</code>.</li>
   <li><strong>TLS is required</strong>: the server speaks HTTP/2 over TLS with HTTP/1.1 fallback (<code>key</code>, <code>cert</code>). Terminating TLS at a proxy is fine; the proxy then talks to the replica over TLS as well.</li>
   <li>One process per CPU core is the usual layout; the server is single-threaded like any Node server.</li>
 </ul>

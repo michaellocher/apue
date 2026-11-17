@@ -6,6 +6,6 @@ with Client("https://localhost:8443", cafile="cert.pem") as client:
     try:
         client.todos_create({"title": ""})             # validated before it is sent
     except ApueError as e:
-        print(e.status, e.type)                        # 400 https://apue.dev/problems/validation-failed
+        print(e.status, e.type)                        # 400 https://michaellocher.github.io/apue/problems/validation-failed
     for t in client.todos_watch():                     # resumes after a lost connection
         print(t["title"])

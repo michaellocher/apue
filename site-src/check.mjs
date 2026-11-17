@@ -7,7 +7,9 @@ import { join, relative, dirname, resolve, posix } from 'node:path';
 
 const SITE = resolve(process.argv[2] ?? join(import.meta.dirname, '..', 'site'));
 const SRC = join(import.meta.dirname, '..', 'src');
-const ORIGIN = 'https://apue.dev';
+const ORIGIN = 'https://michaellocher.github.io/apue';
+const BASE = `${new URL(ORIGIN).pathname.replace(/\/$/, '')}/`; // mirrors build.mjs
+const PROBLEMS = `${ORIGIN}/problems/`.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'); // as a regex source
 const errors = [];
 const warn = [];
 const fail = (file, msg) => errors.push(`${file}: ${msg}`);
@@ -45,7 +47,9 @@ let internalChecked = 0;
 function resolveTarget(file, url) {
   // Returns the site-relative file a URL points to, the way a static host resolves it: a directory
   // URL serves its index.html, an extensionless one <name>.html (problem type URIs).
-  let path = url.startsWith('/') ? url.slice(1) : posix.normalize(posix.join(posix.dirname(file), url));
+  // A root-absolute URL outside BASE leaves the site (the host's root is not ours).
+  if (url.startsWith('/') && !url.startsWith(BASE)) return `(outside ${BASE}) ${url}`;
+  let path = url.startsWith('/') ? url.slice(BASE.length) : posix.normalize(posix.join(posix.dirname(file), url));
   if (path === '.') path = '';
   if (path === '' || path.endsWith('/')) return path + 'index.html';
   if (!files.includes(path) && files.includes(path + '.html')) return path + '.html';
@@ -91,7 +95,7 @@ for (const file of htmlFiles) {
   if (!/<header class="site-header">/.test(html) || !/<footer class="site-footer">/.test(html)) fail(file, 'missing header/footer landmark');
   // one deferred same-site script (progressive enhancement), nothing inline
   const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)];
-  if (scripts.length !== 1 || !/^<script src="(\.\.\/|\/)*assets\/site\.js" defer>$/.test(scripts[0][0].replace(/<\/script>$/, '')) || scripts[0][1].trim()) {
+  if (scripts.length !== 1 || !new RegExp(`^<script src="(\\.\\./)*(${BASE})?assets/site\\.js" defer>$`).test(scripts[0][0].replace(/<\/script>$/, '')) || scripts[0][1].trim()) {
     fail(file, `expected exactly <script src="…assets/site.js" defer></script>, found ${scripts.length} script(s)`);
   }
   if (/\son[a-z]+="/i.test(html)) fail(file, 'inline event handler');
@@ -119,7 +123,7 @@ for (const file of htmlFiles) {
         if (!url.startsWith(`${ORIGIN}/`)) fail(file, `meta content points off-site: ${url}`);
         else {
           // own-origin metadata URLs must exist in site/
-          const path = resolveTarget('index.html', '/' + url.slice(ORIGIN.length + 1));
+          const path = resolveTarget('index.html', BASE + url.slice(ORIGIN.length + 1));
           if (!files.includes(path)) fail(file, `meta URL ${url} has no file ${path}`);
           (external.get(url) ?? external.set(url, new Set()).get(url)).add(file);
         }
@@ -182,7 +186,7 @@ for (const file of files.filter((f) => f.endsWith('.svg'))) {
 const sitemap = readFileSync(join(SITE, 'sitemap.xml'), 'utf8');
 const locs = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
 for (const loc of locs) {
-  if (!loc.startsWith(`${ORIGIN}/`) || !files.includes(resolveTarget('index.html', '/' + loc.slice(ORIGIN.length + 1)))) fail('sitemap.xml', `bad <loc> ${loc}`);
+  if (!loc.startsWith(`${ORIGIN}/`) || !files.includes(resolveTarget('index.html', BASE + loc.slice(ORIGIN.length + 1)))) fail('sitemap.xml', `bad <loc> ${loc}`);
   if (locs.indexOf(loc) !== locs.lastIndexOf(loc)) fail('sitemap.xml', `duplicate <loc> ${loc}`);
 }
 for (const file of htmlFiles) {
@@ -193,12 +197,12 @@ const robots = readFileSync(join(SITE, 'robots.txt'), 'utf8');
 if (!robots.includes(`Sitemap: ${ORIGIN}/sitemap.xml`)) fail('robots.txt', 'no Sitemap line');
 if (!files.includes('404.html')) fail('site', 'no 404.html');
 
-// --- problem types: every https://apue.dev/problems/<name> in src/ resolves to a page
+// --- problem types: every https://michaellocher.github.io/apue/problems/<name> in src/ resolves to a page
 const srcFiles = walk(SRC).filter((f) => /\.(ts|py)$/.test(f));
 const problemNames = new Set();
-for (const f of srcFiles) for (const m of readFileSync(f, 'utf8').matchAll(/https:\/\/apue\.dev\/problems\/([a-z0-9-]+)/g)) problemNames.add(m[1]);
+for (const f of srcFiles) for (const m of readFileSync(f, 'utf8').matchAll(new RegExp(`${PROBLEMS}([a-z0-9-]+)`, 'g'))) problemNames.add(m[1]);
 const protocol = readFileSync(join(SRC, 'protocol.ts'), 'utf8').match(/export const ProblemType = \{([\s\S]*?)\}/)?.[1] ?? '';
-const declared = [...protocol.matchAll(/'https:\/\/apue\.dev\/problems\/([a-z0-9-]+)'/g)].map((m) => m[1]);
+const declared = [...protocol.matchAll(new RegExp(`'${PROBLEMS}([a-z0-9-]+)'`, 'g'))].map((m) => m[1]);
 if (declared.length === 0) fail('src/protocol.ts', 'no ProblemType entries found');
 for (const name of declared) problemNames.add(name);
 const problemIndex = sources.get('problems/index.html') ?? '';
@@ -210,7 +214,7 @@ for (const name of problemNames) {
   if (!files.includes(alias)) fail('site', `problem type ${name} has no ${alias}`);
   if (files.includes(page) && files.includes(alias) && sources.get(page) !== sources.get(alias)) fail(alias, `differs from ${page}`);
   if (files.includes(page) && !sources.get(page).includes(`<code>${ORIGIN}/problems/${name}</code>`)) fail(page, 'does not state its type URI');
-  if (!problemIndex.includes(`href="/problems/${name}.html"`)) fail('problems/index.html', `does not link ${name}`);
+  if (!problemIndex.includes(`href="${BASE}problems/${name}.html"`)) fail('problems/index.html', `does not link ${name}`);
 }
 for (const file of htmlFiles) {
   const m = file.match(/^problems\/([a-z0-9-]+)(\.html|\/index\.html)$/);

@@ -105,7 +105,7 @@ export async function run(apiUrl: string): Promise<CheckResult[]> {
   await check('problem details: unknown op 404, validation 400', async () => {
     await rejects(client.call('users.get', { id: 5 as unknown as string }), 400);
     const res = await fetch(`${apiUrl}/nope.nothing`);
-    if (res.status !== 404 || (await res.json()).type !== 'https://apue.dev/problems/unknown-operation') throw new Error(`status ${res.status}`);
+    if (res.status !== 404 || (await res.json()).type !== 'https://michaellocher.github.io/apue/problems/unknown-operation') throw new Error(`status ${res.status}`);
   });
   await check('deadline → 504', async () => {
     await rejects(client.call('slow.get', undefined, { timeoutMs: 100 }), 504);

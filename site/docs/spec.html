@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Spec &amp; research — apü</title>
 <meta name="description" content="What the apü draft spec (draft 01) covers section by section and what is implemented, decided or blocked, the research notes behind the decisions, and the spike log S0–S29.">
-<link rel="canonical" href="https://apue.dev/docs/spec.html">
+<link rel="canonical" href="https://michaellocher.github.io/apue/docs/spec.html">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#090b14" media="(prefers-color-scheme: dark)">
@@ -17,8 +17,8 @@
 <meta property="og:locale" content="en">
 <meta property="og:title" content="Spec &amp; research — apü">
 <meta property="og:description" content="What the apü draft spec (draft 01) covers section by section and what is implemented, decided or blocked, the research notes behind the decisions, and the spike log S0–S29.">
-<meta property="og:url" content="https://apue.dev/docs/spec.html">
-<meta property="og:image" content="https://apue.dev/assets/og.png">
+<meta property="og:url" content="https://michaellocher.github.io/apue/docs/spec.html">
+<meta property="og:image" content="https://michaellocher.github.io/apue/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta property="og:image:alt" content="apü — typed API operations on plain HTTP">
@@ -29,7 +29,7 @@
 <header class="site-header">
   <div class="wrap">
     <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg><span class="draft-tag">beta</span></a>
-    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg><span class="nav-gh-label">GitHub</span> <span class="tag tag-planned">private for now</span></a></li></ul></nav>
+    <nav class="site-nav" aria-label="Main"><ul><li><a href="../docs/index.html">Docs</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec</a></li><li><a class="nav-gh" href="https://github.com/michaellocher/apue"><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg><span class="nav-gh-label">GitHub</span></a></li></ul></nav>
   </div>
 </header>
 <div class="wrap docs-layout has-toc">
@@ -38,7 +38,7 @@
 <details class="docnav-mobile"><summary>Documentation menu</summary><nav class="inner" aria-label="Documentation (menu)"><h2>Start</h2><ul><li><a href="../docs/index.html">Overview</a></li><li><a href="../docs/getting-started.html">Getting started</a></li></ul><h2>Guides</h2><ul><li><a href="../docs/concepts.html">Operations &amp; HTTP mapping</a></li><li><a href="../docs/streaming.html">Streaming</a></li><li><a href="../docs/errors.html">Errors</a></li><li><a href="../docs/binary-data.html">Binary data</a></li><li><a href="../docs/batches.html">Pipelined batches</a></li><li><a href="../docs/auth.html">Callers &amp; auth</a></li><li><a href="../docs/caching.html">Caching, CDNs &amp; proxies</a></li><li><a href="../docs/manifest.html">Clients, manifest &amp; OpenAPI</a></li><li><a href="../docs/deployment.html">Deployment</a></li></ul><h2>Reference</h2><ul><li><a href="../docs/server.html">Server reference</a></li><li><a href="../docs/client.html">Client reference</a></li><li><a href="../docs/wire-format.html">Wire format</a></li><li><a href="../problems/index.html">Problem types</a></li></ul><h2>Background</h2><ul><li><a href="../docs/measurements.html">Measurements</a></li><li><a href="../docs/spec.html" aria-current="page">Spec &amp; research</a></li></ul></nav></details>
 <p class="breadcrumb"><a href="index.html">Docs</a> / Background</p>
 <h1>Spec &amp; research</h1>
-<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01) in the apü repository, next to eleven research notes and a log of every spike. The toolkit implementing it is <code>@michaellocher/apue</code> 0.1.0-beta on GitHub Packages. The repository is private for now; this page summarises what is in it and where to look.</p>
+<p class="page-intro">The normative text is <code>SPEC-DRAFT.md</code> (draft 01) in the apü repository, next to eleven research notes and a log of every spike. The toolkit implementing it is <code>@michaellocher/apue</code> 0.1.0-beta, released on <a href="https://github.com/michaellocher/apue">GitHub</a>; this page summarises what is in the repository and where to look.</p>
 <nav class="toc" aria-labelledby="toc-title"><h2 id="toc-title">On this page</h2><ul><li><a href="#goals-and-non-goals">Goals and non-goals</a></li><li><a href="#the-draft-section-by-section">The draft, section by section</a></li><li><a href="#open-questions">Open questions</a></li><li><a href="#research-notes">Research notes</a></li><li><a href="#spike-log">Spike log</a></li></ul></nav>
 
 <h2 id="goals-and-non-goals">Goals and non-goals</h2>
@@ -62,7 +62,7 @@
     <tr><td>11</td><td>Schemas, manifest, derived docs, API catalog, OpenAPI 3.2, generated clients (TypeScript, Python, Go, Java, Swift), evolution</td><td><span class="tag tag-ok">implemented</span></td><td><a href="manifest.html">Clients &amp; OpenAPI</a></td></tr>
     <tr><td>12</td><td>Data plane and performance guidance</td><td>guidance, measured</td><td><a href="measurements.html">Measurements</a></td></tr>
     <tr><td>13</td><td>Open questions</td><td>see below</td><td>below</td></tr>
-    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S33 done</td><td>below</td></tr>
+    <tr><td>14–15</td><td>Spikes and spike log</td><td>S0–S34 done</td><td>below</td></tr>
   </tbody>
 </table></div>
 
@@ -74,7 +74,7 @@
   <li><strong>Blocked by the platform</strong>: WebTransport (T4) and HTTP/3 in Node. The official Node 26.12.1 build is compiled without QUIC (<code>node_use_quic: false</code>). apü works behind an HTTP/3-terminating proxy; native T4 follows once Node ships a QUIC server.</li>
   <li><strong>Generators</strong>: TypeScript, Python, Go, Java and Swift (tested on macOS and Linux). Kotlin code calls the Java client.</li>
   <li><strong>DPoP</strong>: implemented (S32) — a verifier for the principal hook with every check of RFC 9449 §4.3, replay protection (shareable between replicas) and optional nonces, and a WebCrypto proof signer for clients.</li>
-  <li><strong>Problem type namespace</strong>: <code>https://apue.dev/problems/&lt;type&gt;</code>; every type has a <a href="../problems/index.html">page on this site</a>.</li>
+  <li><strong>Problem type namespace</strong>: <code>https://michaellocher.github.io/apue/problems/&lt;type&gt;</code>; every type has a <a href="../problems/index.html">page on this site</a>.</li>
 </ul>
 
 <h2 id="research-notes">Research notes</h2>
@@ -118,6 +118,7 @@
     <tr><td>S30–S31</td><td>Beta hardening: live streams in WebKit on Linux (brotli held back), uploads over emulated networks (a session memory limit and an outdated offset on resume, both fixed)</td></tr>
     <tr><td>S32</td><td>Release dry run on GitHub Actions (provenance needs a public repository), the Swift client on Linux, DPoP proofs</td></tr>
     <tr><td>S33</td><td>Published through GitHub Packages as <code>@michaellocher/apue</code></td></tr>
+    <tr><td>S34</td><td>Installed from the GitHub release; problem types and site on github.io</td></tr>
   </tbody>
 </table></div>
 <p>The suite stood at 404 tests after S32, including runs in headless Chrome, Firefox and WebKit. Every bug the verification found is listed with its fix in the spike log and in <code>docs/status.md</code>.</p>
@@ -130,7 +131,7 @@
   <div class="wrap">
     <div>
       <a class="brand" href="../index.html" aria-label="apü home"><svg class="wordmark" viewBox="0 0 70 43" aria-hidden="true" focusable="false"><g class="wm-ink" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="22" r="7.5"/><path d="M17.5 14.5v15"/><circle cx="35" cy="22" r="7.5"/><path d="M27.5 14.5v25M51.5 14.5V22a7.5 7.5 0 0 0 15 0v-7.5M66.5 22v7.5"/></g><circle class="wm-dot-a" cx="51.5" cy="4.6" r="3.1"/><circle class="wm-dot-b" cx="66.5" cy="4.6" r="3.1"/></svg></a>
-      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>apue</code> 0.1.0-beta on npm, the protocol spec draft 01 — betas may still change the wire format and APIs.</p>
+      <p>Typed API operations on plain HTTP. Beta: the toolkit is <code>@michaellocher/apue</code> 0.1.0-beta.1, released on GitHub; the protocol is spec draft 01 — betas may still change the wire format and APIs.</p>
       <p>The name is written <strong>apü</strong>; URLs, headers and media types use <code>apue</code>.</p>
     </div>
     <nav aria-label="Footer: learn">
@@ -158,7 +159,7 @@
       <ul>
         <li><a href="../docs/spec.html">Spec &amp; research</a></li>
         <li><a href="../docs/measurements.html">Measurements</a></li>
-        <li><a href="https://github.com/michaellocher/apue">GitHub (private for now)</a></li>
+        <li><a href="https://github.com/michaellocher/apue">GitHub</a></li>
       </ul>
     </nav>
   </div>

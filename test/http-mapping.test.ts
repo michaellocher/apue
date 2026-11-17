@@ -278,9 +278,9 @@ describe('validation', () => {
 
   test('problem details: apü types for protocol errors, about:blank + status phrase otherwise', async () => {
     const validation = await (await raw('/orders.create', json({ item: 5, qty: 1 }))).json();
-    assert.equal(validation.type, 'https://apue.dev/problems/validation-failed');
+    assert.equal(validation.type, 'https://michaellocher.github.io/apue/problems/validation-failed');
     const unknown = await (await raw('/nope.nothing')).json();
-    assert.equal(unknown.type, 'https://apue.dev/problems/unknown-operation');
+    assert.equal(unknown.type, 'https://michaellocher.github.io/apue/problems/unknown-operation');
     const notAllowed = await (await raw('/orders.create')).json();
     assert.deepEqual(notAllowed, { title: 'Method Not Allowed', status: 405, detail: 'GET is not allowed here' });
   });

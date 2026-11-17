@@ -10,7 +10,7 @@ public class Main {
       try {
         client.todosCreate(new TodosCreateInput(""));
       } catch (ApueException e) {
-        System.out.println(e.status() + " " + e.type()); // 400 https://apue.dev/problems/validation-failed
+        System.out.println(e.status() + " " + e.type()); // 400 https://michaellocher.github.io/apue/problems/validation-failed
       }
       try (Stream<TodosWatchOutput> todos = client.todosWatch()) { // closing resets the HTTP/2 stream
         for (TodosWatchOutput t : todos) System.out.println(t.title());

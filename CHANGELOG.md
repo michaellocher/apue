@@ -6,8 +6,10 @@ is listed here.
 
 ## 0.1.0-beta.1 — 2026-10-28
 
-First public beta of the apü toolkit (spec draft 01, see SPEC-DRAFT.md), published to GitHub
-Packages as `@michaellocher/apue` (installing needs a `read:packages` token; README, "Install").
+First public beta of the apü toolkit (spec draft 01, see SPEC-DRAFT.md), `@michaellocher/apue`,
+installed from this release's tarball (no registry, no token; README, "Install"). Website and docs:
+https://michaellocher.github.io/apue/, where every protocol problem type
+(`https://michaellocher.github.io/apue/problems/…`) has its page.
 
 - **Protocol**: operations with declared effects on plain HTTP (GET with `?i=`, QUERY, POST,
   HEAD), RFC 9457 problems, idempotency keys, deadlines, field selection, ETag/304 and cache

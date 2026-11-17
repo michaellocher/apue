@@ -53,7 +53,9 @@ jobs:
             else echo "::error::date the CHANGELOG entry for $VERSION before tagging"; exit 1; fi
           fi
       - run: npm ci
-      - run: npx playwright-core install --with-deps webkit
+      - name: Install WebKit (Playwright build) with its system dependencies
+        timeout-minutes: 25  # 3 attempts of 5 minutes with a mirror fallback, plus cleanup (see the script)
+        run: scripts/ci-install-webkit.sh
       - run: npm run typecheck
       - run: npm test
         env:

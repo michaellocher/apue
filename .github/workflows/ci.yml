@@ -38,7 +38,8 @@ jobs:
           java-version: '17'
       - run: npm ci
       - name: Install WebKit (Playwright build) with its system dependencies
-        run: npx playwright-core install --with-deps webkit
+        timeout-minutes: 25  # 3 attempts of 5 minutes with a mirror fallback, plus cleanup (see the script)
+        run: scripts/ci-install-webkit.sh
       - run: npm run typecheck
       - name: Test
         run: npm test

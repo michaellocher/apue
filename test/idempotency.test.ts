@@ -48,14 +48,26 @@ describe('MemoryIdempotencyStore', () => {
   });
 
   test('a full store stays fast (amortised eviction)', () => {
-    const store = new MemoryIdempotencyStore({ maxEntries: 10_000 });
-    const started = performance.now();
-    for (let i = 0; i < 200_000; i++) {
-      store.begin(`k${i}`, 'f');
-      store.complete(`k${i}`, response(1));
+    // Timed against the same inserts into a store that never fills, so a busy machine slows both
+    // (an absolute limit failed on a CI runner running test files in parallel: 1.45 s where a
+    // laptop takes 0.09 s). Measured: amortised eviction ~0.8×; rescanning on every insert ~200×.
+    const inserts = (maxEntries: number) => {
+      const store = new MemoryIdempotencyStore({ maxEntries });
+      const started = performance.now();
+      for (let i = 0; i < 100_000; i++) {
+        store.begin(`k${i}`, 'f');
+        store.complete(`k${i}`, response(1));
+      }
+      return { elapsed: performance.now() - started, size: store.size };
+    };
+    let full = Infinity;
+    let open = Infinity;
+    for (let round = 0; round < 3; round++) {
+      const capped = inserts(10_000);
+      assert.ok(capped.size <= 10_000);
+      full = Math.min(full, capped.elapsed);
+      open = Math.min(open, inserts(1_000_000).elapsed);
     }
-    const elapsed = performance.now() - started;
-    assert.ok(store.size <= 10_000);
-    assert.ok(elapsed < 1_000, `200k inserts into a full store took ${elapsed.toFixed(0)} ms`);
+    assert.ok(full / open < 5, `100k inserts: ${full.toFixed(0)} ms into a full store, ${open.toFixed(0)} ms into one that never fills`);
   });
 });

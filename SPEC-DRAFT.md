@@ -1,6 +1,6 @@
 # apü — draft 01
 
-*Status: draft 01, beta toolkit `@michaellocher/apue` 0.1.0-beta (2026-10-28), revised after 35 spikes, S0–S34 (§15). Sections say whether something is **implemented** (`src/`, tested by `npm test` incl. real browsers and generated Python clients) or a **decision** not to; §13 lists what remains open and why.*
+*Status: draft 01, beta toolkit `@michaellocher/apue` 0.1.0-beta.1 (2026-11-18), revised after 35 spikes, S0–S34 (§15). Sections say whether something is **implemented** (`src/`, tested by `npm test` incl. real browsers and generated Python clients) or a **decision** not to; §13 lists what remains open and why.*
 *Research basis: [`research/`](research/) — 01 existing-API problems, 02 HTTP/2 & modern HTTP (+ performance addendum), 03 data plane, 04 Node 26 platform, 05 verified normative details.*
 
 ASCII identifier for media types and header names: **`apue`**.

@@ -1,10 +1,10 @@
-# Status — beta 0.1.0-beta.1 (2026-10-28)
+# Status — beta 0.1.0-beta.1 (2026-11-18)
 
 ## Ready
 
-- **Toolkit** published as `@michaellocher/apue` (not yet released): server, TypeScript client
-  (fetch, HTTP/2, WebSocket transports), code generators for TypeScript, Python, Go, Java and
-  Swift, OpenAPI 3.2. The package is verified as users get it (`npm run verify:package`: packed,
+- **Toolkit** `@michaellocher/apue`, released on GitHub (install by URL, README "Install"):
+  server, TypeScript client (fetch, HTTP/2, WebSocket transports), code generators for
+  TypeScript, Python, Go, Java and Swift, OpenAPI 3.2. The package is verified as users get it (`npm run verify:package`: packed,
   installed offline, every entry point, the CLI for every language, the README quick start).
 - **Tests**: `npm test` — 404 tests: unit, integration, fuzz, chaos, leak, real browsers (Chrome,
   Firefox, WebKit), generated clients run against live servers in Python, Go, Java and Swift (macOS
@@ -16,15 +16,14 @@
 - **Production**: replicas (shared idempotency stores, instance routing verified through nginx),
   bounded shutdown, logging hook, DPoP proofs (verifier and signer), deployment guide
   ([deployment.md](deployment.md)).
-- **Website**: `site/` (built from `site-src/`), with docs and a page per problem type.
+- **Website**: https://michaellocher.github.io/apue/ (`site/`, built from `site-src/`), with docs and
+  a page per problem type.
 
-## Before the first release (needs you)
+## Releases
 
-1. License: MIT (confirmed). The repository is public (users download the release tarball without
-   a token), Pages deploys `site/` from `main` (Source: GitHub Actions).
-2. Release: date the CHANGELOG entry, run the Release workflow by hand (dry run), then
-   `git tag -a 0.1.0-beta.1 -m 0.1.0-beta.1 && git push origin 0.1.0-beta.1`. No registry and no
-   secret: the workflow creates the GitHub release and installs its tarball by URL.
+MIT licensed; the repository is public. Each release is a tag (no `v` prefix) that the Release
+workflow turns into a GitHub release with the package tarball, then installs from its URL as users
+do — no registry, no secret (CONTRIBUTING.md, "Releasing").
 
 ## Open (SPEC-DRAFT.md §13)
 

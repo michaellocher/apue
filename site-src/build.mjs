@@ -512,7 +512,7 @@ const pages = readdirSync(join(HERE, 'pages')).filter((f) => f.endsWith('.html')
 pages.push(problemIndex(), ...PROBLEMS.map(problemPage));
 
 // sitemap.xml (404 excluded; problem types under their type URI)
-const lastmod = '2026-10-28';
+const lastmod = '2026-11-18';
 const urls = pages
   .filter(({ meta }) => !meta.noindex)
   .map(({ path }) => canonical(path))

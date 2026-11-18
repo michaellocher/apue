@@ -37,6 +37,17 @@ jobs:
           distribution: temurin
           java-version: '17'
       - run: npm ci
+      - name: Runner image version (part of the WebKit cache key)
+        id: image
+        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+      - name: Cache WebKit and its system packages
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cache/ms-playwright
+            ~/.cache/webkit-debs
+          key: webkit-${{ runner.os }}-${{ steps.image.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: webkit-${{ runner.os }}-
       - name: Install WebKit (Playwright build) with its system dependencies
         timeout-minutes: 25  # 3 attempts of 5 minutes with a mirror fallback, plus cleanup (see the script)
         run: scripts/ci-install-webkit.sh

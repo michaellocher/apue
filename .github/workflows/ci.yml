@@ -37,20 +37,13 @@ jobs:
           distribution: temurin
           java-version: '17'
       - run: npm ci
-      - name: Runner image version (part of the WebKit cache key)
-        id: image
-        run: echo "version=${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
-      - name: Cache WebKit and its system packages
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cache/ms-playwright
-            ~/.cache/webkit-debs
-          key: webkit-${{ runner.os }}-${{ steps.image.outputs.version }}-${{ hashFiles('package-lock.json') }}
-          restore-keys: webkit-${{ runner.os }}-
+      - name: Use the Azure Ubuntu mirror
+        # Runners hosted on AWS use the regional EC2 mirror, which repeatedly stalled WebKit's
+        # 125 MB of packages for 10+ minutes; the Azure mirror delivered them in 12-23 s.
+        run: sudo sed -i -E 's#https?://[^ /]*archive\.ubuntu\.com/ubuntu/?#http://azure.archive.ubuntu.com/ubuntu/#g' /etc/apt/sources.list.d/ubuntu.sources
       - name: Install WebKit (Playwright build) with its system dependencies
-        timeout-minutes: 25  # 3 attempts of 5 minutes with a mirror fallback, plus cleanup (see the script)
-        run: scripts/ci-install-webkit.sh
+        timeout-minutes: 10
+        run: npx playwright-core install --with-deps webkit
       - run: npm run typecheck
       - name: Test
         run: npm test
